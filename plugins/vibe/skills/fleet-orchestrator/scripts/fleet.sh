@@ -141,9 +141,18 @@ has_option() {
   return 1
 }
 
+# Bind a fresh thread's ticket, worktree and host on the program board before dispatch.
+admit_writer_turn() {
+  local name=$1 prompt=$2 tree=$3 ticket=$4
+  local admission=(--launch-brief "$prompt" --where "$where" --runtime codex)
+  [ -z "$tree" ] || admission+=(--worktree "$tree")
+  [ -z "$ticket" ] || admission+=(--tickets "$ticket")
+  node "$here/board.mjs" "$orch" writer "$name" "${admission[@]}" >/dev/null
+}
+
 session() {
   [ $# -ge 2 ] || usage
-  local command=$1 name=$2 i prompt= target_cwd= plugin_root expected_version locked=
+  local command=$1 name=$2 i prompt= target_cwd= ticket= plugin_root expected_version locked=
   shift 2
   if [[ ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
     echo "fleet: session name must be letters, digits, dot, dash or underscore" >&2
@@ -179,6 +188,8 @@ session() {
       --prompt-file=*) prompt=${args[$i]#--prompt-file=} ;;
       --cwd) target_cwd=${args[$((i + 1))]:-} ;;
       --cwd=*) target_cwd=${args[$i]#--cwd=} ;;
+      --ticket) ticket=${args[$((i + 1))]:-} ;;
+      --ticket=*) ticket=${args[$i]#--ticket=} ;;
     esac
   done
   plugin_root=$(cd "$skills/.." && pwd)
@@ -205,6 +216,7 @@ session() {
       node "$here/skill-freshness.mjs" "$orch" "$prompt" --runtime codex --command "$command" --actor-state "$state/$name.json" --plugin-root "$plugin_root" --worktree "${target_cwd:-$orch}" ${bootstrap[@]+"${bootstrap[@]}"} >/dev/null
     fi
     if [ "$command" = turn ] || [ "$command" = steer ]; then args+=(--plugin-root "$plugin_root"); fi
+    if [ "$command" = turn ] && [ ! -s "$state/$name.json" ]; then admit_writer_turn "$name" "$prompt" "$target_cwd" "$ticket"; fi
     exec node "$here/codex-session.mjs" "$command" "$state" "$name" ${args[@]+"${args[@]}"}
   fi
   if [ -n "$prompt" ]; then
@@ -264,6 +276,7 @@ session() {
       echo "fleet: prepared remote marker already exists or cannot be created; run remote session recover-marker $name" >&2
       return 2
     fi
+    if [ ! -f "$marker" ]; then admit_writer_turn "$name" "$prompt" "$target_cwd" "$ticket"; fi
     if [ -f "$marker" ]; then resumed=1; fi
     owner_started=$(ps -o lstart= -p "$$" 2>/dev/null) || owner_started=
     if [ -z "$owner_started" ]; then

@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureReviewReceipt, reviewReceiptProblems } from "./review-receipts.mjs";
 import { acceptManagedReviewer, readCodexReviewTurn, runManagedReviewer } from "./codex-review-runtime.mjs";
+import { reviewBrief } from "./review-context-test-support.mjs";
 
 /** A deterministic App Server boundary. All session, helper and receipt code runs unchanged. */
 function reviewFixture(t, { finalBody = JSON.stringify, markerSeparator = "\n" } = {}) {
@@ -21,7 +22,7 @@ function reviewFixture(t, { finalBody = JSON.stringify, markerSeparator = "\n" }
   const definitionPath = fileURLToPath(new URL("../../../agents/" + role + ".md", import.meta.url));
   const capabilities = path.join(orchDir, "capabilities.json");
   const brief = path.join(orchDir, "brief.md");
-  writeFileSync(brief, "Review the source for regressions.");
+  writeFileSync(brief, reviewBrief(orchDir, "Review the source for regressions."));
   writeFileSync(capabilities, JSON.stringify([{ name: "mcp__test_graph__code_symbols", service: "graph", access: "read", operation: "code_symbols" }]));
   const input = { orchDir, worktree, role, helper: "first-pass", model: "gpt-6.2-astra", capabilities, brief,
     definitionPath };
@@ -63,6 +64,13 @@ function reviewFixture(t, { finalBody = JSON.stringify, markerSeparator = "\n" }
   return { input, calls, client, items, runtimeRead, readHelper: () => JSON.parse(readFileSync(path.join(orchDir, "helpers.json"), "utf8"))[input.helper] };
 }
 
+test("AC 12 refuses an ungrounded review before connecting to a model", async t => {
+  const { input } = reviewFixture(t);
+  writeFileSync(input.brief, "Review the list of changes.");
+  await assert.rejects(runManagedReviewer(input, async () => { throw new Error("opened client"); }),
+    /read.*tracker.*slug.*review-ticket/i);
+});
+
 test("AC-1, AC-2, AC-3, AC-6, AC-7: the named read-only managed reviewer yields an independently accepted native receipt", async t => {
   const { input, calls, client, readHelper } = reviewFixture(t);
   const { threadId, report, deliverable } = await runManagedReviewer(input, async () => client);
@@ -74,6 +82,9 @@ test("AC-1, AC-2, AC-3, AC-6, AC-7: the named read-only managed reviewer yields 
   assert.equal(request("turn/start").approvalPolicy, "never");
   assert.deepEqual(request("turn/start").sandboxPolicy, { type: "readOnly" });
   assert.ok(request("turn/start").input[0].text.includes("Adversarially review one implemented session"));
+  assert.ok(request("turn/start").input[0].text.includes("Keep the original label."));
+  assert.ok(request("turn/start").input[0].text.includes("keeps that label on mobile too."));
+  assert.equal(readHelper().reviewCriteria.ticket, "TASK-42");
   assert.equal(request("turn/steer").expectedTurnId, "turn-1");
   assert.equal(readHelper().workerId, threadId);
   assert.equal(readHelper().agentDefinition.path, input.definitionPath);
@@ -157,6 +168,105 @@ test("AC-1, AC-5, AC-7: the shipped launcher requires the selected model and ref
   }
 });
 
+function criticFixture(t, options) {
+  const fixture = reviewFixture(t, options);
+  const { input } = fixture;
+  input.role = "visual-qa-critic";
+  input.agentDefinition = path.join(input.worktree, "critic.md");
+  writeFileSync(input.agentDefinition, "---\nname: visual-qa-critic\n---\nReview screens.\n");
+  execFileSync("git", ["-C", input.worktree, "add", "critic.md"]);
+  execFileSync("git", ["-C", input.worktree, "-c", "user.name=Fixture", "-c", "user.email=test@example.org", "commit", "-qm", "critic"]);
+  return fixture;
+}
+
+test("AC 12 keeps a contradiction out of defects in a reviewer receipt and critic deliverable", async t => {
+  const conflict = { id: "one", blocking: true, contradicts: "keeps that label on mobile too.", question: "Should mobile use the new label?" };
+  for (const create of [reviewFixture, criticFixture]) {
+    const { input, client, runtimeRead } = create(t, { finalBody: identity => JSON.stringify({ ...identity, findings: [conflict] }) });
+    const run = await runManagedReviewer(input, async () => client);
+    const file = run.visualQa ?? (await acceptManagedReviewer({ ...input, report: run.report }, runtimeRead)).receipt;
+    const result = JSON.parse(readFileSync(file));
+    assert.deepEqual(result.findings, []);
+    assert.deepEqual(result.questions, [{ kind: "QUESTION", contradicts: conflict.contradicts, question: conflict.question }]);
+  }
+});
+
+test("AC 12 refuses missing or changed tracker authority before launching any final helper kind", t => {
+  const { input } = reviewFixture(t);
+  const cli = fileURLToPath(new URL("../../fleet-orchestrator/scripts/helpers.mjs", import.meta.url));
+  const args = [input.orchDir, "start", "review", "--runtime", "codex", "--role", input.role, "--worker-id", "native",
+    "--worktree", input.worktree, "--agent-definition", input.definitionPath, "--capabilities", input.capabilities, "--brief", input.brief];
+  const complete = readFileSync(input.brief, "utf8");
+  for (const kind of ["reviewer", "verifier", "critic"]) {
+    writeFileSync(input.brief, "Review without a ticket.");
+    const missing = spawnSync(process.execPath, [cli, ...args, "--kind", kind], { encoding: "utf8" });
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /tracker by slug.*review-ticket/);
+  }
+  writeFileSync(input.brief, complete);
+  writeFileSync(path.join(input.orchDir, "rulings.md"), "- Ruling 2026-01-03 (ticket: operator): TASK-42 requires a second label.");
+  const omitted = spawnSync(process.execPath, [cli, ...args, "--kind", "reviewer"], { encoding: "utf8" });
+  assert.match(omitted.stderr, /tracker by slug.*review-ticket/);
+  writeFileSync(path.join(input.orchDir, "review-ticket.json"), "{}");
+  const changed = spawnSync(process.execPath, [cli, ...args, "--kind", "reviewer"], { encoding: "utf8" });
+  assert.match(changed.stderr, /tracker by slug.*review-ticket/);
+  assert.throws(() => readFileSync(path.join(input.orchDir, "helpers.json")), { code: "ENOENT" });
+});
+
+test("DT-10 AC-10 managed repository critic produces only ready-gate findings for the registered head", async t => {
+  const { input, client, readHelper } = criticFixture(t);
+  const { visualQa } = await runManagedReviewer(input, async () => client);
+  const head = execFileSync("git", ["-C", input.worktree, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  assert.deepEqual(JSON.parse(readFileSync(visualQa)), { head, findings: [] });
+  const boardCli = fileURLToPath(new URL("../../../skills/fleet-orchestrator/scripts/board.mjs", import.meta.url));
+  const program = path.join(input.orchDir, "programs", "critic-test");
+  mkdirSync(program, { recursive: true });
+  writeFileSync(path.join(input.orchDir, "current"), "critic-test\n");
+  const placement = path.join(program, "placement.json");
+  writeFileSync(placement, JSON.stringify({ codeOnly: false, needsRunningApp: true, localEvidence: ["visual"] }));
+  execFileSync(process.execPath, [boardCli, program, "placement", "#1", "--evidence", placement]);
+  execFileSync(process.execPath, [boardCli, program, "writer", "author", "--tickets", "#1", "--ready", head, "--visual-qa", visualQa]);
+  const row = JSON.parse(readFileSync(path.join(program, "board.json"))).writers.author;
+  assert.equal(row.visualQa.findings.path, visualQa);
+  assert.equal(readHelper().kind, "critic");
+  await assert.rejects(acceptManagedReviewer({ ...input, report: readHelper().finalReportPath }), /finalized report/);
+  assert.throws(() => readFileSync(path.join(path.dirname(visualQa), "receipt.json")), { code: "ENOENT" });
+});
+
+test("DT-10 AC-10 rejects mismatched heads and malformed findings before publishing", async t => {
+  for (const [change, message] of [[{ head: "0".repeat(40) }, /registered head/], [{ findings: [{}] }, /boolean touchedSurface/],
+    [{ findings: [{ touchedSurface: true }] }, /no summary/]]) {
+    const { input, client, readHelper } = criticFixture(t, { finalBody: result => JSON.stringify({ ...result, ...change }) });
+    await assert.rejects(runManagedReviewer(input, async () => client), message);
+    assert.ok(readHelper().abandonedAt);
+    assert.equal(readHelper().finalizedAt, undefined);
+  }
+});
+
+test("DT-10 AC-10 shipped CLI accepts the critic flags and rejects a definition outside the source before launch", t => {
+  const { input } = reviewFixture(t);
+  const cli = fileURLToPath(new URL("../../../skills/vibe/scripts/dist/codex-reviewer.mjs", import.meta.url));
+  const args = [cli, "run", "--orch-dir", input.orchDir, "--helper", input.helper, "--role", "visual-qa-critic",
+    "--worktree", input.worktree, "--capabilities", input.capabilities, "--brief", input.brief, "--model", input.model];
+  assert.match(spawnSync(process.execPath, args, { encoding: "utf8" }).stderr, /require --agent-definition/);
+  const outside = spawnSync(process.execPath, [...args, "--agent-definition", input.brief], { encoding: "utf8" });
+  assert.equal(outside.status, 1);
+  assert.match(outside.stderr, /definition must belong to the source repository/);
+});
+
+test("F12 an actionable critic finding reaches the writer and a resolved finding reaches readiness", async t => {
+  const { findingProblems } = await import("../../../skills/fleet-orchestrator/scripts/finding-brief.mjs");
+  const { visualQaFindingsProblems } = await import("../../vibe/scripts/required-visual-qa.mjs");
+  const finding = { id: "F1", touchedSurface: true, summary: "Button is clipped", route: "/edit", viewport: "800x600", selector: "#save" };
+  for (const disposition of [undefined, "fixed: 1234567"]) {
+    const { input, client } = criticFixture(t, { finalBody: result => JSON.stringify({ ...result, findings: [{ ...finding, disposition }] }) });
+    const { visualQa } = await runManagedReviewer(input, async () => client);
+    const artifact = JSON.parse(readFileSync(visualQa));
+    assert.deepEqual(findingProblems(artifact.findings), []);
+    assert.equal(visualQaFindingsProblems(visualQa, artifact.head).length, disposition ? 0 : 1);
+  }
+});
+
 test("AC-8: helper registration uses the YAML name of a repository critic", t => {
   const { input } = reviewFixture(t);
   const cli = fileURLToPath(new URL("../../fleet-orchestrator/scripts/helpers.mjs", import.meta.url));
@@ -226,7 +336,7 @@ test("changed launch inputs stop the registered helper before its review turn", 
   for (const field of ["brief", "capabilities"]) {
     const { input, client, calls, readHelper } = reviewFixture(t);
     await assert.rejects(runManagedReviewer(input, async () => {
-      writeFileSync(input[field], field === "brief" ? "Updated instructions" : "[]");
+      writeFileSync(input[field], field === "brief" ? reviewBrief(input.orchDir, "Updated instructions") : "[]");
       return client;
     }), /Reviewer inputs changed before registration/);
     assert.ok(readHelper().abandonedAt);

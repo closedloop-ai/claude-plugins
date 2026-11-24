@@ -112,7 +112,6 @@ export function readHookSkillRecord(sessionId, home = os.homedir()) {
 }
 
 /** The vibe skill this hook event's conversation runs ("vibe" or "fleet-orchestrator"): its transcript first, then a recent hook record. */
-export function conversationSkill(event, home = os.homedir()) {
-  const transcript = readTranscript(event?.transcript_path);
+export function conversationSkill(event, home = os.homedir(), transcript = readTranscript(event?.transcript_path)) {
   return (transcript === null ? null : latestSkill(transcript, SCOPED_SKILLS)) ?? readHookSkill(event?.session_id, home);
 }

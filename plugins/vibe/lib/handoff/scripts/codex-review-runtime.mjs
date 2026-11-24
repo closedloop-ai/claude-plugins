@@ -2,15 +2,18 @@
 // Its saved MCP items have type mcpToolCall with server, tool and status:
 // https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/thread_history.rs
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 import { finalMarker, read as readHelpers, readHelperInput, resolveHelperBrief } from "../../fleet-orchestrator/scripts/helpers.mjs";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { assembleProviderText, sessionBinding } from "../../vibe/scripts/provider.mjs";
+import { agentFrontmatterName } from "../../vibe/scripts/agent-frontmatter.mjs";
 import { graphAliases } from "./mcp-tool-names.mjs";
+import { boundReviewContext, reviewDoctrine } from "./review-context.mjs";
+import { findingProblems } from "../../../skills/fleet-orchestrator/scripts/finding-brief.mjs";
 import { connectViaProxy, daemonSocket } from "../../codex-fleet-monitor/scripts/liveness.mjs";
 import { findCli } from "../../../skills/vibe/scripts/plugin-cli.mjs";
 
@@ -105,8 +108,10 @@ export async function managedReviewClient({ core, resolveCli } = {}) {
 
 /** Run a read-only managed turn and save the actual final answer. Acceptance is a separate coordinator action. */
 export async function runManagedReviewer(input, openClient = managedReviewClient) {
-  const { REVIEW_ROLES } = await import("./review-receipts.mjs");
-  if (!REVIEW_ROLES.includes(input.role)) throw new Error("Unknown native review role: " + input.role);
+  const { REVIEW_ROLES, nativeReviewResult } = await import("./review-receipts.mjs");
+  const critic = input.role === "visual-qa-critic";
+  if (!critic && !REVIEW_ROLES.includes(input.role)) throw new Error("Unknown native review role: " + input.role);
+  if (critic !== Boolean(input.agentDefinition)) throw new Error("Only visual-qa-critic runs require --agent-definition <repo-agent-file>");
   const { initializeSession, startThread, runTurn, parseGenericCallback, EVENT_PREFIX } =
     await import("../../../skills/cl-sweep/scripts/native-app-server-orchestrator.mjs");
   const { DEFAULT_REASONING_EFFORT } = await import("../../../skills/cl-sweep/scripts/model-policy.mjs");
@@ -120,9 +125,13 @@ export async function runManagedReviewer(input, openClient = managedReviewClient
   const aliases = graphAliases(reads);
   if (reads.some(capability => capability.access !== "read")) throw new Error("Reviewers require read-only capabilities");
   const brief = readHelperInput(resolveHelperBrief(orchDir, input.brief));
-  const definitionPath = fileURLToPath(new URL(`../../../agents/${input.role}.md`, import.meta.url));
+  const criteria = boundReviewContext(brief.text, worktree, orchDir);
+  const definitionPath = critic ? realpathSync(path.resolve(worktree, input.agentDefinition))
+    : fileURLToPath(new URL(`../../../agents/${input.role}.md`, import.meta.url));
+  if (critic && !definitionPath.startsWith(worktree + path.sep)) throw new Error("The critic definition must belong to the source repository");
   if (realpathSync(definitionPath) !== definitionPath) throw new Error("Canonical reviewer definition must be inside its owning plugin");
   const definition = readHelperInput(definitionPath);
+  if (critic && agentFrontmatterName(definition.text) !== input.role) throw new Error("Canonical repository agent definition does not name visual-qa-critic");
   const directory = mkdtempSync(path.join(orchDir, "codex-review-"));
   const stateFile = path.join(directory, "session.json");
   const report = path.join(directory, "report.json");
@@ -139,18 +148,21 @@ export async function runManagedReviewer(input, openClient = managedReviewClient
     // Both operations share one initialized connection, including the first turn on a newly allocated thread.
     const connection = { client, initializeClient: async () => {} };
     const { threadId } = await startThread({ stateFile }, connection);
-    helperAction(orchDir, "start", input.helper, "--kind", input.role === "vibe-verify-worker" ? "verifier" : "reviewer",
+    const kind = critic ? "critic" : input.role === "vibe-verify-worker" ? "verifier" : "reviewer";
+    helperAction(orchDir, "start", input.helper, "--kind", kind,
       "--runtime", "codex", "--role", input.role, "--agent-definition", definitionPath, "--worker-id", threadId,
       "--worktree", worktree, "--brief", input.brief, "--capabilities", capabilities.fingerprint.path);
     helper = readHelpers(orchDir)[input.helper];
+    if (critic && helper.source.diffSha256 !== createHash("sha256").digest("hex")) throw new Error("Commit the visual QA source before running a head-bound critic");
     if (!isDeepStrictEqual(helper.agentDefinition, definition.fingerprint) || !isDeepStrictEqual(helper.capabilities, capabilities.fingerprint) ||
-        !isDeepStrictEqual(helper.briefEvidence, brief.fingerprint)) throw new Error("Reviewer inputs changed before registration");
+        !isDeepStrictEqual(helper.briefEvidence, brief.fingerprint) || !isDeepStrictEqual(helper.reviewCriteria, criteria)) throw new Error("Reviewer inputs changed before registration");
     const instruction = [
       "You are a read-only reviewer. Follow the canonical agent definition at " + definitionPath + ". Resolve its relative paths from that file.",
-      assembleProviderText(definition.text, binding), brief.text,
+      assembleProviderText(definition.text, binding), brief.text, reviewDoctrine,
       reads.length ? "Use only these MCP reads: " + reads.map(read => read.name).join(", ") : "Do not call MCP tools.",
       aliases.length ? "First call a relevant graph read from " + aliases.join(", ") + ". Stop immediately on approval refusal." : "",
       "Return your final answer as one JSON object with runtime, role, workerId, source, completion, observedToolCalls and findings, then the exact FINAL line.",
+      critic ? "Return the supplied head and a findings array. Each finding needs boolean touchedSurface. Include a disposition only for an actual fixing commit or follow-up ticket. Preserve unresolved findings for the writer." : "",
       "Use the identity and FINAL line supplied in the follow-up message for this turn. Verify and cite every finding's material premises. Make no changes.",
     ].filter(Boolean).join("\n\n");
     const finished = await runTurn({ stateFile, prompt: instruction, deliver: false, timeoutMs: 30 * 60 * 1000 }, {
@@ -158,7 +170,8 @@ export async function runManagedReviewer(input, openClient = managedReviewClient
       afterRemoteTurnStart: async ({ turn }) => {
         activeTurn = { threadId, turnId: turn.id };
         const completion = { sessionId: threadId, turnId: turn.id, status: "completed" };
-        const fields = { runtime: "codex", role: input.role, workerId: threadId, source: helper.source, completion };
+        const fields = { runtime: "codex", role: input.role, workerId: threadId, source: helper.source, completion,
+          ...(critic ? { head: helper.source.head } : {}) };
         const result = await client.request("turn/steer", { threadId, expectedTurnId: turn.id,
           input: [{ type: "text", text: "Use these fields: " + JSON.stringify(fields) + "\nLast line: " + finalMarker(helper, completion) }] });
         if (result.turnId !== turn.id) throw new Error("App Server steered another review turn");
@@ -175,8 +188,29 @@ export async function runManagedReviewer(input, openClient = managedReviewClient
     const setupProblem = codexGraphSetupProblem(observed, aliases);
     if (setupProblem) throw new Error(setupProblem);
     if (aliases.length && !observed.toolCalls.some(name => aliases.includes(name))) throw new Error("Recorded graph capability has no observed tool call");
+    let findings;
+    if (critic) {
+      const completion = { sessionId: threadId, turnId: finished.turnId, status: "completed" };
+      const result = nativeReviewResult(readFileSync(deliverable, "utf8"), helper, completion);
+      if (result.head !== helper.source.head || !isDeepStrictEqual(result.source, helper.source) ||
+          result.role !== input.role || result.runtime !== "codex" || result.workerId !== threadId ||
+          !isDeepStrictEqual(result.completion, completion)) throw new Error("Critic findings differ from the registered head or completed turn");
+      if (!Array.isArray(result.findings) || result.findings.some(finding => typeof finding?.touchedSurface !== "boolean")) {
+        throw new Error("Critic findings must be a list with a boolean touchedSurface on each entry");
+      }
+      if (result.findings.length) {
+        const problems = findingProblems(result.findings);
+        if (problems.length) throw new Error("Critic findings need actionable evidence: " + problems.join("; "));
+      }
+      findings = { head: result.head, findings: result.findings, ...(result.questions ? { questions: result.questions } : {}) };
+    }
     helperAction(orchDir, "final", input.helper, "--deliverable", deliverable, "--session-id", threadId,
       "--turn-id", finished.turnId, "--out", report);
+    if (critic) {
+      const visualQa = path.join(directory, "findings.json");
+      writeFileSync(visualQa, JSON.stringify(findings) + "\n", { flag: "wx", mode: 0o600 });
+      return { threadId, visualQa };
+    }
     return { threadId, report, deliverable };
   } catch (error) {
     const cleanup = [];

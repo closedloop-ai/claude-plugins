@@ -7,6 +7,7 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
 > Read `../vibe/references/quality-loop-visual-qa.md` (block `when-to-capture`) before any screenshot capture or visual QA pass, in the loop or at handoff.
 
 <!-- block: qa-gate-rules -->
+- Give a visual critic the ticket's original criteria and the applicable operator rulings with the review brief. If a proposed fix contradicts either, return a QUESTION citing the conflict and keep it out of defect dispositions.
 - QA happens before merge; never call a PR ready to enqueue before its QA is done.
 - A unit's PR is ready only once its review of the completed work passed (`references/ticket-units.md`, "Review the completed work"): every member and PRD criterion with a code row and a capture for each page and surface it names.
 - Each PR moves through independent review, fixes, verification, visual review where needed, one feature-complete QA pass, operator QA, one main merge, then enqueue.

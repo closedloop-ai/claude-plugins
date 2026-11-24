@@ -6,7 +6,7 @@
 //
 // Usage (hook): reads the PreToolUse JSON on stdin; prints one decision or context object, or nothing.
 
-import { agentGuard } from "./agent-guard.mjs";
+import { agentGuard, fleetLaunchGuard } from "./agent-guard.mjs";
 import { appBinaryGuard } from "./app-binary-guard.mjs";
 import { foregroundGuard } from "./foreground-guard.mjs";
 import { deny, mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
@@ -40,9 +40,11 @@ export const PRE_TOOL_USE_ROUTES = Object.freeze({
     { name: "shell-safety-guard", run: shellSafetyGuard, activated: true, guards: runsE2eScript },
     { name: "app-binary-guard", run: appBinaryGuard, activated: true },
     { name: "scratch-creation-guard", run: scratchCreationGuard },
+    { name: "fleet-launch-guard", run: fleetLaunchGuard },
     { name: "plugin-version-guard", run: pluginVersionGuard },
   ]),
   Agent: Object.freeze([
+    { name: "fleet-launch-guard", run: fleetLaunchGuard },
     { name: "agent-guard", run: agentGuard, activated: true },
     { name: "plugin-version-guard", run: pluginVersionGuard },
   ]),

@@ -138,6 +138,7 @@ async function intakeScope(input) {
     file: { path: file, status: plannedStatus(worktree, loaded.inventory.baseCommit, file) },
     phase: input.phase,
     policy: loaded.policy ?? defaultPolicy,
+    pathCitations: loaded.inventory.pathCitations,
     prototype: { owned: loaded.inventory.ownedPrototype === true, slug: loaded.inventory.sessionSlug },
     portableSurfaceAllowed: await portableSurfaceEditAllowed(worktree, loaded.inventory, file)
   }) })));

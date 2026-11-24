@@ -33,7 +33,7 @@ import { reusableReviewRoles } from "./review-impact.mjs";
 const { sameSource, sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
 const { reviewReceiptProblems } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
-const { EVIDENCE_KEYS, checkedMergeProblem, gatePath, memberNameProblems, mergeTargets, readReviewReceipts, reviewFindingProblems, sessionMembers } = await vibeCore("lib/handoff/scripts/handoff-gate-check.mjs");
+const { EVIDENCE_KEYS, checkedMergeProblem, gatePath, memberNameProblems, mergeTargets, pathCitationProblem, readReviewReceipts, reviewFindingProblems, sessionMembers } = await vibeCore("lib/handoff/scripts/handoff-gate-check.mjs");
 const { exitOnProviderBroken, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { changedPaths, visualQaFindingsProblems, visualQaRequired } = await vibeCore("lib/vibe/scripts/required-visual-qa.mjs");
 const { placementLineProblem } = await vibeCore("lib/fleet-orchestrator/scripts/delivery-placement.mjs");
@@ -182,7 +182,8 @@ export function recordHandoffGate({ worktree, body, runs, ticket, rulings, base,
     ...(ticket ? ["--ticket", ticket] : []), ...(rulings ? ["--rulings", rulings] : []), ...members.flatMap((member) => ["--ticket", member.slice(member.indexOf("=") + 1)])];
   const result = runScript(process.execPath, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0) throw new Error(`pull-request inventory failed: ${result.stderr || result.stdout}`);
-  const problem = inventoryGateProblem(JSON.parse(result.stdout));
+  const inventory = JSON.parse(result.stdout);
+  const problem = inventoryGateProblem(inventory);
   if (problem) throw new Error(problem);
   const branch = execFileSync("git", ["-C", worktree, "branch", "--show-current"], { encoding: "utf8" }).trim();
   if (!sameSource(source, sourceIdentity(worktree))) throw new Error("source changed while the handoff gate ran");
@@ -197,7 +198,10 @@ export function recordHandoffGate({ worktree, body, runs, ticket, rulings, base,
   const current = mergeTargets(worktree, base);
   if (current.base.oid !== targets.base.oid) throw new Error("PR base moved during the handoff gate");
   if (current.main?.oid !== targets.main?.oid) throw new Error("current main moved during the handoff gate");
+  const citationProblem = pathCitationProblem(worktree, inventory.pathCitations, inventory.pathCitationEvidence);
+  if (citationProblem) throw new Error(citationProblem);
   writeFileSync(witness, `${JSON.stringify({ branch, source, base: targets.base, main: targets.main, evidence, receipts: boundReceipts,
+    ...(inventory.pathCitations?.length ? { pathCitations: inventory.pathCitations, pathCitationEvidence: inventory.pathCitationEvidence } : {}),
     reviewCarry: [...reusableRoles].sort(), memberTickets, unitReviewPassed: Boolean(review),
     visualQa: { required: visual.required, reason: visual.reason, findings: visual.required ? evidenceFingerprint(visualQa) : null }, inventoryPassed: true,
     prBodyPassed: true, prEvidencePassed: true, reviewPassed: true })}\n`, { mode: 0o600 });

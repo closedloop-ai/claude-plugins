@@ -11,7 +11,7 @@ import { writeRemoteCodexStub } from '../../../../vibe/skills/fleet-orchestrator
 import { vibeRoot } from '../../../shared/vibe-install.mjs';
 import { ambiguousHome, bindChat, captureBinding, chatBinding, programChats, programFor, reclaimStaleLock, releaseLeftoverClaims, restoreBinding, unbindChat } from './chat-binding.mjs';
 import { closeProgram, startProgram } from './fleet-home.mjs';
-import { bindProviderInProcess } from '../../../../vibe/skills/vibe/scripts/test-fixtures.mjs';
+import { bindProviderInProcess, writeActiveTicketSnapshot } from '../../../../vibe/skills/vibe/scripts/test-fixtures.mjs';
 
 // Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
@@ -217,6 +217,7 @@ test('a program records its shape at start, resume says what applies, and the bo
   const started = run(['start', 'solo', '--shape', 'no-writer', '--home', home]);
   assert.equal(started.status, 0, started.stderr);
   const program = path.join(home, 'programs', 'solo');
+  writeActiveTicketSnapshot(program, ['ISS-1', 'ISS-2']);
   assert.deepEqual(JSON.parse(readFileSync(path.join(program, 'program.json'), 'utf8')), { shape: 'no-writer' });
   assert.match(run(['resume', '--home', home]).stdout, /^SHAPE no-writer: nobody writes code; the resume log, rulings, research and evidence rules apply/m);
 
@@ -234,7 +235,12 @@ test('a program records its shape at start, resume says what applies, and the bo
   assert.equal(second.status, 2);
   assert.match(second.stderr, /recorded as one-writer \(writer w1\); record its new shape with fleet-home\.mjs shape fleet/);
   assert.equal(run(['shape', 'fleet', '--home', home]).status, 0);
-  assert.equal(board('writer', 'w2', '--tickets', 'ISS-1', '--runtime', 'codex').status, 0);
+  assert.match(board('writer', 'w2', '--tickets', 'ISS-1', '--runtime', 'codex').stderr, /already belongs to writer w1/);
+  const candidates = path.join(tempRoot(t), 'candidates.json');
+  writeFileSync(candidates, JSON.stringify({ tickets: ['ISS-1', 'ISS-2'].map(slug => ({ slug, repo: 'acme/app', files: [slug + '.js'] })) }));
+  assert.equal(board('placement', 'ISS-2', '--evidence', evidence, '--candidates', candidates).status, 0);
+  const independent = board('writer', 'w2', '--tickets', 'ISS-2', '--runtime', 'codex');
+  assert.equal(independent.status, 0, independent.stderr);
   assert.equal(run(['shape', 'several', '--home', home]).status, 2);
 });
 

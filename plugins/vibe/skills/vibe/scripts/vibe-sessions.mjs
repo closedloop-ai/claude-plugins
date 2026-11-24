@@ -16,6 +16,7 @@
 //   vibe-sessions.mjs touch           --worktree <path> [--summary <text>] [--ticket <slug>]
 //                                     [--status active|handed-off] [--live-ticket <slug>]
 //                                     [--created-live-ticket] [--member-ticket <slug> ...]
+//                                     [--cite-path <literal file> --criterion <AC-n>]
 //                                     [--live-plan <plan slug>] [--live-plan-status DRAFT|APPROVED|EXECUTED]
 //                                     [--mode seeded|blank] [--stack <json>] [--main-merge deferred|final]
 //                                     [--environment-org <id>]
@@ -214,6 +215,8 @@ const { positionals, values } = parseArgs({
     "created-live-ticket": { type: "boolean", default: false },
     "handoff-ticket": { type: "string" },
     "member-ticket": { type: "string", multiple: true },
+    "cite-path": { type: "string" },
+    criterion: { type: "string" },
     "body-stale": { type: "string" },
     "body-refreshed": { type: "boolean", default: false },
     "live-plan": { type: "string" },
@@ -278,7 +281,7 @@ async function run(command) {
     case "prototype-result":
       return { session: savePrototypePublication(requireOption("worktree"), requireOption("file")) };
     case "touch":
-      return { session: touchSession() };
+      return { session: await touchSession() };
     case "flag-snapshot":
       return { session: saveFlagSnapshot() };
     case "desktop-auth":
@@ -489,7 +492,7 @@ function newSession({ prototype = false } = {}) {
   return { worktree, ...record, ...(questions.length ? { questions } : {}) };
 }
 
-function touchSession() {
+async function touchSession() {
   const worktree = requireOption("worktree");
   const record = requireRecord(worktree);
   const orgId = values["environment-org"] ?? values["clerk-org-id"];
@@ -572,6 +575,14 @@ function touchSession() {
   // A recorded scope change leaves the open pull request's body stale until env-ctl pr-update saves a refreshed one.
   if (values["body-stale"]) updated.prBodyStale = { reason: values["body-stale"].trim(), at: now };
   if (values["body-refreshed"]) delete updated.prBodyStale;
+  if (values["cite-path"] !== undefined || values.criterion !== undefined) {
+    const requested = { path: values["cite-path"], cites: values.criterion };
+    const { pathCitationAuthority } = await import("../../handoff/scripts/path-citations.mjs");
+    const verified = pathCitationAuthority(worktree, updated, { requested }).citations.find(entry => entry.source === "request");
+    if (!verified) throw new Error("The bound ticket needs a current criterion naming this exact repository file.");
+    const row = { ticket: verified.ticket, ...requested, text: verified.text };
+    updated.pathCitations = [...(record.pathCitations ?? []).filter(entry => entry.path !== row.path), row];
+  }
   writeRecord(worktree, updated);
   let retirementWarning;
   if (retirement) {

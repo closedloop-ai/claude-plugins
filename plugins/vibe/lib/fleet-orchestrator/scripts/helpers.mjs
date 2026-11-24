@@ -56,10 +56,12 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSy
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { boundReviewContext } from "../../handoff/scripts/review-context.mjs";
 import { parseArgs } from "node:util";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { captureOwnedDockerResources, defaultLockDir, readHolder, removeOwnedDockerResources, sameWorktreeEntry } from "../../vibe/scripts/e2e-lock.mjs";
 import { readProcessIdentity } from "../../../shared/process-identity.mjs";
+import { reclaimStaleLock } from "./chat-binding.mjs";
 import { sameSource, sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { agentFrontmatterName } from "../../vibe/scripts/agent-frontmatter.mjs";
@@ -368,8 +370,16 @@ export function read(orchDir) {
 }
 
 /** Acquire the helper ledger lock and return its identity-checked release callback. */
-export async function acquireLedgerLock(orchDir, { waitMs = 30_000, clock = Date.now } = {}) {
-  const dir = path.join(orchDir, 'helpers.lock');
+export async function acquireLedgerLock(orchDir, { waitMs = 30_000, clock = Date.now, ledger = 'helpers' } = {}) {
+  const dir = path.join(orchDir, ledger + '.lock');
+  const readOwner = () => {
+    try { return readFileSync(path.join(dir, 'owner.json'), 'utf8'); }
+    catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      const stat = statSync(dir, { throwIfNoEntry: false });
+      return stat ? `uninitialized:${stat.dev}:${stat.ino}:${stat.ctimeMs}` : '';
+    }
+  };
   const owner = { pid: process.pid, identity: readIdentity(process.pid), token: randomUUID() };
   if (!owner.identity) throw new Error('helper ledger process identity is unreadable');
   const deadline = clock() + waitMs;
@@ -385,17 +395,16 @@ export async function acquireLedgerLock(orchDir, { waitMs = 30_000, clock = Date
       };
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
+      const seen = readOwner();
+      if (!seen) continue;
       let saved;
-      try { saved = JSON.parse(readFileSync(path.join(dir, 'owner.json'), 'utf8')); } catch { saved = null; }
+      try { saved = JSON.parse(seen); } catch { saved = null; }
       if (saved?.identity && readIdentity(saved.pid) === saved.identity
-        || !saved && Date.now() - statSync(dir).mtimeMs < 60_000) {
+        || !saved && Date.now() - (statSync(dir, { throwIfNoEntry: false })?.mtimeMs ?? Date.now()) < 60_000) {
         await new Promise((resolve) => setTimeout(resolve, 100));
         continue;
       }
-      let current;
-      try { current = JSON.parse(readFileSync(path.join(dir, 'owner.json'), 'utf8')); } catch { current = null; }
-      if (current?.token !== saved?.token) continue;
-      rmSync(dir, { recursive: true });
+      reclaimStaleLock(dir, seen, { read: readOwner, remove: lock => rmSync(lock, { recursive: true }) });
     }
   }
   throw new Error('helper ledger lock remained active; ownership record was not overwritten');
@@ -533,9 +542,11 @@ async function main(argv) {
     // The helper is a fresh thread: record the installed definition it starts on, labeled as such.
     const spawnLoad = FINAL_KINDS.has(kind) ? loadedSkillEvidence(values["worker-id"], runtime, vibeRoot(values.worktree ?? process.cwd()), "fleet-orchestrator", LoadBasis.InstalledAtSpawn) : null;
     let briefEvidence;
+    let reviewCriteria;
     if (FINAL_KINDS.has(kind)) {
       const briefPath = runtime === "codex" ? resolveHelperBrief(orchDir, values.brief) : path.resolve(orchDir, values.brief);
       const bytes = readFileSync(briefPath);
+      reviewCriteria = boundReviewContext(bytes.toString("utf8"), values.worktree, orchDir, values.ticket);
       if (runtime === "codex") briefEvidence = { path: briefPath, sha256: createHash("sha256").update(bytes).digest("hex") };
       const actorRecord = { loadedSkill: spawnLoad };
       const problems = promptProblems(actorRecord, bytes.toString("utf8"), { actorId: values["worker-id"], pluginRoot: vibeRoot(values.worktree ?? process.cwd()), worktree: values.worktree });
@@ -570,6 +581,7 @@ async function main(argv) {
       ...(capabilities ? { workerId: values["worker-id"], role: values.role, agentDefinition: definition.fingerprint, capabilities: capabilities.fingerprint,
         loadedSkill: spawnLoad } : {}),
       ...(briefEvidence ? { briefEvidence } : {}),
+      ...(reviewCriteria ? { reviewCriteria } : {}),
       ...(values.brief ? { brief: values.brief } : {}), ...(values.worktree ? { worktree: path.resolve(values.worktree), source: sourceIdentity(values.worktree) } : {}), ...(values.stack ? { stack: values.stack } : {}),
       ...(values.owner ? { owner: values.owner } : {}), ...(values.ticket ? { ticket: values.ticket } : {}),
       ...(values.repo ? { repo: values.repo } : {}), ...(values.pr ? { pr: values.pr } : {}),

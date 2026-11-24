@@ -88,6 +88,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual, parseArgs } from "node:util";
+import { credentialLimitation } from "./engineering-limitation.mjs";
 import { fileURLToPath } from "node:url";
 import { qaImpactDirectCommitScope, qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
 import { repositoryLaneReportProblems } from "../../handoff/scripts/ci-job-shape.mjs";
@@ -210,9 +211,12 @@ export function missingLanes(lanes, records, selection) {
 }
 
 /** The lanes left for CI on this machine: web e2e without the staging identities, Desktop e2e without the harness. */
-export function notRunLanes(lanes, records, selection, { identity, harness }) {
+export function notRunLanes(lanes, records, selection, { identity, harness, worktree }) {
   return lanes.flatMap((lane) => {
     if (!missingLanes([lane], records, selection).length) return [];
+    if (records.some(record => record.command === lane && sameSelection(record, selection) && record.result === "fail")) return [];
+    const limitation = credentialLimitation(worktree, selection.source?.head, lane);
+    if (limitation) return [{ lane, reason: limitation.reason, engineeringCredential: limitation.credential }];
     if (!identity && isWebE2eLane(lane)) return [{ lane, reason: NOT_RUN_NO_IDENTITY }];
     if (!harness && isDesktopE2eLane(lane)) return [{ lane, reason: NOT_RUN_NO_DESKTOP_HARNESS }];
     return [];
@@ -696,7 +700,7 @@ async function main(argv) {
       const targetedRuns = await targetedE2eCoverage(values, named, records, selected);
       const targetedRunLanes = targetedRuns.map((item) => item.lane);
       const left = notRunLanes(named.filter((lane) => !skip?.test(lane) && !targeted.left.includes(lane) && !targetedRunLanes.includes(lane)), records, selected,
-        { identity: hasStagingE2eIdentity(values.worktree), harness: hasDisplaylessElectronHarness() });
+        { identity: hasStagingE2eIdentity(values.worktree), harness: hasDisplaylessElectronHarness(), worktree: values.worktree });
       const notRun = left.map((item) => item.lane);
       const lanes = named.filter((lane) => !skip?.test(lane) && !targeted.left.includes(lane) && !targetedRunLanes.includes(lane) && !notRun.includes(lane));
       for (const lane of named.filter((lane) => skip?.test(lane))) process.stdout.write(`SKIPPED-LANE ${lane} (${values["skip-ruling"].trim()})\n`);
@@ -708,8 +712,15 @@ async function main(argv) {
         const at = new Date().toISOString();
         const ruled = targeted.left.map((lane) => ({ command: lane, head, source: selected.source, laneKey: selected.laneKey,
           result: "not-run", ruling: targeted.id, rulingSource: targeted.source, reason: "outside the diff-targeted lane set", at }));
-        writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...kept, ...left.map(({ lane, reason }) => ({ command: lane, head, source: selected.source, laneKey: selected.laneKey, result: "not-run", reason, at })), ...ruled], null, 2)}\n`);
-        for (const { lane, reason } of left) process.stdout.write(`NOT-RUN-LANE ${lane} (${reason})\n`);
+        writeRecords(values.worktree, [...kept, ...left.map(({ lane, ...limitation }) => ({ command: lane, head, source: selected.source,
+          laneKey: selected.laneKey, result: "not-run", ...limitation, at })), ...ruled]);
+        for (const { lane, reason, engineeringCredential } of left) {
+          process.stdout.write(`NOT-RUN-LANE ${lane} (${reason})\n`);
+          if (engineeringCredential) {
+            const evidence = { lane, reason, engineeringCredential, commit: head, laneKey: selected.laneKey };
+            process.stdout.write(`ENGINEERING-LANE ${JSON.stringify(evidence)}\n`);
+          }
+        }
       }
       for (const record of records.filter((item) => lanes.includes(item.command) && sameSelection(item, selected) && item.result === "main-preexisting")) {
         process.stdout.write(`MAIN-PREEXISTING-LANE ${record.command} (fails on captured main ${record.mainSha} too; list it under Known main failures)\n`);

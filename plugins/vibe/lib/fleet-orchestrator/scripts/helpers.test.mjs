@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { reviewBrief } from '../../handoff/scripts/review-context-test-support.mjs';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -167,11 +168,11 @@ test('idle notice cannot accept or stop a reviewer without its source-bound FINA
   const brief = path.join(dir, 'review.md');
   writeFileSync(brief, 'Review the current diff.\n');
   assert.notEqual(run([dir, 'start', 'missing', '--kind', 'reviewer', '--worktree', worktree]).status, 0, 'reviewer needs a brief');
-  writeFileSync(brief, 'Run handoff/scripts/qa-merge-order.mjs.\n');
+  writeFileSync(brief, reviewBrief(dir, 'Run handoff/scripts/qa-merge-order.mjs.'));
   assert.notEqual(run([dir, 'start', 'missing-script', '--kind', 'reviewer', '--brief', brief, '--worktree', worktree,
     '--worker-id', 'native-reviewer-missing', '--role', 'reviewer', '--agent-definition', definition, '--capabilities', capabilities]).status, 0,
   'Claude helper launch refuses a deleted installed plugin script');
-  writeFileSync(brief, 'Review the current diff.\n');
+  writeFileSync(brief, reviewBrief(dir, 'Review the current diff.'));
   assert.equal(run([dir, 'start', 'reviewer', '--kind', 'reviewer', '--brief', brief, '--worktree', worktree,
     '--worker-id', 'native-reviewer-1', '--role', 'reviewer', '--agent-definition', definition, '--capabilities', capabilities]).status, 0);
   assert.notEqual(run([dir, 'accepted', 'reviewer']).status, 0, 'idle is not a final report');
@@ -582,7 +583,7 @@ test('a helper whose result was accepted and that still runs is a stop candidate
   writeFileSync(definition, '---\nname: review-a\n---\n');
   const brief = path.join(dir, 'prompts', 'review-a-01.md');
   mkdirSync(path.dirname(brief));
-  writeFileSync(brief, 'Review.\n');
+  writeFileSync(brief, reviewBrief(dir));
   assert.equal(run([dir, 'start', 'review-a', '--kind', 'reviewer', '--brief', 'prompts/review-a-01.md', '--worktree', source,
     '--worker-id', 'native-reviewer-a', '--role', 'review-a', '--agent-definition', definition,
     '--capabilities', capabilities, '--now', '2026-10-21T10:00:00Z']).status, 0);
@@ -613,7 +614,7 @@ test('ISS-14117 an interrupted reviewer closes through recorded abandonment with
   execFileSync('git', ['-C', source, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'base']);
   const capabilities = path.join(dir, 'abandoned-capabilities.json'); writeFileSync(capabilities, '[]\n');
   const definition = path.join(dir, 'abandoned-review.md'); writeFileSync(definition, '---\nname: review-abandoned\n---\n');
-  const brief = path.join(dir, 'abandoned-brief.md'); writeFileSync(brief, 'Review.\n');
+  const brief = path.join(dir, 'abandoned-brief.md'); writeFileSync(brief, reviewBrief(dir));
   assert.equal(run([dir, 'start', 'review-abandoned', '--kind', 'reviewer', '--brief', brief, '--worktree', source,
     '--worker-id', 'native-reviewer-abandoned', '--role', 'review-abandoned', '--agent-definition', definition,
     '--capabilities', capabilities]).status, 0);
