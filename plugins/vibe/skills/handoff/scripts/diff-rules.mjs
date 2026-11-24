@@ -9,25 +9,32 @@
 // docs folders) are the bound provider's `recipes.diffRules`; without one those
 // rules do not run and only the generic rules apply.
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { isLocalPlanPath, localPlanPaths, localPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { lineIndex } from "./line-index.mjs";
 import { migrationId, migrationProblems } from "../../vibe/scripts/migration-publish.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
+import { readRetiredTests } from "../../vibe/scripts/retired-tests.mjs";
 import { pathGateTests } from "./path-gates.mjs";
-import { checkComparators, checkDuplicateHelpers, checkUnusedExports } from "./review-gap-rules.mjs";
+import { checkComparators, checkDuplicateHelpers, checkOrphanedTypeMembers, checkParserLayoutProof, checkRangeParamCopies, checkRenderedCopyAssertions, checkStoragePrefixCopies, checkUnusedExports } from "./review-gap-rules.mjs";
+import { checkDisplayNameSqlOwners, checkOrphanedHookNames, checkOrphanedModules, checkRetainedContractComments, checkTieBreakerFixtureReach } from "./removal-review-rules.mjs";
+import { checkStoryStateCoverage } from "./story-coverage-rules.mjs";
 import { checkCommentRules, citationPattern, commentBody } from "./comment-rules.mjs";
 import { sharedComponentTests } from "./shared-consumers.mjs";
 import { checkSpecChanges } from "./spec-rules.mjs";
+import { checkRetiredTestDeletions } from "./retirement-evidence.mjs";
 import { checkFlagRetirement } from "./flag-retirement.mjs";
 import { routeSpecs } from "./route-specs.mjs";
 import { escapeRegExp, SOURCE_FILE } from "./source-imports.mjs";
 import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
+import { checkTouchLeadCoverage, surfaceFixProblems } from "./surface-fix-evidence.mjs";
+import { checkSourceLineCeiling } from "./source-line-ceiling.mjs";
 import { isGeneratedFile } from "./generated-files.mjs";
 import { frozenAffectedStoryFiles, frozenInputs } from "./frozen-render.mjs";
-import { DEEPEN_STEPS, gitRepo, lines } from "./diff-rules-repo.mjs";
-import { checkStorybookRules, storybookRuleTests } from "./storybook-rules.mjs";
+import { DEEPEN_STEPS, exactReplacedMoves, gitRepo, lines } from "./diff-rules-repo.mjs";
+import { checkStorybookRules, isStorySupportFile, readStorybookRules, storybookRuleTests } from "./storybook-rules.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 import { isVisualBaseline, visualBaselineLedgerProblems } from "./visual-baseline-ledger.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
@@ -157,16 +164,28 @@ export function touchesUiPath(files) {
  * (tracked paths at head), `importerCounts(paths)` (non-test files importing each) and optional `generatedFiles`
  * (head paths the repository marks `linguist-generated`); a generator header is read through `head` and `base`.
  */
-export function evaluateDiff(changedFiles, changeLog, repo, phase = "pull-request") {
+export function evaluateDiff(changedFiles, changeLog, repo, phase = "pull-request", fileRuleCache = null) {
   // One predicate for every rule: build output repeats its hand-written source, which carries any finding; the build
   // lanes byte-check the output. duplicate-helper skips only linguist-generated files (isGeneratedFile).
-  const files = changedFiles.filter((file) => !isGeneratedFile(repo, file.path));
+  const classified = exactReplacedMoves(changedFiles, repo);
+  const files = classified.filter((file) => !isGeneratedFile(repo, file.path));
   const blocking = [];
   const requiredTests = [];
   const requiredChecks = [];
   const logged = (prefix, file) => changeLog.split("\n").some((line) => line.includes(prefix) && (file === undefined || line.includes(file)));
   const add = (rule, file, line, problem, fix) => blocking.push({ rule, file, line, problem, fix });
   const live = files.filter((file) => file.status !== "D");
+  checkSourceLineCeiling(files, repo, add);
+  const privateStartupFile = ["", "secrets", "env"].join(".");
+  for (const file of live.filter((entry) => /^(?:plugins\/vibe(?:-[a-z0-9-]+)?|tools\/vibe-[^/]+)\//.test(entry.path))) {
+    for (const entry of file.added.filter(({ text }) => text.includes(privateStartupFile))) {
+      add("private-env-file", file.path, entry.line, "references a private environment file directly",
+        "use the operator’s zsh login shell and inspect only the named variable’s presence, length or hash");
+    }
+  }
+  for (const { file, reason } of surfaceFixProblems(changeLog, files, repo)) add("fix-surface-unreachable", file, 1, reason, "record the real route-to-fix import chain or a verified red-first host test");
+  checkTouchLeadCoverage(files, repo, add, requiredTests);
+  checkRetiredTestDeletions(files, repo, add);
 
   if (repo.rules?.migrations) checkMigrations(live, repo, logged, add, requiredChecks);
   const newMigrations = live.filter((file) => file.status === "A" && migrationId(file.path)).map((file) => ({ path: file.path, sql: repo.head(file.path) ?? "" }));
@@ -180,16 +199,28 @@ export function evaluateDiff(changedFiles, changeLog, repo, phase = "pull-reques
   for (const file of shared.filter((entry) => (importers.get(entry.path) ?? 0) >= 2)) {
     add("shared-path", file.path, file.added[0]?.line ?? 1, "changes a shared read or write path without recorded evidence that existing callers are unchanged", "record `Shared path: <path>: unchanged for existing callers; evidence: <test or missing test entry with legacy fixtures>` or `...: changed; ruling: <human source>`");
   }
+  const fileFindings = (group, file, source, check) => {
+    const compute = () => {
+      const outcomes = [];
+      check((rule, file, line, problem, fix) => outcomes.push({ rule, file, line, problem, fix }));
+      return outcomes;
+    };
+    blocking.push(...(fileRuleCache ? fileRuleCache.findings(group, file, source, compute) : compute()));
+  };
   for (const file of live.filter((entry) => SCRIPT_FILE.test(entry.path) && !isTestFile(entry.path))) {
-    for (const entry of file.added.filter((item) => ENV_DUMP.some((pattern) => pattern.test(item.text)))) {
-      add("env-dump", file.path, entry.line, "prints or serializes the whole environment, which holds credentials", "read only the named non-secret keys the diagnostic needs; never print, log or write env or config wholesale");
-    }
+    fileFindings("runtime environment", file, null, (add) => {
+      for (const entry of file.added.filter((item) => ENV_DUMP.some((pattern) => pattern.test(item.text)))) {
+        add("env-dump", file.path, entry.line, "prints or serializes the whole environment, which holds credentials", "read only the named non-secret keys the diagnostic needs; never print, log or write env or config wholesale");
+      }
+    });
   }
   for (const file of live.filter((entry) => SOURCE_FILE.test(entry.path) && !isTestFile(entry.path))) {
     const head = repo.head(file.path) ?? "";
-    if (rules.activityCapture) checkActivityCapture(file, head, logged, add, rules.activityCapture);
-    checkTransactions(file, head, add);
-    checkLinkDeletes(file, head, add);
+    fileFindings("storage boundaries", file, head, (add) => {
+      if (rules.activityCapture) checkActivityCapture(file, head, logged, add, rules.activityCapture);
+      checkTransactions(file, head, add);
+      checkLinkDeletes(file, head, add);
+    });
   }
   checkHighRiskBatchChanges(live, changeLog, repo, add, requiredTests);
   checkOwnerTestRules(live, changeLog, repo, add, requiredTests);
@@ -197,11 +228,13 @@ export function evaluateDiff(changedFiles, changeLog, repo, phase = "pull-reques
   checkTicketedComments(files, repo, logged, add, rules);
   checkCommentRules(live, repo, add);
   checkStories(live, files, repo, logged, add);
-  checkFrozenRenders(files, repo, changeLog, add);
+  checkFrozenRenders(classified, repo, changeLog, add);
   checkLostStoryIds(files, repo, logged, add);
   checkCopyProvenance(live, files, repo, logged, add);
-  checkNewControls(live, files, changeLog, add, rules);
-  checkSharedCapabilityOwners(live, changeLog, repo, add, rules);
+  const storyConfig = readStorybookRules(repo.head)?.config;
+  const productFiles = live.filter((file) => !STORY_FILE.test(file.path) && !isStorySupportFile(file.path, storyConfig));
+  checkNewControls(productFiles, files, changeLog, add, rules);
+  checkSharedCapabilityOwners(productFiles, changeLog, repo, add, rules);
   for (const problem of visualBaselineLedgerProblems(changeLog, live.filter((file) => isVisualBaseline(file.path)).map((file) => file.path))) {
     const file = problem.slice(0, problem.indexOf(":"));
     add("visual-baseline-ledger", file, 1, problem.slice(problem.indexOf(":") + 2), "compare the baseline diff with the requirement inventory; record its counted `Baseline inventory:` and one cited `Baseline element:` line per new element");
@@ -211,8 +244,19 @@ export function evaluateDiff(changedFiles, changeLog, repo, phase = "pull-reques
   const flagRetirements = checkFlagRetirement(files, repo, changeLog, add);
   checkRestoredRemovalsDeepening(live, files, repo, changeLog, add);
   checkComparators(live, repo, logged, add, changeLog, phase);
+  checkParserLayoutProof(live, repo, changeLog, add, requiredTests);
+  checkRenderedCopyAssertions(live, repo, add);
+  checkStoragePrefixCopies(live, repo, add);
+  checkOrphanedTypeMembers(files, repo, add);
+  checkRangeParamCopies(live, repo, add);
+  checkOrphanedModules(files, repo, add);
+  checkRetainedContractComments(live, repo, add);
+  checkOrphanedHookNames(live, repo, add);
+  checkDisplayNameSqlOwners(live, repo, add);
+  checkTieBreakerFixtureReach(live, repo, add, requiredTests);
+  checkStoryStateCoverage(files, repo, add);
   checkUnusedExports(live, repo, logged, add);
-  checkDuplicateHelpers(changedFiles.filter((file) => file.status !== "D" && !isGeneratedFile(repo, file.path, { header: false })), repo, add);
+  checkDuplicateHelpers(classified.filter((file) => file.status !== "D" && !isGeneratedFile(repo, file.path, { header: false })), repo, add);
   checkStorybookRules(files, repo, logged, add);
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo, add), ...sidebarOrderTests(files, repo), ...pathGateTests(live, (file) => repo.head(file)), ...storybookRuleTests(files, (file) => repo.head(file)), ...sharedComponentTests(live, repo, logged, add));
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks, ...(flagRetirements.length ? { flagRetirements } : {}) };
@@ -844,14 +888,18 @@ export function sidebarOrderTests(files, repo) {
     : [];
 }
 
-function untrackedAsAdded(worktree, planPrefix) {
-  return git(worktree, ["ls-files", "--others", "--exclude-standard"]).split("\n").filter(Boolean)
+/** Read untracked deliverables as additions using the same local-plan exclusions as tracked files. */
+export function untrackedAsAdded(worktree, planPrefix, {
+  files = readGitInventory(worktree, ["ls-files", "--others", "--exclude-standard", "-z"]),
+  read = (file) => readFileSync(file, "utf8"),
+} = {}) {
+  return files.split("\0").filter(Boolean)
     .filter((file) => !isLocalPlanPath(file, planPrefix))
     .map((file) => ({
       path: file,
       oldPath: null,
       status: "A",
-      added: readFileSync(path.join(worktree, file), "utf8").split("\n").map((text, index) => ({ line: index + 1, text })),
+      added: read(path.join(worktree, file)).split("\n").map((text, index) => ({ line: index + 1, text })),
       removed: [],
     }));
 }
@@ -865,18 +913,40 @@ function untrackedAsAdded(worktree, planPrefix) {
  * session's provider binding, whose `recipes.diffRules` and tracker slugs the
  * repository rules read (none without one).
  */
-export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), isFrozenStory = () => false, storyReplacements = new Set(), phase = "pull-request",
-  binding = sessionBinding(worktree) }) {
+export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), isFrozenStory = null, storyReplacements = new Set(), phase = "pull-request",
+  binding = sessionBinding(worktree), fileRuleCache = null }) {
   const planPrefix = localPlanPrefix(binding);
   const files = [...parseUnifiedDiff(git(worktree, ["diff", "--no-color", "--unified=0", "-M", base]), planPrefix), ...untrackedAsAdded(worktree, planPrefix)]
     .filter((file) => !exclude.has(file.path));
   const logFile = changeLog ?? path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-changes.md");
   const log = existsSync(logFile) ? readFileSync(logFile, "utf8") : "";
-  return evaluateDiff(files, log, gitRepo(worktree, base, isFrozenStory, storyReplacements,
-    compileDiffRules(providerDataOr(binding, "recipes", "diffRules", null), binding), sessionInternalIds(worktree, log)), phase);
+  const repo = gitRepo(worktree, base, isFrozenStory, storyReplacements,
+    compileDiffRules(providerDataOr(binding, "recipes", "diffRules", null), binding), sessionInternalIds(worktree, log),
+    repositoryLayout(binding).storyGroupOrder ?? null);
+  repo.retiredTests = () => readRetiredTests(worktree);
+  repo.tableRows = sessionTableRows(worktree);
+  repo.currentHead = () => git(worktree, ["rev-parse", "HEAD"]);
+  repo.receiptDir = path.dirname(logFile);
+  repo.surfaceProofs = () => {
+    const evidence = path.join(repo.receiptDir, "vibe-pr-evidence.json");
+    return existsSync(evidence) ? JSON.parse(readFileSync(evidence, "utf8")) : null;
+  };
+  return evaluateDiff(files, log, repo, phase, fileRuleCache);
 }
 
 /** The private row ids (decision tables, change log) the copy rules treat as session-internal. */
+/** Each session decision-table row as its id and full line, so a rule can see which rows name a file. */
+function sessionTableRows(worktree) {
+  const directory = path.dirname(localPlanPaths(worktree).decisionTable);
+  try {
+    return readdirSync(directory).filter((entry) => entry.endsWith(".md")).flatMap((name) =>
+      readFileSync(path.join(directory, name), "utf8").split("\n").flatMap((line) => {
+        const id = /^\|\s*((?:DT|ROW|DEC)-[A-Za-z0-9.-]+)\s*\|/.exec(line)?.[1];
+        return id ? [{ id, text: line }] : [];
+      }));
+  } catch { return []; }
+}
+
 export function sessionInternalIds(worktree, changeLog) {
   const texts = [changeLog];
   const directory = path.dirname(localPlanPaths(worktree).decisionTable);

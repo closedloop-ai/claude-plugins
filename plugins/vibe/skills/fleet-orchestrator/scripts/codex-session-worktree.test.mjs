@@ -235,6 +235,18 @@ test('new writer uses the brief ticket when --ticket is omitted and rejects an u
   assert.equal(await run(app, withoutFlag), 'writer turn T1 U1');
 });
 
+test('a new binding takes its ticket from --ticket when the brief names none, and the session record ticket still has to match', async (t) => {
+  const f = fixture(t);
+  writeFileSync(f.recordPath, JSON.stringify(f.record));
+  writeFileSync(f.promptFile, `$vibe resume this session\nProvider: ${PROVIDER_BINDING.name}\n`);
+  const refused = client();
+  await assert.rejects(run(refused, f.options('ISS-2')), /different vibe session ticket than brief ticket ISS-2/);
+  assert.deepEqual(refused.calls, []);
+  const app = client();
+  assert.equal(await run(app, f.options('ISS-1')), 'writer turn T1 U1');
+  assert.equal(app.calls[0].method, 'thread/start');
+});
+
 test('new writer accepts a PRD-origin Vibe session after its live ISS becomes canonical', async (t) => {
   const f = fixture(t);
   writeFileSync(f.recordPath, JSON.stringify({ ...f.record, ticket: 'PRD-9', liveTicket: 'ISS-1' }));
@@ -402,9 +414,9 @@ test('beside an older vibe the launch check judges the vibe hooks that will run,
     "vibe-core's hooks stand down beside an older vibe, so they do not decide");
 });
 
-test('an App Server without hooks/list keeps launching; other listing failures refuse', async () => {
+test('an App Server without hooks/list refuses with the upgrade step; other listing failures retain their cause', async () => {
   const old = { request: async () => { throw new Error('unknown variant `hooks/list`'); } };
-  assert.equal(await vibeHookTrustProblem(old, '/x'), null);
+  assert.match(await vibeHookTrustProblem(old, '/x'), /cannot prove hook trust; update it/);
   const broken = { request: async () => { throw new Error('socket closed'); } };
   assert.match(await vibeHookTrustProblem(broken, '/x'), /could not list Codex hooks: socket closed/);
   const disabled = { request: async () => ({ data: [{ hooks: [{ key: 'vibe-core@fixture-market:k', pluginId: 'vibe-core@fixture-market', trustStatus: 'trusted', enabled: false }] }] }) };

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
@@ -80,7 +82,7 @@ function currentCheckpointFingerprint(worktree) {
   const working = command(['diff', 'HEAD', '--binary', '--no-ext-diff']);
   const index = command(['diff', '--cached', '--binary', '--no-ext-diff']);
   const status = command(['status', '--porcelain=v1', '-z', '--untracked-files=all']);
-  const paths = command(['ls-files', '--others', '--exclude-standard', '-z'])
+  const paths = readGitInventory(worktree, ['ls-files', '--others', '--exclude-standard', '-z'], { encoding: 'buffer' })
     .toString('utf8').split('\0').filter(Boolean);
   const untracked = paths.map((path) => {
     const absolute = resolve(worktree, path);
@@ -170,7 +172,7 @@ function remove(args) {
     if (!cleanupReason) fail('--cleanup-reason must not be blank');
     const cleanupLedger = canonicalizeProspectivePath(required(args, 'cleanup-ledger'));
     if (isWithin(worktree, cleanupLedger)) fail('Cleanup ledger must be outside the worktree');
-    const verified = JSON.parse(execFileSync(process.execPath, [resolve(dirname(fileURLToPath(import.meta.url)), 'checkpoint-worktree.mjs'), 'verify', '--checkpoint', checkpoint], {
+    const verified = capturedJson(execFileSync(process.execPath, [resolve(dirname(fileURLToPath(import.meta.url)), 'checkpoint-worktree.mjs'), 'verify', '--checkpoint', checkpoint], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     }));

@@ -1,5 +1,7 @@
 /** The binding a script in a session (or this conversation) reads, or null. */
 export function sessionBinding(worktree?: string | null, env?: NodeJS.ProcessEnv): unknown;
+/** The named, provider-owned probe and recovery command, or null when the binding is usable. */
+export function providerProbeProblem(binding: unknown, options?: { disconnected?: boolean }): string | null;
 /** The bound provider's `data[capability][key]`, or `fallback`. */
 export function providerDataOr<T>(binding: unknown, capability: string, key: string, fallback: T): T;
 /** The binding, with its contract, when it is bound with `capability` and its provider is still where it was bound; else null. */

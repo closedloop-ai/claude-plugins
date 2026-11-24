@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -175,4 +175,36 @@ test('a launch check that cannot run warns without failing the started writer', 
   assert.equal(started.status, 0, started.stdout + started.stderr);
   assert.ok(existsSync(receipt));
   assert.match(started.stderr, /launch check could not run \(exit 2\); read it with session last writer/);
+});
+
+test('pane mode reads one exact tmux pane by id and refuses any other pane form', TIMEOUT, (t) => {
+  const { settings } = guiSettings(scratch(t));
+  const dir = scratch(t), bin = join(dir, 'bin'), calls = join(dir, 'tmux-calls');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'tmux'), `#!/bin/sh\necho "$*" >> '${calls}'\nprintf '  ⎿  ok\\n'\n`);
+  chmodSync(join(bin, 'tmux'), 0o755);
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  const run = (...args) => spawnSync(process.execPath, [CHECK, 'pane', ...args, '--within', '1', '--interval', '1', '--settings', settings], { encoding: 'utf8', env });
+  const done = run('--tmux-pane', '%3');
+  assert.equal(done.status, 0, done.stderr);
+  assert.match(done.stdout, /^LAUNCH ok first tool call finished/);
+  assert.equal(readFileSync(calls, 'utf8'), 'capture-pane -p -t %3\n');
+  for (const bad of [['--tmux-pane', 'main:0'], ['--tmux-pane', '%3;x'], ['--tmux-pane', '%3', '--capture', 'true']]) {
+    const refused = run(...bad);
+    assert.notEqual(refused.status, 0, bad.join(' '));
+    assert.match(refused.stderr, /--tmux-pane needs one exact pane id/);
+  }
+});
+
+test('fleet.sh local launch-check passes only one exact tmux pane id to pane mode', TIMEOUT, (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.root, { recursive: true, force: true }));
+  const checked = f.run(['local', 'launch-check', '%3']);
+  assert.equal(checked.status, 0, checked.stdout + checked.stderr);
+  assert.deepEqual(f.argv(checked), [CHECK, 'pane', '--tmux-pane', '%3']);
+  for (const bad of [['main:0'], ['%3;x'], ['%3', '%4']]) {
+    const refused = f.run(['local', 'launch-check', ...bad]);
+    assert.equal(refused.status, 2, bad.join(' '));
+    assert.deepEqual(f.argv(refused), [], `${bad.join(' ')} never reaches launch-check.mjs`);
+  }
 });

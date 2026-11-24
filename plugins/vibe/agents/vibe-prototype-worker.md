@@ -23,7 +23,7 @@ Read `../skills/vibe/references/quality-loop.md`, `repository-intelligence.md`,
 <!-- end generic: read-list -->
 > Provider `graph+tickets` (block `read-list` of `agents/vibe-prototype-worker.md`)
 `<repo-root>/.claude/skills/prototype/SKILL.md`. Preserve exact private session
-ownership, worktree, `prototype/<slug>` branch and slug. An arbitrary prototype
+ownership, worktree, branch and slug. An arbitrary prototype
 branch without its private session record is not admitted.
 Read the session decision table and relevant row IDs before advice/share;
 the SAME writer extends its mock/real-state and publication behavior rows before
@@ -87,8 +87,8 @@ wraps `local-plans.mjs` and `vibe-sessions.mjs` (`main-sync-share`,
 `main-sync-push`, `prototype-result`), reads GitHub deployments read-only, takes
 only the deployment's own `environment_url` with `/p/<slug>` and stops on a
 failed or expired deployment. `DONE` carries the URL, full SHA and slug; any
-other status is the evidence to return. The ticket refresh and every
-statement for the person stay yours. Without the script, follow the
+other status is the evidence to return. Relay progress and the viewer's
+access instructions. The ticket refresh stays yours. Without the script, follow the
 paragraphs below unchanged.
 
 Follow only the canonical share-on-Vercel procedure on this exact branch and

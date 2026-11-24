@@ -25,6 +25,7 @@
 // Prints one JSON object on stdout. Errors print {"ok":false,"error":...} and
 // exit non-zero.
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
@@ -32,6 +33,7 @@ import { parseArgs } from "node:util";
 import { committedLocalPlans, isLocalPlanPath, sessionLocalPlanPrefix } from "./local-plans.mjs";
 import { mainSyncFailure, prepareMainSync, readMainSyncInput } from "./dist/main-sync.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { verifySeedWalkWorktree } from "../../vibe-seed-refresh/scripts/seed-walk-guard.mjs";
 
 const { git, readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
@@ -80,7 +82,7 @@ function commitWorktree() {
   const localFixes = (readSessionRecord(worktree)?.localFixes ?? []).flatMap((fix) => fix.paths ?? []);
 
   const planPrefix = sessionLocalPlanPrefix(worktree);
-  const committedPlans = committedLocalPlans(args => git(worktree, args), planPrefix);
+  const committedPlans = committedLocalPlans(worktree, planPrefix);
   if (committedPlans.length) {
     throw new Error(`Local technical plans are already committed; publication is blocked: ${committedPlans.join(", ")}`);
   }
@@ -92,6 +94,10 @@ function commitWorktree() {
     git(worktree, ["restore", "--staged", "--", file]);
   }
   const files = stagedFiles(worktree);
+  if (/^fix\/iss-\d+-vibe-seed$/i.test(git(worktree, ["branch", "--show-current"]))) {
+    const scope = verifySeedWalkWorktree(worktree, { staged: true });
+    if (scope.status !== "CONTINUE") throw new Error(`${scope.status}: ${scope.reason}`);
+  }
   const merging = hasMergeHead(worktree);
   if (files.length === 0 && !merging) {
     return { committed: false, reason: "Nothing to commit.", excluded };
@@ -170,7 +176,7 @@ function stagedFiles(worktree) {
 /** The untracked files under each `--exclude` path; refuses a path that names none. */
 function foreignFiles(worktree, excludes) {
   if (excludes.length === 0) return new Set();
-  const listed = git(worktree, ["ls-files", "--others", "--exclude-standard", "-z"]);
+  const listed = readGitInventory(worktree, ["ls-files", "--others", "--exclude-standard", "-z"]);
   const untracked = listed ? listed.split("\0").filter(Boolean) : [];
   const foreign = new Set();
   for (const exclude of excludes) {
