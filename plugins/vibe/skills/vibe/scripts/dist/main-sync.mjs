@@ -224030,7 +224030,7 @@ function vibeCore(relative9) {
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
 var module = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { absoluteGitDir, assertVibeCreatedWorktree, git, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module;
+var { absoluteGitDir, assertVibeCreatedWorktree, git, readSessionRecord, readSessionRecordFile, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module;
 
 // ../../plugins/vibe/skills/vibe/scripts/area-paths.mjs
 var { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");

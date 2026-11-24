@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.106
+### vibe v1.1.108
 
 #### Fixed
 - ISS-14654 routes fleet analysis, review and QA through managed workers and verifies saved requirements-worker results. Operator questions keep local paths and technical decisions private. Engineer-only follow-up goes in the pull request.
@@ -14,7 +14,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before an operator question, the question recorder and tool hook check program and ticket rulings. A repeated decision returns its sources, and a question about an uncovered fact records that fact.
 - A file outside the repository allowlist can pass when the writer cites a ticket criterion that names the exact path. The pull request shows the citation and its gate verifies the supporting ticket evidence.
 - ISS-14679 adds the PM rehearsal for an unresolved criterion reading. Ticket and PR checks now require independently recorded operator words before an agent can mark a reading or trade as settled.
-- Across all plugin Markdown, including eval prompts and graders, the release is about 76 words shorter than v1.1.105. The count covers the source files in `plugins/vibe` and excludes the generated ClosedLoop edition.
+- Across all plugin Markdown, including eval prompts and graders, the release is about 76 words shorter than v1.1.107. The count covers the source files in `plugins/vibe` and excludes the generated ClosedLoop edition.
+
+### vibe v1.1.107
+
+#### Fixed
+- The committed `vibe-workers` dist bundles under `plugins/vibe` and `plugins/vibe-closedloop` are rebuilt from source, so CI's dist check passes.
+- Helpers fingerprint worktrees outside the shared ledger lock when starting, finalizing, accepting or stopping a review. They refresh the fingerprint after a lock wait, and a failed managed reviewer preserves any replacement registered under its name.
+- Across all plugin Markdown, including eval prompts and graders and each plugin’s README, the release is about 0 words longer than v1.1.106. The count excludes the generated `plugins/vibe-closedloop` mirror.
+
+### vibe v1.1.106
+
+#### Added
+- ISS-14576 reports late watcher ticks and adds a one-line sleep notice to the orchestrator’s next prompt when macOS confirms sleep.
+- Across all plugin Markdown, including eval prompts and graders and each plugin's README, the net instruction-word change is zero (about 0 words longer than v1.1.105). This count excludes the generated `plugins/vibe-closedloop` mirror.
+
+### vibe-core v1.0.16
+
+#### Fixed
+- ISS-14576 lets vibe retry a sleep notice when its prompt output fails. Codex users must approve this release’s hooks again.
 
 ### vibe v1.1.105
 

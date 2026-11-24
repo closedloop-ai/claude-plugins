@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
-import { finalMarker, read as readHelpers, readHelperInput, resolveHelperBrief } from "../../fleet-orchestrator/scripts/helpers.mjs";
+import { finalMarker, read as readHelpers, readHelperInput, registrationFingerprint, resolveHelperBrief } from "../../fleet-orchestrator/scripts/helpers.mjs";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { assembleProviderText, sessionBinding } from "../../vibe/scripts/provider.mjs";
 import { agentFrontmatterName } from "../../vibe/scripts/agent-frontmatter.mjs";
@@ -152,7 +152,9 @@ export async function runManagedReviewer(input, openClient = managedReviewClient
     helperAction(orchDir, "start", input.helper, "--kind", kind,
       "--runtime", "codex", "--role", input.role, "--agent-definition", definitionPath, "--worker-id", threadId,
       "--worktree", worktree, "--brief", input.brief, "--capabilities", capabilities.fingerprint.path);
-    helper = readHelpers(orchDir)[input.helper];
+    const registered = readHelpers(orchDir)[input.helper];
+    if (registered?.workerId !== threadId) throw new Error("Managed reviewer registration changed after start");
+    helper = registered;
     if (critic && helper.source.diffSha256 !== createHash("sha256").digest("hex")) throw new Error("Commit the visual QA source before running a head-bound critic");
     if (!isDeepStrictEqual(helper.agentDefinition, definition.fingerprint) || !isDeepStrictEqual(helper.capabilities, capabilities.fingerprint) ||
         !isDeepStrictEqual(helper.briefEvidence, brief.fingerprint) || !isDeepStrictEqual(helper.reviewCriteria, criteria)) throw new Error("Reviewer inputs changed before registration");
@@ -219,7 +221,7 @@ export async function runManagedReviewer(input, openClient = managedReviewClient
       catch (failure) { cleanup.push("interrupt: " + failure.message); }
     }
     if (helper) {
-      try { helperAction(orchDir, "abandoned", input.helper, "--reason", "Managed review did not finalize"); }
+      try { helperAction(orchDir, "abandoned", input.helper, "--if-registration", registrationFingerprint(helper), "--reason", "Managed review did not finalize"); }
       catch (failure) { cleanup.push("abandon: " + failure.message); }
     }
     if (cleanup.length) throw new Error(error.message + "; cleanup: " + cleanup.join("; "), { cause: error });

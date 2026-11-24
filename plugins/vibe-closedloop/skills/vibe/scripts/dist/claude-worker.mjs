@@ -5215,7 +5215,7 @@ import { join as join6, sep } from "node:path";
 
 // vibe-core:lib/vibe/scripts/session-record.mjs
 var module7 = await vibeCore("lib/vibe/scripts/session-record.mjs");
-var { absoluteGitDir, assertVibeCreatedWorktree, git: git2, readSessionRecord, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module7;
+var { absoluteGitDir, assertVibeCreatedWorktree, git: git2, readSessionRecord, readSessionRecordFile, sessionLiveTicket, sessionRecordPath, writeSessionRecord } = module7;
 
 // src/main-sync-validation-contracts.ts
 var validationCommitSchema = external_exports.string().regex(/^[a-f0-9]{40}$/);
