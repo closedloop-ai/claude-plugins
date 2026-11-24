@@ -170,7 +170,7 @@ function providerAware(main2) {
 
 // src/codex-reviewer.ts
 var usage = [
-  "codex-reviewer.mjs run --orch-dir DIR --helper NAME --worktree DIR --role ROLE --model MODEL --capabilities FILE --brief FILE",
+  "codex-reviewer.mjs run --orch-dir DIR --helper NAME --worktree DIR --role ROLE --model MODEL --capabilities FILE --brief FILE [--agent-definition FILE (visual-qa-critic)]",
   "codex-reviewer.mjs accept --orch-dir DIR --helper NAME --report FILE",
   "codex-reviewer.mjs qa-guide --orch-dir DIR --helper NAME --worktree DIR --writer-thread ID --model MODEL --brief FILE",
   "Accept only after independently checking the final report."
@@ -183,7 +183,7 @@ async function main(argv) {
     return 0;
   }
   if (action !== "run" && action !== "accept" && action !== "qa-guide") throw new Error(usage);
-  const keys = action === "accept" ? ["report"] : action === "qa-guide" ? ["worktree", "writer-thread", "model", "brief"] : ["worktree", "role", "model", "capabilities", "brief"];
+  const keys = action === "accept" ? ["report"] : action === "qa-guide" ? ["worktree", "writer-thread", "model", "brief"] : ["worktree", "role", "model", "capabilities", "brief", "agent-definition"];
   const options = Object.fromEntries(["orch-dir", "helper", ...keys].map((key) => [key, stringOption]));
   const { values } = parseArgs({ args, options });
   const required = (key) => {
@@ -217,7 +217,8 @@ async function main(argv) {
       worktree: required("worktree"),
       role: required("role"),
       capabilities: required("capabilities"),
-      brief: required("brief")
+      brief: required("brief"),
+      ...values["agent-definition"] ? { agentDefinition: values["agent-definition"] } : {}
     })));
   }
   return 0;

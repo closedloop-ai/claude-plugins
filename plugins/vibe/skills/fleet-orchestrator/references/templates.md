@@ -41,6 +41,8 @@ support a blocking finding, and the orchestrator independently rechecks it
 before relay. Require the helper's explicit final deliverable before treating
 an idle or turn-end notice as completion.
 
+Read the complete current ticket by slug from the tracker. Save its versioned response and append the output of `node <pluginRoot>/lib/handoff/scripts/review-context.mjs --ticket <slug> --read <response.json> --rulings <orchDir>/rulings.md` to the brief. Include every applicable operator amendment on the ticket, including decisions recorded under its PRD. Omit the rulings file when the program has none. Report anything that contradicts a criterion or ruling as a QUESTION quoting it, never as a defect to fix.
+
 The helper's last act is to save its report or verified output as a real file
 outside the source worktree, ending with `FINAL <token from helpers.json>
 <start treeSha256> <recorded native worker ID> <actual session ID> <actual turn ID> completed`, then run

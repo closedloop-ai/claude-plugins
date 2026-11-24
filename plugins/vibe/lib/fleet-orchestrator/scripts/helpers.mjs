@@ -17,7 +17,7 @@
 //        [--completion-event <saved thread/read JSON>]; deliverable ends with
 //        FINAL <one-time token> <start tree> <worker ID> <session ID> <turn ID> completed
 //        helpers.mjs <orchDir> accepted <name> --report <helper-final.json>
-//        helpers.mjs <orchDir> abandoned <name> --reason <why this review was superseded or stopped>
+//        helpers.mjs <orchDir> abandoned <name> --reason <why this review was superseded or stopped> [--if-registration <fingerprint>]
 //        helpers.mjs <orchDir> stopped <name> [--grace-seconds <n, default 10>] [--owner <writer> --owner-token <token>]
 //        helpers.mjs <orchDir> hand <stack> --to <guide>
 //        helpers.mjs <orchDir> unhand <stack>
@@ -57,21 +57,23 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSy
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { parseArgs } from "node:util";
+import { boundReviewContext } from "../../handoff/scripts/review-context.mjs";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { captureOwnedDockerResources, defaultLockDir, readHolder, removeOwnedDockerResources, sameWorktreeEntry } from "../../vibe/scripts/e2e-lock.mjs";
 import { readProcessIdentity } from "../../../shared/process-identity.mjs";
 import { criticFindings, recordAcceptedCritic } from "../../vibe/scripts/visual-critic-evidence.mjs";
+import { reclaimStaleLock } from "./chat-binding.mjs";
 import { sameSource, sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
-import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
+import { git, readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { agentFrontmatterName } from "../../vibe/scripts/agent-frontmatter.mjs";
-import { evidenceArray, evidenceFingerprint, evidenceObject, readEvidence } from "../../handoff/scripts/handoff-evidence.mjs";
+import { evidenceArray, evidenceFingerprint, evidenceObject, expectEvidence, readEvidence } from "../../handoff/scripts/handoff-evidence.mjs";
 import { graphAliases } from "../../handoff/scripts/mcp-tool-names.mjs";
 import { promptProblems } from "./skill-freshness.mjs";
 import { LoadBasis, loadedSkillEvidence } from "../../vibe/scripts/loaded-skill.mjs";
 import { vibeRoot } from "../../../shared/vibe-install.mjs";
 
-import { captureScratchLease, reconcileExpiredScratchHelpers, registerScratchProgram, runScratchStack,
+import { prepareScratchLease, reconcileExpiredScratchHelpers, registerScratchProgram, runScratchStack,
   scratchLeaseTerminal } from './scratch-cleanup.mjs';
 import { failScript } from "../../vibe/scripts/provider.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
@@ -81,6 +83,7 @@ const STACKS = "#stacks";
 const DEFAULT_IDLE_MINUTES = 5;
 const DEFAULT_GRACE_SECONDS = 10;
 const POLL_MS = 200;
+const LEDGER_WAIT_MS = 30_000;
 const ENDINGS = new Set(["pr-terminal"]);
 const FINAL_KINDS = new Set(["reviewer", "verifier", "critic"]);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -90,7 +93,13 @@ export function finalMarker(helper, completion) {
   return `FINAL ${helper.finalToken} ${helper.source.treeSha256} ${helper.workerId} ${completion.sessionId} ${completion.turnId} completed`;
 }
 
-export { readEvidence as readHelperInput } from "../../handoff/scripts/handoff-evidence.mjs";
+/** Read the same regular-file bytes that the named helper registers as a launch input. */
+export function readHelperInput(file) {
+  const fingerprint = evidenceFingerprint(file);
+  const bytes = readFileSync(fingerprint.path);
+  if (createHash("sha256").update(bytes).digest("hex") !== fingerprint.sha256) throw new Error("Reviewer input changed while reading");
+  return { fingerprint, text: bytes.toString("utf8") };
+}
 
 /** Strip the exact FINAL last line and preserve everything before it for the owning parser. */
 export function finalBodyLines(text, helper, completion) {
@@ -134,11 +143,12 @@ export function completionEventProblem(event, completion, worktree, requireCheck
   return confirmed ? null : unconfirmed;
 }
 
-/** Verify the completed transition and return the exact bytes accepted by its independent owner. */
-export function verifiedFinalReport(helper, reportFile) {
+/** Verify the completed transition against the inputs and source read for this operation, and return the exact accepted bytes. */
+export function verifiedFinalReport(helper, reportFile, readInput = readEvidence, readSource = sourceIdentity) {
   if (!helper?.startedAt || !helper.worktree || !helper.finalToken || !helper.requiresFinal || !reportFile) throw new Error("helper needs a registered worktree and final report");
-  if (helper.abandonedAt || (helper.stoppedAt && !helper.acceptedAt)) throw new Error("helper is abandoned or stopped");
-  const record = readEvidence(reportFile, helper.report ?? helper.finalReport);
+  if (helper.abandonedAt) throw new Error("an abandoned helper cannot finalize or accept a report");
+  if (helper.stoppedAt && !helper.acceptedAt) throw new Error("a stopped helper cannot finalize or accept a report");
+  const record = readInput(reportFile, helper.report ?? helper.finalReport);
   if (!helper.finalizedAt || helper.finalReportPath !== record.fingerprint.path) throw new Error("helper FINAL token was not consumed for this report");
   if (!helper.report && !helper.finalReport) throw new Error("helper lacks a finalized report fingerprint");
   const report = evidenceObject(record);
@@ -146,20 +156,22 @@ export function verifiedFinalReport(helper, reportFile) {
   if (report.workerId !== helper.workerId) throw new Error("helper report names another worker");
   if (!report.completion?.sessionId || !report.completion?.turnId) throw new Error("helper report lacks completed session and turn identity");
   if (helper.loadedSkill?.runtime === "codex" && helper.workerId !== report.completion.sessionId) throw new Error("runtime did not confirm the registered helper thread");
-  const current = sourceIdentity(helper.worktree);
-  if (!sameSource(helper.source ?? {}, current) || !sameSource(report.source ?? {}, current)) throw new Error("helper source changed since start");
-  const capabilities = readEvidence(helper.capabilities.path, helper.capabilities);
-  if (JSON.stringify(evidenceFingerprint(helper.agentDefinition.path)) !== JSON.stringify(helper.agentDefinition)) throw new Error("helper canonical agent definition changed");
-  if (helper.kind === "critic" && helper.loadedSkill?.runtime === "codex" && !report.completionEvidence) throw new Error("native critic needs runtime completion evidence");
+  const capabilities = readInput(helper.capabilities.path, helper.capabilities);
+  if (!isDeepStrictEqual(readInput(helper.agentDefinition.path).fingerprint, helper.agentDefinition)) throw new Error("helper canonical agent definition changed");
+  if (helper.kind === "critic" && helper.loadedSkill?.runtime === "codex" && report.findings && !report.completionEvidence) throw new Error("native critic needs runtime completion evidence");
   if (report.completionEvidence) {
-    const event = readEvidence(report.completionEvidence.path, report.completionEvidence);
+    const event = readInput(report.completionEvidence.path, report.completionEvidence);
     const problem = completionEventProblem(event.text, report.completion, helper.worktree, helper.kind === "critic" && helper.loadedSkill?.runtime === "codex");
     if (problem) throw new Error(problem);
   }
-  const deliverable = readEvidence(report.deliverable.path, report.deliverable);
+  const deliverable = readInput(report.deliverable.path, report.deliverable);
   const lines = finalBodyLines(deliverable.text, helper, report.completion);
   const findings = criticFindings(helper, lines);
   if (findings && (findings.path !== report.findings?.path || findings.sha256 !== report.findings?.sha256)) throw new Error("visual critic findings changed since finalization");
+  // Read source last: the ledger transition rechecks HEAD after its lock.
+  const source = readSource(helper.worktree);
+  if (!sameSource(helper.source ?? {}, source)) throw new Error("helper source changed since start");
+  if (!sameSource(report.source ?? {}, source)) throw new Error("helper report is stale for the current source");
   return { report, record, capabilities, deliverable, lines };
 }
 
@@ -364,11 +376,30 @@ export function read(orchDir) {
   return existsSync(file) ? evidenceObject(readEvidence(file)) : {};
 }
 
-/** Acquire a private program ledger lock and return its identity-checked release callback. */
-export async function acquireLedgerLock(orchDir, { waitMs = 30_000, clock = Date.now, file = "helpers.lock" } = {}) {
+/** Resolve the current process before reading any source that depends on this grant. */
+function ledgerProcess() {
+  const identity = readIdentity(process.pid);
+  if (!identity) throw new Error('helper ledger process identity is unreadable');
+  return { pid: process.pid, identity };
+}
+
+/** Acquire a private program ledger lock (`helpers.lock` unless `file` names another) and return its identity-checked release callback. */
+export async function acquireLedgerLock(orchDir, options) {
+  return acquireForProcess(orchDir, ledgerProcess(), options);
+}
+
+/** Reuse our verified process identity, but issue a fresh release token for every grant. */
+async function acquireForProcess(orchDir, processOwner, { waitMs = LEDGER_WAIT_MS, clock = Date.now, onWait, file = 'helpers.lock' } = {}) {
   const dir = path.join(orchDir, file);
-  const owner = { pid: process.pid, identity: readIdentity(process.pid), token: randomUUID() };
-  if (!owner.identity) throw new Error('helper ledger process identity is unreadable');
+  const owner = { ...processOwner, token: randomUUID() };
+  const readOwner = () => {
+    try { return readFileSync(path.join(dir, 'owner.json'), 'utf8'); }
+    catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      const stat = statSync(dir, { throwIfNoEntry: false });
+      return stat ? `uninitialized:${stat.dev}:${stat.ino}:${stat.ctimeMs}` : '';
+    }
+  };
   const deadline = clock() + waitMs;
   while (clock() < deadline) {
     try {
@@ -382,20 +413,162 @@ export async function acquireLedgerLock(orchDir, { waitMs = 30_000, clock = Date
       };
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
+      // Even a peer that releases before its identity check invalidates pre-lock preparation.
+      onWait?.();
+      const seen = readOwner();
+      if (!seen) continue;
       let saved;
-      try { saved = JSON.parse(readFileSync(path.join(dir, 'owner.json'), 'utf8')); } catch { saved = null; }
+      try { saved = JSON.parse(seen); } catch { saved = null; }
       if (saved?.identity && readIdentity(saved.pid) === saved.identity
-        || !saved && Date.now() - statSync(dir).mtimeMs < 60_000) {
+        || !saved && Date.now() - (statSync(dir, { throwIfNoEntry: false })?.mtimeMs ?? Date.now()) < 60_000) {
         await new Promise((resolve) => setTimeout(resolve, 100));
         continue;
       }
-      let current;
-      try { current = JSON.parse(readFileSync(path.join(dir, 'owner.json'), 'utf8')); } catch { current = null; }
-      if (current?.token !== saved?.token) continue;
-      rmSync(dir, { recursive: true });
+      reclaimStaleLock(dir, seen, { read: readOwner, remove: lock => rmSync(lock, { recursive: true }) });
     }
   }
   throw new Error('helper ledger lock remained active; ownership record was not overwritten');
+}
+
+/** A cheap witness binds the checked bytes and path across the worktree read and ledger acquisition. */
+function evidenceVersion(file) {
+  const { dev, ino, size, ctimeNs, mtimeNs } = lstatSync(file, { bigint: true });
+  return [realpathSync(file), dev, ino, size, ctimeNs, mtimeNs];
+}
+
+/** Read reviewer launch inputs before capturing the worktree the new helper will review. */
+function prepareReviewerStart(orchDir, values, readInput, rememberVersion) {
+  const runtime = values.runtime ?? "claude";
+  const workerId = values["worker-id"];
+  const pluginRoot = vibeRoot(values.worktree);
+  const loadedSkill = loadedSkillEvidence(workerId, runtime, pluginRoot, "fleet-orchestrator", LoadBasis.InstalledAtSpawn);
+  // Briefs may be symlinks. Bind the requested path and the bytes read from its resolved target.
+  const requestedBrief = path.resolve(orchDir, values.brief);
+  rememberVersion(requestedBrief);
+  const briefPath = resolveHelperBrief(orchDir, values.brief);
+  rememberVersion(briefPath);
+  const bytes = readFileSync(briefPath);
+  const reviewCriteria = boundReviewContext(bytes.toString("utf8"), values.worktree, orchDir, values.ticket);
+  const problems = promptProblems({ loadedSkill }, bytes.toString("utf8"), { reviewSource: true, actorId: workerId, pluginRoot, worktree: values.worktree });
+  if (problems.length) throw new Error(problems.join("; "));
+  const capabilities = readInput(values.capabilities);
+  graphAliases(evidenceArray(capabilities));
+  const definition = readInput(values["agent-definition"]);
+  if (agentFrontmatterName(definition.text) !== values.role) throw new Error("canonical agent definition does not name the requested role");
+  return { workerId, role: values.role, agentDefinition: definition.fingerprint, capabilities: capabilities.fingerprint, loadedSkill, reviewCriteria,
+    ...(runtime === "codex" ? { briefEvidence: { path: briefPath, sha256: createHash("sha256").update(bytes).digest("hex") } } : {}) };
+}
+
+/** A new helper may reserve a Compose project only if Docker reports no resources in it. */
+function requireEmptyProject(project) {
+  const existing = captureOwnedDockerResources({ project });
+  if (existing.containers.length || existing.volumes.length || existing.networks.length) {
+    throw new Error("The requested Docker project has existing resources; it is not this helper's.");
+  }
+}
+
+/** Prepare external inputs before hashing source. The locked transition checks the live registration. */
+function prepareTransition(action, entry, values, orchDir) {
+  const versions = new Map();
+  function rememberVersion(file) {
+    if (!versions.has(file)) versions.set(file, evidenceVersion(file));
+  }
+  const inputs = new Map();
+  function readInput(file, expected) {
+    if (!inputs.has(file)) {
+      rememberVersion(file);
+      inputs.set(file, readHelperInput(file));
+    }
+    return expectEvidence(inputs.get(file), expected, file);
+  }
+  let revision;
+  function readSource(worktree) {
+    const source = sourceIdentity(worktree);
+    revision = { worktree, head: source.head };
+    return source;
+  }
+  let result;
+  let readLease;
+  try {
+    if (action === "final") {
+      if (!entry?.startedAt || entry.abandonedAt || entry.stoppedAt || entry.finalizedAt || !entry.worktree || !entry.requiresFinal || !values.deliverable || !values.out
+        || !values["session-id"] || !values["turn-id"]) throw new Error("final needs an active helper, worktree, deliverable, completed session/turn and output file");
+      const completion = { sessionId: values["session-id"], turnId: values["turn-id"] };
+      const nativeCritic = entry.kind === "critic" && entry.loadedSkill?.runtime === "codex";
+      if (entry.loadedSkill?.runtime === "codex" && completion.sessionId !== entry.workerId) throw new Error("runtime did not confirm the registered helper thread");
+      const event = values["completion-event"] ? readInput(values["completion-event"]) : null;
+      const deliverable = readInput(values.deliverable);
+      const findings = criticFindings(entry, finalBodyLines(deliverable.text, entry, completion));
+      if (findings) rememberVersion(findings.path);
+      // A native critic's findings file is accepted evidence, so its completed turn must be shown.
+      if (nativeCritic && findings && !event) throw new Error("native critic needs runtime completion evidence");
+      if (event) {
+        const problem = completionEventProblem(event.text, completion, entry.worktree, nativeCritic);
+        if (problem) throw new Error(problem);
+      }
+      const source = readSource(entry.worktree);
+      if (!sameSource(entry.source ?? {}, source)) throw new Error("helper source changed since start");
+      result = { helper: entry.name, token: entry.finalToken, status: "FINAL", workerId: entry.workerId, source,
+        completion, ...(findings ? { findings } : {}), ...(event ? { completionEvidence: event.fingerprint } : {}), deliverable: deliverable.fingerprint };
+    } else if (action === "accepted" || (action === "stopped" && entry?.acceptedAt && !entry.abandonedAt)) {
+      // Older records can carry both timestamps. Recorded abandonment already permits cleanup.
+      const reportFile = action === "accepted" ? values.report : entry.report?.path;
+      if (action === "stopped" && (!reportFile || !isDeepStrictEqual(readInput(reportFile).fingerprint, entry.report))) {
+        throw new Error("helper final report changed after acceptance");
+      }
+      const { record, report } = verifiedFinalReport(entry, reportFile, readInput, readSource);
+      result = { fingerprint: record.fingerprint, report };
+    } else if (action === "start") {
+      const reviewer = FINAL_KINDS.has(values.kind) ? prepareReviewerStart(orchDir, values, readInput, rememberVersion) : {};
+      if (values.project && values.worktree) requireEmptyProject(values.project);
+      if (values.kind === "scratch") readLease = prepareScratchLease(orchDir, values.owner, values.worktree);
+      result = { ...reviewer, ...(values.worktree ? { worktree: path.resolve(values.worktree), source: readSource(values.worktree) } : {}) };
+    }
+  } catch (error) {
+    return () => { throw error; };
+  }
+  return () => {
+    // Scratch leases belong to a private Git directory. Resolve it with HEAD in the same bounded read.
+    if (revision) {
+      const args = ["rev-parse", "HEAD"];
+      if (readLease) args.push("--absolute-git-dir");
+      const [head, ...directory] = git(revision.worktree, args, { timeout: 1000 }).split("\n");
+      if (head !== revision.head) throw new Error("helper HEAD changed during verification");
+      if (readLease) result.writerLease = readLease(directory.join("\n"));
+    }
+    for (const [file, version] of versions) {
+      if (!isDeepStrictEqual(version, evidenceVersion(file))) throw new Error("helper evidence changed during verification");
+    }
+    return result;
+  };
+}
+
+/** PID and resource updates are independent of final evidence. Cleanup reads them from the locked entry. */
+function preparationRecord(action, entry) {
+  if (action === "start" || !entry) return entry;
+  const { pids, groups, identities, dockerResources, ...registration } = entry;
+  return registration;
+}
+
+/** After real contention, release the grant and reread all inputs within the original wait budget. */
+async function lockWithFreshSource(orchDir, prepare) {
+  if (!prepare) return { releaseLedger: await acquireLedgerLock(orchDir) };
+  const processOwner = ledgerProcess();
+  let waitMs = LEDGER_WAIT_MS;
+  while (true) {
+    const checkedInput = prepare();
+    const started = Date.now();
+    let collided = false;
+    const releaseLedger = await acquireForProcess(orchDir, processOwner, { waitMs, onWait: () => { collided = true; } });
+    if (!collided) return { releaseLedger, checkedInput };
+    releaseLedger();
+    waitMs -= Date.now() - started;
+  }
+}
+
+/** Identify a registration without putting its one-time FINAL token in a child process's arguments. */
+export function registrationFingerprint(helper) {
+  return createHash("sha256").update(helper.finalToken).digest("hex");
 }
 
 /** Atomically replace the private helper ledger. */
@@ -448,7 +621,7 @@ async function main(argv) {
       role: { type: "string" }, "agent-definition": { type: "string" },
       deliverable: { type: "string" }, out: { type: "string" }, "session-id": { type: "string" }, "turn-id": { type: "string" },
       "completion-event": { type: "string" }, runtime: { type: "string" },
-      reason: { type: "string" },
+      reason: { type: "string" }, "if-registration": { type: "string" },
       container: { type: "string", multiple: true }, volume: { type: "string", multiple: true }, network: { type: "string", multiple: true },
     },
   });
@@ -466,9 +639,19 @@ async function main(argv) {
     process.stdout.write(JSON.stringify(result) + '\n');
     return 0;
   }
-  const releaseLedger = await acquireLedgerLock(orchDir);
+  const checksSource = ["start", "final", "accepted", "stopped"].includes(action);
+  const registered = checksSource ? read(orchDir)[positionals[0]] : undefined;
+  const prepare = checksSource ? () => prepareTransition(action, registered, values, orchDir) : null;
+  const { releaseLedger, checkedInput } = await lockWithFreshSource(orchDir, prepare);
   try {
   const ledger = read(orchDir);
+  // Another transition may have replaced this registration while Git was reading it.
+  if (checksSource && !isDeepStrictEqual(preparationRecord(action, registered), preparationRecord(action, ledger[positionals[0]]))) {
+    throw new Error("helper registration changed while verifying its source; retry with its current record");
+  }
+  if ((action === "final" || action === "accepted") && ledger[positionals[0]]?.abandonedAt) {
+    throw new Error("an abandoned helper cannot finalize or accept a report");
+  }
   const now = values.now ? Date.parse(values.now) : Date.now();
   const at = new Date(now).toISOString();
   if (action === "status") {
@@ -527,21 +710,6 @@ async function main(argv) {
     }
     const runtime = values.runtime ?? "claude";
     if (!["claude", "codex"].includes(runtime)) throw new Error("--runtime must be claude or codex");
-    // The helper is a fresh thread: record the installed definition it starts on, labeled as such.
-    const spawnLoad = FINAL_KINDS.has(kind) ? loadedSkillEvidence(values["worker-id"], runtime, vibeRoot(values.worktree ?? process.cwd()), "fleet-orchestrator", LoadBasis.InstalledAtSpawn) : null;
-    let briefEvidence;
-    if (FINAL_KINDS.has(kind)) {
-      const briefPath = runtime === "codex" ? resolveHelperBrief(orchDir, values.brief) : path.resolve(orchDir, values.brief);
-      const bytes = readFileSync(briefPath);
-      if (runtime === "codex") briefEvidence = { path: briefPath, sha256: createHash("sha256").update(bytes).digest("hex") };
-      const actorRecord = { loadedSkill: spawnLoad };
-      const problems = promptProblems(actorRecord, bytes.toString("utf8"), { reviewSource: true, actorId: values["worker-id"], pluginRoot: vibeRoot(values.worktree ?? process.cwd()), worktree: values.worktree });
-      if (problems.length) throw new Error(problems.join("; "));
-    }
-    const capabilities = FINAL_KINDS.has(kind) ? readEvidence(values.capabilities) : null;
-    if (capabilities) graphAliases(evidenceArray(capabilities));
-    const definition = FINAL_KINDS.has(kind) ? readEvidence(values["agent-definition"]) : null;
-    if (definition && agentFrontmatterName(definition.text) !== values.role) throw new Error("canonical agent definition does not name the requested role");
     // A QA rerun must never change the stack a human is testing on.
     if (values.stack && stacks[values.stack]) {
       process.stderr.write(`stack ${values.stack} is handed to ${stacks[values.stack].guide}; launch this helper on its own stack\n`);
@@ -555,19 +723,14 @@ async function main(argv) {
       if (helperEntries(ledger).some(([other, helper]) => other !== name && helper.project === values.project && !helper.stoppedAt)) {
         throw new Error("The Docker project is already reserved by another helper.");
       }
-      const existing = captureOwnedDockerResources({ project: values.project });
-      if (existing.containers.length || existing.volumes.length || existing.networks.length) {
-        throw new Error("The requested Docker project has existing resources; it is not this helper's.");
-      }
+      if (!values.worktree) requireEmptyProject(values.project);
     }
+    const prepared = checkedInput();
     if (kind === 'scratch') registerScratchProgram(orchDir);
     ledger[name] = { name, kind, requiresFinal: FINAL_KINDS.has(kind), finalToken: randomUUID(), startedAt: at,
-      ...(kind === "scratch" ? { ownerToken: randomUUID(), expiresAt: new Date(now + ttlSeconds * 1000).toISOString(),
-        writerLease: captureScratchLease(orchDir, values.owner, values.worktree) } : {}),
-      ...(capabilities ? { workerId: values["worker-id"], role: values.role, agentDefinition: definition.fingerprint, capabilities: capabilities.fingerprint,
-        loadedSkill: spawnLoad } : {}),
-      ...(briefEvidence ? { briefEvidence } : {}),
-      ...(values.brief ? { brief: values.brief } : {}), ...(values.worktree ? { worktree: path.resolve(values.worktree), source: sourceIdentity(values.worktree) } : {}), ...(values.stack ? { stack: values.stack } : {}),
+      ...(kind === "scratch" ? { ownerToken: randomUUID(), expiresAt: new Date(now + ttlSeconds * 1000).toISOString() } : {}),
+      ...prepared,
+      ...(values.brief ? { brief: values.brief } : {}), ...(values.stack ? { stack: values.stack } : {}),
       ...(values.owner ? { owner: values.owner } : {}), ...(values.ticket ? { ticket: values.ticket } : {}),
       ...(values.repo ? { repo: values.repo } : {}), ...(values.pr ? { pr: values.pr } : {}),
       ...(values.ending ? { ending: values.ending } : {}), ...(values.project ? { project: values.project } : {}) };
@@ -610,23 +773,9 @@ async function main(argv) {
     };
   } else if (action === "final") {
     const entry = ledger[name];
-    if (!entry?.startedAt || entry.abandonedAt || entry.stoppedAt || entry.finalizedAt || !entry.worktree || !entry.requiresFinal || !values.deliverable || !values.out
-      || !values["session-id"] || !values["turn-id"]) throw new Error("final needs an active helper, worktree, deliverable, completed session/turn and output file");
-    if (!sameSource(entry.source ?? {}, sourceIdentity(entry.worktree))) throw new Error("helper source changed since start");
-    const completion = { sessionId: values["session-id"], turnId: values["turn-id"] };
-    if (entry.loadedSkill?.runtime === "codex" && completion.sessionId !== entry.workerId) throw new Error("runtime did not confirm the registered helper thread");
-    const event = values["completion-event"] ? readEvidence(values["completion-event"]) : null;
-    if (entry.kind === "critic" && entry.loadedSkill?.runtime === "codex" && !event) throw new Error("native critic needs runtime completion evidence");
-    if (event) {
-      const problem = completionEventProblem(event.text, completion, entry.worktree, entry.kind === "critic" && entry.loadedSkill?.runtime === "codex");
-      if (problem) throw new Error(problem);
-    }
-    const deliverable = readEvidence(values.deliverable);
-    const findings = criticFindings(entry, finalBodyLines(deliverable.text, entry, completion));
+    const report = checkedInput();
     const out = path.resolve(values.out);
     if (out === entry.worktree || out.startsWith(`${entry.worktree}${path.sep}`)) throw new Error("final report belongs outside the source worktree");
-    const report = { helper: name, token: entry.finalToken, status: "FINAL", workerId: entry.workerId, source: sourceIdentity(entry.worktree),
-      completion, ...(findings ? {findings} : {}), ...(event ? { completionEvidence: event.fingerprint } : {}), deliverable: deliverable.fingerprint };
     const reportText = `${JSON.stringify(report)}\n`;
     writeFileSync(out, reportText, { mode: 0o600, flag: "wx" });
     entry.finalReportPath = realpathSync(out);
@@ -636,13 +785,16 @@ async function main(argv) {
     return 0;
   } else if (action === "accepted") {
     const entry = ledger[name];
-    const { record, report } = verifiedFinalReport(entry, values.report);
-    if (report.findings) recordAcceptedCritic(entry.worktree, report.source.head, record.fingerprint);
-    ledger[name] = { ...entry, acceptedAt: entry.acceptedAt ?? at, report: record.fingerprint };
+    const { fingerprint, report } = checkedInput();
+    if (report.findings) recordAcceptedCritic(entry.worktree, report.source.head, fingerprint);
+    ledger[name] = { ...entry, acceptedAt: entry.acceptedAt ?? at, report: fingerprint };
   } else if (action === "abandoned") {
     const entry = ledger[name];
     if (!entry?.startedAt || entry.stoppedAt || !entry.requiresFinal || entry.acceptedAt) {
       throw new Error("abandoned needs an active unaccepted reviewer, verifier or critic helper");
+    }
+    if (values["if-registration"] !== undefined && values["if-registration"] !== registrationFingerprint(entry)) {
+      throw new Error("helper registration changed before abandonment; its replacement was preserved");
     }
     if (!values.reason?.trim()) throw new Error("abandoned needs --reason <why the helper was superseded or stopped>");
     ledger[name] = { ...entry, abandonedAt: at, abandonReason: values.reason.trim() };
@@ -673,11 +825,7 @@ async function main(argv) {
       return 0;
     }
     if (entry.requiresFinal && !entry.acceptedAt && !entry.abandonedAt) throw new Error("review helper has no accepted final deliverable or recorded abandonment");
-    if (entry.acceptedAt) {
-      if (!entry.report || JSON.stringify(evidenceFingerprint(entry.report.path)) !== JSON.stringify(entry.report)) throw new Error("helper final report changed after acceptance");
-      const problem = finalReportProblem(entry, entry.report.path);
-      if (problem) throw new Error(problem);
-    }
+    if (entry.acceptedAt) checkedInput();
     if (entry.project && entry.dockerResources?.project !== entry.project) {
       throw new Error("Compose resources and creation witnesses were not recorded.");
     }

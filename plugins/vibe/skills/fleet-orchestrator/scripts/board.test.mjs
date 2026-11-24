@@ -1,17 +1,18 @@
 import { releaseSuiteProblem } from "./board.mjs";
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { capturedFindings } from "../../vibe/scripts/fixtures/visual-qa-capture.mjs";
 import { recordUsageReading } from '../../codex-fleet-monitor/scripts/usage-state.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
-import { ALL_CAPABILITIES, bindProvider, bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+import { ALL_CAPABILITIES, bindProvider, bindProviderInProcess, writeActiveTicketSnapshot } from "../../vibe/scripts/test-fixtures.mjs";
 
 // Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 const boundChat = bindProviderInProcess(after);
@@ -26,6 +27,7 @@ const tempDir = (t) => {
   mkdirSync(path.join(home, 'programs', 'p1'), { recursive: true });
   writeFileSync(path.join(home, 'current'), 'p1\n');
   const program = path.join(home, 'programs', 'p1');
+  writeActiveTicketSnapshot(program, Array.from({ length: 9 }, (_, i) => 'ISS-' + (i + 1)));
   writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'claude', checkedAt: 'now', loadedSkill: actorLoad(), harnesses: [] }));
   placeLocal(t, program, 'ISS-1');
   return program;
@@ -36,9 +38,138 @@ const placeLocal = (t, dir, ticket) => {
   const evidence = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-placement-'));
   t.after(() => rmSync(evidence, { recursive: true, force: true }));
   writeFileSync(path.join(evidence, 'placement.json'), JSON.stringify({ codeOnly: false, needsRunningApp: true, localEvidence: ['web screenshots'] }));
-  const recorded = run([dir, 'placement', ticket, '--evidence', path.join(evidence, 'placement.json')]);
+  const candidates = path.join(evidence, 'candidates.json');
+  const tickets = Array.from({ length: 8 }, (_, i) => ({ slug: 'ISS-' + (i + 1), repo: 'o/r', files: ['file-' + i], surfaces: [] }));
+  writeFileSync(candidates, JSON.stringify({ tickets }));
+  const recorded = run([dir, 'placement', ticket, '--evidence', path.join(evidence, 'placement.json'), '--candidates', candidates]);
   assert.equal(recorded.status, 0, recorded.stderr);
 };
+
+test('AC 11 writer and fold read the tracker and refuse until each assigned ticket can start', t => {
+  const dir = tempDir(t);
+  placeLocal(t, dir, 'ISS-2');
+  const file = path.join(dir, 'status-audit.json');
+  const pull = { url: 'https://github.com/o/r/pull/7', state: 'OPEN' };
+  const snapshot = (first, second, pr = pull) => writeFileSync(file, JSON.stringify({ prds: [{ children: [
+    { slug: 'ISS-1', status: first, pullRequests: [pr] }, { slug: 'ISS-2', status: second, pullRequests: [pr] },
+  ] }] }));
+  const start = () => run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--repo', 'o/r', '--pr', '7']);
+  const fold = () => run([dir, 'unit', 'one', '--tickets', 'ISS-1,ISS-2', '--writer', 'w1']);
+  for (const status of ['TRIAGE', 'BACKLOG', 'TODO', 'BLOCKED']) {
+    snapshot(status, 'IN_PROGRESS');
+    assert.match(start().stderr, new RegExp('ISS-1.*' + status + '.*IN_PROGRESS'));
+  }
+  snapshot('IN_REVIEW', 'TODO', { ...pull, state: 'CLOSED' });
+  assert.match(start().stderr, /ISS-1.*IN_REVIEW.*IN_PROGRESS/);
+  snapshot('IN_REVIEW', 'TODO', { ...pull, url: 'https://github.com/other/r/pull/7' });
+  assert.match(start().stderr, /ISS-1.*IN_REVIEW.*IN_PROGRESS/);
+  snapshot('IN_REVIEW', 'TODO');
+  assert.equal(start().status, 0);
+  assert.match(fold().stderr, /ISS-2.*TODO.*IN_PROGRESS/);
+  snapshot('IN_PROGRESS', 'IN_REVIEW', { ...pull, state: 'MERGED' });
+  assert.match(fold().stderr, /ISS-2.*IN_REVIEW.*IN_PROGRESS/);
+  snapshot('IN_PROGRESS', 'IN_REVIEW');
+  assert.equal(fold().status, 0);
+  for (const status of ['TRIAGE', 'BACKLOG', 'TODO']) {
+    snapshot('IN_PROGRESS', status);
+    const line = new RegExp('^TICKET-NOT-IN-PROGRESS ISS-2 ' + status, 'm');
+    assert.match(run([dir, 'status', '--pushed', 'w1=abc', '--threads', 'w1=0']).stdout, line);
+    const audit = spawnSync(process.execPath, [path.join(HERE, 'status-audit.mjs'), '--snapshot', file, '--board', dir], { encoding: 'utf8' });
+    assert.match(audit.stdout, line);
+  }
+  rmSync(file);
+  assert.match(start().stderr, /ISS-1.*unread.*IN_PROGRESS/);
+  writeFileSync(file, "{");
+  assert.match(start().stderr, /ISS-1.*unread.*IN_PROGRESS/);
+  assert.equal(run([dir, 'retire', 'w1', '--reason', 'work ended']).status, 0);
+  snapshot('BACKLOG', 'TODO');
+  assert.doesNotMatch(run([dir, 'status', '--pushed', 'w1=abc']).stdout, /TICKET-NOT-IN-PROGRESS/);
+});
+
+test('DT 08 AC-8 refuses overlapping board admission, records a separate reason, and allows a fold', (t) => {
+  for (const kind of ['files', 'surfaces', 'collisions', 'historyFiles', 'prd']) {
+    const dir = tempDir(t);
+    placeLocal(t, dir, 'ISS-2');
+    const candidates = path.join(dir, 'candidates.json');
+    const tickets = ['ISS-1', 'ISS-2'].map(slug => ({ slug, repo: 'a/b', files: [], surfaces: [],
+      ...(kind === 'collisions' ? {} : kind === 'prd' ? { prd: 'PRD-1', operatorAssigned: true }
+        : { [kind === 'historyFiles' && slug === 'ISS-2' ? 'files' : kind]: ['Sessions'] }) }));
+    writeFileSync(candidates, JSON.stringify({ tickets, collisions: kind === 'collisions' ? [{ a: 'ISS-1', b: 'ISS-2' }] : [] }));
+    assert.equal(run([dir, 'unit', 'sessions', '--tickets', 'ISS-1', '--writer', 'primary']).status, 0);
+    const second = [dir, 'writer', 'other', '--tickets', 'ISS-2', '--candidates', candidates];
+    const denied = run(second);
+    assert.equal(denied.status, 2);
+    assert.match(denied.stderr, /fold into unit sessions/i);
+    if (kind === 'files') {
+      const first = run([dir, 'unit', 'sessions', '--tickets', 'ISS-1', '--candidates', candidates]);
+      assert.equal(first.status, 0, first.stderr);
+      const refresh = path.join(dir, 'partial.json');
+      writeFileSync(refresh, JSON.stringify({ tickets: [{ slug: 'ISS-2', repo: 'a/b' }] }));
+      assert.match(run([dir, 'writer', 'other', '--tickets', 'ISS-2', '--candidates', refresh]).stderr, /fold into unit sessions/);
+      const brief = path.join(dir, 'first-turn.md');
+      writeFileSync(brief, '$vibe ISS-2\nImplement this ticket.');
+      const launch = spawnSync('bash', [path.join(HERE, 'fleet.sh'), dir, 'local', 'session', 'turn', 'other',
+        '--ticket', 'ISS-2', '--prompt-file', brief, '--cwd', path.join(dir, 'future'), '--model', 'test-model', '--effort', 'high'], { encoding: 'utf8' });
+      assert.notEqual(launch.status, 0);
+      assert.match(launch.stderr, /fold into unit sessions/);
+      assert.equal(existsSync(path.join(dir, 'sessions', 'other.json')), false);
+    }
+    assert.equal(run([dir, 'unit', 'sessions', '--tickets', 'ISS-2', '--candidates', candidates]).status, 0, 'folding is allowed');
+    assert.equal(run([...second, '--separate-reason', 'Separate release date']).status, 2);
+    const rulings = path.join(dir, 'rulings.md');
+    writeFileSync(rulings, '- Ruling 2026-11-23 (operator message: chat): "Separate release date" for ISS-9\n');
+    assert.equal(run([...second, '--separate-reason', 'Separate release date']).status, 2);
+    writeFileSync(rulings, '- Ruling 2026-11-23 (operator message: chat): "Separate release date" for ISS-2\n');
+    assert.equal(run([...second, '--separate-reason', 'Separate release date']).status, 0);
+    assert.match(readFileSync(path.join(dir, 'board.json'), 'utf8'), /Separate release date/);
+  }
+});
+
+test('DT 09 AC-9 refuses duplicate writer, branch and PR; records a scoped operator exception', (t) => {
+  const dir = tempDir(t);
+  assert.equal(run([dir, 'writer', 'one', '--tickets', 'ISS-1', '--pr', '21', '--branch', 'one']).status, 0);
+  for (const args of [
+    ['writer', 'two', '--tickets', 'ISS-1'], ['unit', 'other', '--tickets', 'ISS-1', '--writer', 'two'],
+    ['writer', 'one', '--pr', '22'], ['writer', 'one', '--branch', 'two'],
+  ]) {
+    const denied = run([dir, ...args]);
+    assert.equal(denied.status, 2);
+    assert.match(denied.stderr, /one.*--separate-reason/s);
+  }
+  assert.equal(run([dir, 'writer', 'one', '--pr', '21', '--status', 'tested']).status, 0);
+  writeFileSync(path.join(dir, 'rulings.md'), '- Ruling 2026-11-23 (operator message: chat): "Maintain two release lines" for ISS-1\n- Ruling 2026-11-23 (AskUserQuestion: program owner): "Client backport" for ISS-1\n');
+  assert.equal(run([dir, 'writer', 'one', '--pr', '22', '--separate-reason', 'Maintain two release lines']).status, 0);
+  assert.equal(run([dir, 'writer', 'one', '--pr', '23']).status, 2);
+  assert.match(readFileSync(path.join(dir, 'board.json'), 'utf8'), /Maintain two release lines/);
+  assert.equal(run([dir, 'writer', 'two', '--tickets', 'ISS-1', '--separate-reason', 'Client backport']).status, 0);
+  assert.equal(run([dir, 'writer', 'two', '--status', 'building']).status, 0);
+});
+
+test('DT 09 AC-9 concurrent owners cannot both claim an unowned ticket', async t => {
+  const dir = tempDir(t);
+  const lock = path.join(dir, 'board.lock');
+  mkdirSync(lock);
+  writeFileSync(path.join(lock, 'owner.json'), JSON.stringify({ pid: 2147483647, identity: 'exited', token: 'old' }));
+  const runBoard = promisify(execFile);
+  const [results] = await Promise.all([
+    Promise.allSettled(['one', 'two'].map(writer => runBoard(process.execPath,
+      [path.join(HERE, 'board.mjs'), dir, 'writer', writer, '--tickets', 'ISS-1']))),
+    runBoard(process.execPath, [path.join(HERE, 'board.mjs'), dir, 'duty', 'monitor', '--owner', 'independent']),
+  ]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.match(results.find(result => result.status === 'rejected').reason.stderr, /already belongs to writer/);
+  assert.equal(Object.keys(JSON.parse(readFileSync(path.join(dir, 'board.json'))).writers).length, 1);
+  assert.equal(JSON.parse(readFileSync(path.join(dir, 'board.json'))).duties.monitor.owner, 'independent');
+});
+
+test('F05 an active standalone legacy PR needs ticket reconciliation before another writer starts', t => {
+  const dir = tempDir(t);
+  const state = path.join(dir, 'board.json');
+  const board = JSON.parse(readFileSync(state));
+  board.writers.legacy = { repo: 'o/r', pr: '123' };
+  writeFileSync(state, JSON.stringify(board));
+  assert.match(run([dir, 'writer', 'next', '--tickets', 'ISS-1', '--repo', 'o/r']).stderr, /reconcile the tickets of writer legacy/);
+});
 
 test('scope delivery refuses stale loaded instructions and deleted plugin scripts', (t) => {
   const dir = tempDir(t);
@@ -56,7 +187,8 @@ test('scope delivery refuses stale loaded instructions and deleted plugin script
 test('a writer row whose head is behind the pushed head is stale until the writer row is updated', (t) => {
   const dir = tempDir(t);
   assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--pr', '101', '--head', 'aaa', '--status', 'building', '--deps', 'w2']).status, 0);
-  assert.equal(run([dir, 'writer', 'w2', '--tickets', 'ISS-1', '--head', 'ccc']).status, 0);
+  placeLocal(t, dir, 'ISS-2');
+  assert.equal(run([dir, 'writer', 'w2', '--tickets', 'ISS-2', '--head', 'ccc']).status, 0);
   const stale = run([dir, 'status', '--pushed', 'w1=bbb', '--pushed', 'w2=ccc']);
   assert.equal(stale.status, 1);
   assert.match(stale.stdout, /^STALE w1 board head aaa, pushed bbb$/m);
@@ -213,7 +345,8 @@ test('trusted stacked parent ancestry is excluded without declaring parent commi
   git('update-ref', 'refs/remotes/origin/trunk', parent);
   git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk');
   git('update-ref', '-d', 'refs/remotes/origin/main');
-  assert.equal(run([dir, 'writer', 'default', '--tickets', 'ISS-1', '--worktree', wt, '--head', head, '--ready', head]).status, 0);
+  placeLocal(t, dir, 'ISS-2');
+  assert.equal(run([dir, 'writer', 'default', '--tickets', 'ISS-2', '--worktree', wt, '--head', head, '--ready', head]).status, 0);
   const fallback = run([dir, 'status'], { BOARD_GH: gh });
   assert.equal(fallback.status, 0, fallback.stdout + fallback.stderr);
   assert.doesNotMatch(fallback.stdout, /PUSH-READY-UNKNOWN default/, 'pre-PR fallback follows the repository default, not a hardcoded main');
@@ -270,7 +403,8 @@ test('a standing duty whose owner is stopped or unknown is UNOWNED-DUTY, and its
 test('a Codex writer with no push for 30 minutes on a PR with unresolved human threads is SLOW', (t) => {
   const dir = tempDir(t);
   assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--runtime', 'codex', '--head', 'aaa', '--now', '2026-10-21T12:00:00Z']).status, 0);
-  assert.equal(run([dir, 'writer', 'w2', '--tickets', 'ISS-1', '--runtime', 'claude', '--head', 'bbb', '--now', '2026-10-21T12:00:00Z']).status, 0);
+  placeLocal(t, dir, 'ISS-2');
+  assert.equal(run([dir, 'writer', 'w2', '--tickets', 'ISS-2', '--runtime', 'claude', '--head', 'bbb', '--now', '2026-10-21T12:00:00Z']).status, 0);
   assert.equal(run([dir, 'writer', 'w1', '--tickets', 'ISS-1', '--status', 'review fixes', '--now', '2026-10-21T12:20:00Z']).status, 0, 'a status update is not a push');
   const at = (time, threads = 'w1=9') => run([dir, 'status', '--threads', threads, '--threads', 'w2=4', '--now', time]);
   assert.equal(at('2026-10-21T12:29:00Z').status, 0);
@@ -576,9 +710,9 @@ test('status flags a unit whose writer has not recorded every other ticket, and 
   status = run([dir, 'status']);
   assert.doesNotMatch(status.stdout, /UNIT-MEMBERS/);
   assert.match(status.stdout, /, 0 unit member problems/);
-  assert.equal(run([dir, 'writer', 'w2', '--tickets', 'ISS-1', '--worktree', plain]).status, 0);
-  assert.equal(run([dir, 'writer', 'w3', '--tickets', 'ISS-1', '--where', 'remote', '--worktree', worktree]).status, 0);
-  assert.equal(run([dir, 'writer', 'w4', '--tickets', 'ISS-1', '--pr', '9']).status, 0);
+  assert.equal(run([dir, 'writer', 'w2', '--tickets', 'ISS-4', '--worktree', plain]).status, 0);
+  assert.equal(run([dir, 'writer', 'w3', '--tickets', 'ISS-5', '--where', 'remote', '--worktree', worktree]).status, 0);
+  assert.equal(run([dir, 'writer', 'w4', '--tickets', 'ISS-6', '--pr', '9']).status, 0);
   for (const [unit, writer] of [['ISS-4', 'w2'], ['ISS-5', 'w3'], ['ISS-6', 'w4'], ['ISS-7', 'ghost'], ['ISS-8', '']]) {
     assert.equal(run([dir, 'unit', unit, '--tickets', unit, ...(writer ? ['--writer', writer] : [])]).status, 0);
   }
@@ -679,7 +813,7 @@ test('a ready head outside the UI paths needs no findings, and one with no decla
   const ui = uiWriter(t, ['apps/app/header.tsx']);
   writeFileSync(path.join(dir, 'placement.json'), JSON.stringify({ codeOnly: false, needsRunningApp: true, localEvidence: ['web screenshots'] }));
   assert.equal(run([dir, 'placement', '#2', '--evidence', path.join(dir, 'placement.json')], generic).status, 0);
-  assert.equal(run([dir, 'writer', 'g', '--tickets', '#2', '--worktree', ui.wt, '--ready', ui.heads[0]], generic).status, 0);
+  assert.equal(run([dir, 'writer', 'g', '--tickets', '#2', '--repo', 'other/ui', '--worktree', ui.wt, '--ready', ui.heads[0]], generic).status, 0);
   const row = JSON.parse(readFileSync(path.join(dir, 'board.json'), 'utf8')).writers.g;
   assert.equal(row.visualQa.required, false);
   assert.match(row.visualQa.reason, /declares no UI paths/);
@@ -726,8 +860,8 @@ test("a replacement pull request needs its own operator list admission",t=>{
   const dir=tempDir(t),file=path.join(dir,"board.json");
   assert.equal(run([dir,"writer","w1","--tickets","ISS-1","--pr","41","--repo","example/widgets"]).status,0);
   const board=JSON.parse(readFileSync(file,"utf8"));board.writers.w1.mergeListed={head:"a".repeat(40),at:"previous"};
-  writeFileSync(file,JSON.stringify(board));
-  const result=run([dir,"writer","w1","--pr","42","--head","b".repeat(40)]);
+  writeFileSync(file,JSON.stringify(board));writeFileSync(path.join(dir,"rulings.md"),'- Ruling 2026-11-24 (operator message: chat): "Replace the pull request" for ISS-1\n');
+  const result=run([dir,"writer","w1","--pr","42","--head","b".repeat(40),"--separate-reason","Replace the pull request"]);
   assert.equal(result.status,0,result.stderr);
   assert.ok(!JSON.parse(readFileSync(file,"utf8")).writers.w1.mergeListed);
 });
@@ -736,10 +870,10 @@ test("a held pull remains bound to its original identity until verified terminal
   const dir=tempDir(t),file=path.join(dir,"board.json"),gh=path.join(dir,"gh-hold");
   assert.equal(run([dir,"writer","w1","--tickets","ISS-1","--pr","41","--repo","example/widgets"]).status,0);
   const board=JSON.parse(readFileSync(file,"utf8"));board.writers.w1.mergeHold={head:"a".repeat(40),reason:"operator QA"};
-  writeFileSync(file,JSON.stringify(board));
+  writeFileSync(file,JSON.stringify(board));writeFileSync(path.join(dir,"rulings.md"),'- Ruling 2026-11-24 (operator message: chat): "Replace the pull request" for ISS-1\n');
   for(const state of ["OPEN","CLOSED"]){
     writeFileSync(gh,"#!/bin/sh\n[ \"$3\" = 41 ] || exit 1\necho '"+JSON.stringify({number:41,url:"https://github.com/example/widgets/pull/41",state,isDraft:false})+"'\n");chmodSync(gh,0o700);
-    const result=run([dir,"writer","w1","--pr","42"],{BOARD_GH:gh}),row=JSON.parse(readFileSync(file,"utf8")).writers.w1;
+    const result=run([dir,"writer","w1","--pr","42","--separate-reason","Replace the pull request"],{BOARD_GH:gh}),row=JSON.parse(readFileSync(file,"utf8")).writers.w1;
     assert.equal(result.status===0,state==="CLOSED",result.stderr);
     assert.equal(String(row.pr),state==="OPEN"?"41":"42");
     assert.equal(Boolean(row.mergeHold),state==="OPEN");

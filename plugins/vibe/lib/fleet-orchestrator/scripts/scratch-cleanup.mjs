@@ -10,16 +10,28 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { captureOwnedDockerResources, removeOwnedDockerResources } from '../../vibe/scripts/owned-docker.mjs';
 import { defaultLockDir, sameWorktreeEntry } from '../../vibe/scripts/e2e-lock.mjs';
-import { readSessionRecord, sessionRecordPath } from '../../vibe/scripts/session-record.mjs';
+import { git, readSessionRecord, readSessionRecordFile, sessionRecordPath } from '../../vibe/scripts/session-record.mjs';
 import { acquireLedgerLock, helperEntries, isAlive, pendingRecordedProcess, read, readIdentity, write } from './helpers.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /** Capture the exact live vibe or fleet writer lease that authorizes a scratch stack. */
 export function captureScratchLease(orchDir, owner, worktree) {
+  return readScratchLease(orchDir, owner, worktree, sessionRecordPath(worktree));
+}
+
+/** Bind the lease reader to the prepared Git directory, and verify the live directory before reading. */
+export function prepareScratchLease(orchDir, owner, worktree) {
   const sessionFile = sessionRecordPath(worktree);
+  return (currentGitDir = git(worktree, ['rev-parse', '--absolute-git-dir'], { timeout: 1000 })) => {
+    if (currentGitDir !== path.dirname(sessionFile)) throw new Error('scratch worktree Git directory changed during verification');
+    return readScratchLease(orchDir, owner, worktree, sessionFile);
+  };
+}
+
+function readScratchLease(orchDir, owner, worktree, sessionFile) {
   let session;
-  try { session = readSessionRecord(worktree); } catch { /* Fleet state is checked below. */ }
+  try { session = readSessionRecordFile(sessionFile); } catch { /* Fleet state is checked below. */ }
   if (session?.createdAt && session.status === 'active') return { kind: 'vibe', createdAt: session.createdAt };
   const file = path.join(process.env.LOCAL_STATE_DIR || path.join(orchDir, 'sessions'), owner + '.json');
   let state;

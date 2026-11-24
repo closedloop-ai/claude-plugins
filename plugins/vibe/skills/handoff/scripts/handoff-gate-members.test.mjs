@@ -10,6 +10,7 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { captureReviewReceipt, REVIEW_ROLES } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
 const { sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
+const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
 const { prCreateGuard } = await vibeCore("hooks/pr-create-guard.mjs");
 const { gatePath, handoffGateProblem } = await vibeCore("lib/handoff/scripts/handoff-gate-check.mjs");
 import { bindProviderInProcess, seedAlignedDecisionTable } from "../../vibe/scripts/test-fixtures.mjs";
@@ -19,6 +20,32 @@ bindProviderInProcess(after);
 
 const passingInventory = { ok: true, blocking: { prBody: true, prEvidence: true } };
 const TITLE = "ISS-123, ISS-124: Group header counts";
+
+test("AC-14 records the inventory citation in the witness and rechecks its evidence before PR creation", (t) => {
+  const { worktree, gitDir, receipts, body, ticket, member, audit, matrix, review } = fixture(t);
+  const ids = ["AC-1", "ISS-124:AC-1"];
+  const sessionFile = path.join(gitDir, "vibe-session.json");
+  const session = { ...JSON.parse(readFileSync(sessionFile)), liveTicket: "ISS-123", status: "active" };
+  writeFileSync(sessionFile, JSON.stringify(session));
+  const citation = { path: "package.json", ticket: session.liveTicket, criterion: "AC-1", version: 1,
+    source: session.liveTicket, text: "Edit package.json.", disclosure: "Path authorization: `package.json` (ISS-123 AC-1)." };
+  writeFileSync(body, "Delivers ISS-123 and ISS-124.\nDelivery placement: unit ISS-123\n" + citation.disclosure + "\n");
+  const snapshot = path.join(gitDir, "bound-read.json");
+  writeFileSync(snapshot, JSON.stringify({ ticket: session.liveTicket, criterion: citation.text }));
+  const inventory = { ...passingInventory, pathCitations: [citation], pathCitationEvidence: [evidenceFingerprint(snapshot)] };
+  const runScript = (command, args, options) => args[0].endsWith("criteria-audit.mjs") ? spawnSync(command, args, options)
+    : { status: 0, stdout: JSON.stringify(inventory), stderr: "" };
+  recordHandoffGate({ worktree, base: "main", body, runs: receipts[0], receipts, ticket, audit: audit(ids), matrix: matrix(ids),
+    members: [`ISS-124=${member}`], title: TITLE, review: review(ids) }, { runScript });
+  assert.deepEqual(JSON.parse(readFileSync(gatePath(worktree))).pathCitations, [citation]);
+  const current = () => handoffGateProblem(worktree, { base: "main", bodyFile: body, title: TITLE });
+  assert.equal(current(), null);
+  writeFileSync(sessionFile, JSON.stringify({ ...session, liveTicket: "ISS-125" }));
+  assert.match(current(), /different or inactive ticket/);
+  writeFileSync(sessionFile, JSON.stringify(session));
+  writeFileSync(snapshot, "changed ticket");
+  assert.match(current(), /path citation evidence changed/);
+});
 
 test("verifier evidence rejects duplicate importer keys before JSON parsing can overwrite them", (t) => {
   const root = mkdtempSync(path.join(tmpdir(), "vibe-gate-duplicate-importers-"));

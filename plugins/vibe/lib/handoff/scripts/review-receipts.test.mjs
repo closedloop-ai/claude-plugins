@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import { reviewBrief } from "./review-context-test-support.mjs";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -120,7 +121,7 @@ test("Codex native FINAL helper artifacts reach the same four-role handoff gate"
   const receipts = [];
   for (const [index, role] of REVIEW_ROLES.entries()) {
     const workerId = `native-reviewer-${index}`;
-    writeFileSync(path.join(orchDir, `brief-${index}.md`), "Review the current source.\n");
+    writeFileSync(path.join(orchDir, `brief-${index}.md`), reviewBrief(orchDir));
     const definition = path.join(orchDir, `${role}-agent.md`);
     writeFileSync(definition, `---\nname: ${role}\n---\n`);
     const started = helper("start", role, "--runtime", "codex", "--kind", role === "vibe-verify-worker" ? "verifier" : "reviewer", "--brief", `brief-${index}.md`,

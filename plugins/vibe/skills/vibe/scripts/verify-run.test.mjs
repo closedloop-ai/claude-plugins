@@ -162,8 +162,23 @@ test("lanes: a lane this machine cannot run is not-run with its reason, a main f
   assert.equal(find(evidence, lanes[0]).status, Status.Cached);
   assert.equal(find(evidence, lanes[1]).status, Status.NotRun);
   assert.equal(find(evidence, lanes[1]).reason, "no staging e2e identities");
+  assert.equal(find(evidence, lanes[1]).owner, "ci");
   assert.equal(find(evidence, lanes[2]).status, Status.MainPreexisting);
   assert.equal(find(evidence, lanes[3]).status, Status.Passed);
+  assert.equal(evidence.ok, false);
+});
+
+test("DT-07 F08 verifier carries the engineer-owned pending check through its evidence", () => {
+  const lane = "pnpm lane-a";
+  const reason = "(orchestrator) pnpm lane-a was not run because QA_TOKEN is unavailable. Engineering reviewer: provide the credential and run this check.";
+  const record = { lane, reason, commit: HEAD, laneKey: "fixture-key", engineeringCredential: "QA_TOKEN" };
+  const { controller } = harness({ files: { "/wt/package.json": PACKAGE, "/wt/apps/app/a.tsx": "x" }, extra: [
+    ["run-bounded.mjs 300 pnpm test:lanes", ok(`    ${lane}\n`)],
+    ["pre-pr-lanes.mjs check", ok(`NOT-RUN-LANE ${lane} (${reason})\nENGINEERING-LANE ${JSON.stringify(record)}\npre-pr lanes: 0 lanes, 0 missing\n`)],
+  ] });
+  const evidence = controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
+  assert.deepEqual(find(evidence, lane), { name: `lane: ${lane}`, command: lane, required: true, status: Status.NotRun,
+    owner: "engineering reviewer", reason, commit: HEAD, laneKey: "fixture-key", engineeringCredential: "QA_TOKEN" });
   assert.equal(evidence.ok, false);
 });
 
