@@ -84,6 +84,7 @@ export const mainSyncReceiptSchema = z.object({
   ciEvidence: ciEvidenceSchema.optional(),
   failedChecks: z.array(failedCheckSchema).min(1).max(128).optional(),
   pushedHead: commitSchema.optional(),
+  preparationTurn: publicationTurnSchema.optional(),
   publicationTurn: publicationTurnSchema.optional(),
   requestContinuations: z.array(requestContinuationSchema.extend({ turn: publicationTurnSchema.optional() })).max(2).default([]),
   inputs: originProofSchema.optional(),

@@ -182,3 +182,22 @@ test('a watcher without SendMessage surfaces a new event file', { timeout: 30_00
   assert.match(stdout, /^EVENT$/m);
   assert.match(stdout, /green-moved\.md/);
 });
+
+test("AC-089 review watcher TERM records the owned generation exit", async t => {
+  const dir = workDir(t);
+  writeFileSync(join(dir, "last-snapshot.txt"), "fixture\n");
+  const snapshot = join(dir, "fixture.sh");
+  writeFileSync(snapshot, "echo fixture\n");
+  const child = spawn("zsh", [WATCH, dir, "1"], {stdio:"ignore", env:{...process.env, WATCH_SNAPSHOT:snapshot}});
+  const finished = new Promise(resolve => child.once("close",resolve));
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM"); });
+  const file = join(dir,"watcher.json");
+  for (let i=0; i<100 && !existsSync(file); i++) await new Promise(resolve => setTimeout(resolve,50));
+  assert.equal(JSON.parse(readFileSync(file,"utf8")).pid,child.pid);
+  child.kill("SIGTERM");
+  await finished;
+  const record = JSON.parse(readFileSync(file,"utf8"));
+  assert.equal(record.pid,child.pid);
+  assert.ok(Number.isFinite(Date.parse(record.exitedAt)));
+  assert.equal(existsSync(join(dir,"watch.lock")),false);
+});

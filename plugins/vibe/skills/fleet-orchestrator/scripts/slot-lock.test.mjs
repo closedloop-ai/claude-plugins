@@ -90,6 +90,17 @@ test('preflight executes after the slot is acquired and refuses the child on fai
   assert.equal(existsSync(join(root, 'heavy-1.lock')), false, 'the slot is released');
 });
 
+test('the machine stack lease encloses the heavy child after disk preflight', TIMEOUT, () => {
+  const root = lockRoot();
+  const preflight = join(root, 'admission.mjs');
+  const marker = join(root, 'child-ran');
+  writeFileSync(preflight, "if(process.argv[2] === 'run') {console.log(JSON.stringify(process.argv.slice(3))); process.exit(75)}");
+  const result = runSync(root, ['--preflight-node', preflight, 'heavy', 'writer', 'sh', '-c', `touch "${marker}"`]);
+  assert.equal(result.status, 75);
+  assert.match(result.stdout, /child-ran/);
+  assert.equal(existsSync(marker), false);
+});
+
 test('queued free-space loss is checked after a held slot becomes available', TIMEOUT, async () => {
   const root = lockRoot();
   const held = holdSlot(root, 'heavy', 1);

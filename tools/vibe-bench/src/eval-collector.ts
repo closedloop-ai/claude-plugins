@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { claudeNativeFailure, isClaudeNativeFailure } from "./eval-nightly-diagnostics.ts";
 
 /** One shared corpus case and its runtime-specific grading evidence. */
 export interface EvalCaseResult {
@@ -98,6 +99,13 @@ export function verifyLocalEvalHash(result: LocalEvalResult): void {
   }
 }
 
+/** Keep safe native failure codes intact and bound all other collector diagnostics to runtime tokens. */
+export function stableEvalFailureReason(error: unknown, runtime: "claude" | "codex"): string {
+  const message = error instanceof Error ? error.message : "";
+  return (runtime === "claude" && isClaudeNativeFailure(message)) || /^eval-[a-z0-9:-]+$/.test(message)
+    ? message : `eval-${runtime}-artifact-invalid`;
+}
+
 /** One plugin a Claude eval suite must load: its manifest name and version and its canonical path. */
 export interface ExpectedEvalPlugin {
   name: string;
@@ -113,7 +121,8 @@ export function collectClaudeEval(raw: unknown, expectedCases: string[], expecte
   plugins?: readonly ExpectedEvalPlugin[];
 }): EvalSuiteResult {
   const root = object(raw, "eval-claude-json-invalid");
-  if (root.schemaVersion !== 1 || root.partial !== false) throw new Error("eval-claude-partial-or-schema");
+  const failure = claudeNativeFailure(root.schemaVersion, root.partial, root.partialReason);
+  if (failure) throw new Error(failure);
   if (root.claudeVersion !== expected.cliVersion) throw new Error("eval-claude-cli-mismatch");
   const suite = object(root.suite, "eval-claude-suite-missing");
   if (suite.ablation !== "none" || suite.modelOverride !== (expected.model ?? "sonnet")) {

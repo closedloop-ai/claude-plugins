@@ -1,60 +1,23 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { writeLoopbackSsh, writeRemoteCodexStub } from '../../fleet-orchestrator/scripts/fleet-test-support.mjs';
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
+import { snapshotFixture, SNAPSHOT } from './snapshot-test-fixture.mjs';
+
 const { LoadBasis, loadedSkillEvidence } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 
-const SNAPSHOT = fileURLToPath(new URL('./snapshot.sh', import.meta.url));
 const PLUGIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const TIMEOUT = { timeout: 60_000 };
 
-// A fake gh: answers each call snapshot.sh makes while <root>/gh-mode says ok, prints nothing and fails otherwise.
-const FAKE_GH = `#!/bin/sh
-[ "$(cat "$FAKE_ROOT/gh-mode")" = ok ] || exit 1
-case "$*" in
-  "api user"*) echo me ;;
-  "api graphql"*) cat "$FAKE_ROOT/threads" 2>/dev/null || echo 0 ;;
-  "pr list"*--author*) cat "$FAKE_ROOT/mine" 2>/dev/null ;;
-  "pr list"*) printf '5\\n7\\n' ;;
-  "pr view"*isDraft*) cat "$FAKE_ROOT/push-$3" 2>/dev/null || cat "$FAKE_ROOT/push" 2>/dev/null || echo "false $(date -u +%Y-%m-%dT%H:%M:%SZ)" ;;
-  "pr view"*) cat "$FAKE_ROOT/view-$3" 2>/dev/null || cat "$FAKE_ROOT/view" 2>/dev/null || echo "OPEN abcdef12 APPROVED MERGEABLE" ;;
-  "pr checks"*) printf 'build\\tpass\\t1m\\nlint\\tpass\\t1m\\n' ;;
-  *"/issues/"*) echo 2 ;;
-  *"/reviews"*) echo 1 ;;
-  *"/comments"*) echo 3 ;;
-  *) exit 1 ;;
-esac
-`;
-
-function fixture({ fleetHome = false } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'fleet-snapshot-'));
-  const bin = join(root, 'bin');
-  // The board writes only to a program in a fleet home (fleet-home.mjs), so a case that drives it uses one.
-  const work = fleetHome ? join(root, 'home', 'programs', 'p1') : join(root, 'work');
-  mkdirSync(bin);
-  mkdirSync(work, { recursive: true });
-  if (fleetHome) writeFileSync(join(root, 'home', 'current'), 'p1\n');
-  writeFileSync(join(bin, 'gh'), FAKE_GH);
-  // No App Server here: codex fails, so the usage line reads READFAIL on every run.
-  writeFileSync(join(bin, 'codex'), '#!/bin/sh\nexit 1\n');
-  writeFileSync(join(bin, 'claude'), `#!/bin/sh\ncat "${root}/claude-usage" 2>/dev/null || exit 1\n`);
-  for (const name of ['gh', 'codex', 'claude']) chmodSync(join(bin, name), 0o755);
-  writeFileSync(join(work, 'config.env'), 'WATCH_NEW_PR_REPOS="acme/app"\n');
-  writeFileSync(join(work, 'prs.txt'), 'acme/app 42\n');
-  const env = { ...process.env, FAKE_ROOT: root, PATH: `${bin}:${process.env.PATH}`, FLEET_SUPERVISOR_LOCK: join(root, 'supervisor.lock') };
-  const run = (mode) => {
-    writeFileSync(join(root, 'gh-mode'), mode);
-    const result = spawnSync('zsh', [SNAPSHOT, work], { env, encoding: 'utf8', timeout: 50_000 });
+function fixture(options) {
+  return snapshotFixture({ ...options, inspect(result) {
     assert.equal(result.status, 0, result.stderr);
-    return result.stdout;
-  };
-  return { root, work, run };
+  } });
 }
 
 const withoutUsageReadMetadata = (text) => text.replace(/ read=[^\s]+ source=[^\s]+/g, '');
@@ -129,7 +92,7 @@ test('GR-002 idle remote usage ships no freshness dependency bytes', TIMEOUT, ()
     'plugins/vibe/.claude-plugin/plugin.json', 'plugins/vibe/.codex-plugin/plugin.json',
     'plugins/vibe/lib/codex-fleet-monitor/scripts/liveness.mjs', 'plugins/vibe/lib/codex-fleet-monitor/scripts/work-dir.mjs',
     // work-dir.mjs resolves a chat's bound program (ISS-14028).
-    'plugins/vibe/lib/fleet-orchestrator/scripts/chat-binding.mjs', 'plugins/vibe/lib/vibe/scripts/harness-identity.mjs',
+    'plugins/vibe/lib/fleet-orchestrator/scripts/chat-binding.mjs', 'plugins/vibe/lib/vibe/scripts/captured-json.mjs', 'plugins/vibe/lib/vibe/scripts/harness-identity.mjs',
     'plugins/vibe/lib/vibe/scripts/sandbox-refusal.mjs', 'plugins/vibe/lib/vibe/scripts/session-record.mjs',
     'plugins/vibe/lib/vibe/scripts/test-state-isolation.mjs',
     'plugins/vibe/shared/plugin-roots.mjs', 'plugins/vibe/shared/vibe-core.mjs',

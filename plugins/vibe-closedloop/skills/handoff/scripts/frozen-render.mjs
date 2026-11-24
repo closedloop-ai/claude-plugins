@@ -60,12 +60,10 @@
 //                     reproduces it; otherwise it is judged against a branch
 //                     render whose play a base render had. A cropped diff goes
 //                     under --out when the pixels differ.
-// Prints one line per story, a summary line and, when nothing blocks, the
-// `Frozen render unchanged: all N story files (M stories): frozen-render.mjs`
-// line handoff's diff rules accept. Full screenshots and results.json stay
-// under --out; read only the cropped diffs. Exits 0 when nothing blocks, 1
-// when something does, 2 on a usage or setup error.
+// Prints per-story outcomes and records unchanged frozen renders for handoff on a pass.
+// Artifacts stay under --out. Exit 1 blocks; exit 2 is a usage or setup error.
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -82,15 +80,19 @@ import { cropDiffPng, decodePng, pixelHash, pngHash } from "./png-diff.mjs";
 import { semanticSourceText } from "./qa-impact.mjs";
 import { createImportClosure, SOURCE_FILE } from "./source-imports.mjs";
 import { lockfileChangesImporterResolution } from "./lockfile-manifest.mjs";
-import { gitBaseReader, PNPM_LOCKFILE, renderRelevantManifest, renderRelevantPackageFields, storybookImporters } from "./frozen-render-base.mjs";
+import { gitBaseReader, PNPM_LOCKFILE, renderRelevantManifest, renderRelevantPackageFields, SELECTION_MAX_BUFFER, storybookImporters } from "./frozen-render-base.mjs";
 import { baseRenderCache, defaultCacheDir, environmentDigest } from "./frozen-render-cache.mjs";
+import { confirmParallelFrozenBlocks, describePlay, FrozenOutcome, playChange, playOutcome, repeatedFailureLines, repeatedFailureState } from "./frozen-parallel-confirmation.mjs";
+import { attachFrozenPlay, captureSettledFrozenScreenshot, frozenPixelBlock, recordFrozenPixelBlock } from "./frozen-render-settlement.mjs";
 import { isUnversionedStory, keepsStoryIdentity, storyExportNames, storyGroupOrderPath, storybookSchemeOf, storyMetaTitle } from "./storybook-taxonomy.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
+const { chatBinding, commandChat } = await vibeCore("lib/fleet-orchestrator/scripts/chat-binding.mjs");
 const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
 const { scriptExitCode } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 
 const SLOT_LOCK = fileURLToPath(new URL("../../fleet-orchestrator/scripts/slot-lock.sh", import.meta.url));
 const RUN_BOUNDED = fileURLToPath(new URL("../../vibe/scripts/run-bounded.mjs", import.meta.url));
@@ -109,9 +111,11 @@ const PARALLEL_BUILDS = [
 ].join("\n");
 // Storybook builds print megabytes; spawnSync's default 1 MB buffer kills them mid-build (ENOBUFS).
 const BUILD_MAX_BUFFER = 512 * 1024 * 1024;
+const SLOT_WAIT_SECONDS = "1800";
+const DIAGNOSTIC_TAIL = 2000;
 const STORYBOOK_CONFIG_FILE = /\.(?:[cm]?[jt]sx?)$/;
 
-export const FrozenOutcome = Object.freeze({ Identical: "identical", UnstableOnBase: "unstable-on-base", SameFailure: "same-failure", Blocking: "blocking" });
+export { FrozenOutcome };
 /** Software rasterizing on one thread with fixed color and font handling, as the frozen capture launches Chromium. */
 export const DETERMINISTIC_CHROMIUM_ARGS = Object.freeze([
   "--disable-gpu", "--disable-gpu-rasterization", "--disable-partial-raster", "--num-raster-threads=1",
@@ -122,7 +126,6 @@ export const DEFAULT_NOW = "2026-01-01T12:00:00.000Z";
 const DEFAULT_VIEWPORT = Object.freeze({ width: 1280, height: 800 });
 const DEFAULT_TIMEOUT_MS = 20_000;
 const VIEWPORT = /^(\d{2,5})x(\d{2,5})$/;
-const WHITESPACE_RUN = /\s+/g;
 const FINISH_EVENTS = Object.freeze(["storyFinished", "storyThrewException", "storyErrored", "playFunctionThrewException", "storyMissing", "unhandledErrorsWhilePlaying"]);
 const Side = Object.freeze({ Base: "base", BaseAgain: "base-again", Head: "head", BaseConfirm: "base-confirm", HeadConfirm: "head-confirm" });
 /** Extra base renders a blocking story gets before its verdict is reported. */
@@ -202,13 +205,29 @@ export function rebuildStatic(worktree, options = {}) {
   rebuildStatics([worktree], options);
 }
 
+/** The frozen-render callers share the fleet program's host-local slot and heavy-work policy. */
+export function frozenHeavySlots(env = process.env, fleetDir = env.FLEET_HOME) {
+  fleetDir ??= chatBinding(commandChat(env), env)?.home;
+  const config = fleetDir ? readConfig(resolveWorkDir(fleetDir, { env })) : {};
+  if ((config.LOCAL_HEAVY_BARRED ?? env.LOCAL_HEAVY_BARRED) === "1") {
+    throw new Error("the fleet config bars heavy work on this host; run frozen rendering on the heavy host");
+  }
+  const slots = config.HEAVY_SLOTS || env.HEAVY_SLOTS || "1";
+  if (!/^[1-9][0-9]*$/.test(slots)) throw new Error("HEAVY_SLOTS must be a positive decimal integer");
+  return slots;
+}
+
+/** Admission expired before any static build started. */
+export class FrozenSlotBusy extends Error {}
+
 /**
  * Rebuild the static Storybook of every worktree in `worktrees` side by side under one fleet heavy slot, each
  * preserving its prior output until its build succeeds. With `storyFiles`, each build collects only those of them its
  * worktree has, through a generated config directory beside `.storybook` that reuses its main and preview
  * (`writeSubsetConfig`); story IDs come from the files' own titles, so they match a full build's.
  */
-export function rebuildStatics(worktrees, { run = spawnSync, env = process.env, storyFiles = null } = {}) {
+export function rebuildStatics(worktrees, { run = spawnSync, env = process.env, storyFiles = null, fleetDir } = {}) {
+  const slots = frozenHeavySlots(env, fleetDir);
   const jobs = worktrees.map((worktree) => {
     const storybook = path.join(worktree, "apps", "storybook");
     const output = path.join(storybook, "storybook-static");
@@ -218,21 +237,29 @@ export function rebuildStatics(worktrees, { run = spawnSync, env = process.env, 
       configDir: present.length ? writeSubsetConfig(worktree, present, token) : null };
   });
   const buildArgs = (job) => ["exec", "storybook", "build", ...(job.configDir ? ["--config-dir", job.configDir] : []), "--output-dir", job.staging];
-  const slots = String(env.HEAVY_SLOTS || "1");
   const label = `frozen-render ${worktrees.map((worktree) => path.basename(worktree)).join(" ")}`;
+  const admission = [SLOT_LOCK, "--slots", slots, "--wait-seconds", SLOT_WAIT_SECONDS, "heavy", label];
   let result;
   try {
     result = jobs.length === 1
-      ? run("bash", [SLOT_LOCK, "--slots", slots, "heavy", label, process.execPath, RUN_BOUNDED, "600", "pnpm", ...buildArgs(jobs[0])],
+      ? run("bash", [...admission, process.execPath, RUN_BOUNDED, "600", "pnpm", ...buildArgs(jobs[0])],
         { cwd: jobs[0].storybook, encoding: "utf8", env, maxBuffer: BUILD_MAX_BUFFER })
-      : run("bash", [SLOT_LOCK, "--slots", slots, "heavy", label, "bash", "-c", PARALLEL_BUILDS, "frozen-render-builds", process.execPath, RUN_BOUNDED,
+      : run("bash", [...admission, "bash", "-c", PARALLEL_BUILDS, "frozen-render-builds", process.execPath, RUN_BOUNDED,
         ...jobs.flatMap((job) => [job.storybook, String(buildArgs(job).length), ...buildArgs(job)])], { cwd: jobs[0].storybook, encoding: "utf8", env, maxBuffer: BUILD_MAX_BUFFER });
   } finally {
     for (const job of jobs) if (job.configDir) rmSync(job.configDir, { recursive: true, force: true });
   }
   if (result.error || result.status !== 0 || jobs.some((job) => !existsSync(path.join(job.staging, "index.html")))) {
     for (const job of jobs) rmSync(job.staging, { recursive: true, force: true });
-    throw new Error(`Storybook static build failed for the named checkout: ${result.error?.message ?? result.stderr ?? "missing index"}`);
+    if (result.status === 75 && result.stderr?.includes("slot-lock: admission deadline exceeded for heavy")) {
+      throw new FrozenSlotBusy("the Storybook build is waiting for a heavy slot; retry when one is free");
+    }
+    const output = ["stdout", "stderr"].flatMap((name) => {
+      const tail = result[name]?.trim().slice(-DIAGNOSTIC_TAIL);
+      return tail ? [`${name}: ${tail}`] : [];
+    });
+    const reason = [result.error?.message, ...output].filter(Boolean).join(" | ") || "missing index";
+    throw new Error(`Storybook static build failed for the named checkout: ${reason}`);
   }
   // Storybook reads each story entry as a glob, so a path it cannot match is left out with no error; a story the
   // build does not hold would then fail the same way on both sides and pass.
@@ -312,7 +339,7 @@ function resolveCommit(worktree, ref) {
 }
 
 /** Own both comparison servers and the `workers` browsers for the whole render, including failures. */
-export async function runOwnedFrozenComparison({ repo, baseDir, base, storyFiles, out, viewport, timeoutMs, now, workers = 1, staticBuild = false, cacheDir = null },
+export async function runOwnedFrozenComparison({ repo, baseDir, base, storyFiles, out, viewport, timeoutMs, now, workers = 1, staticBuild = false, cacheDir = null, fleetDir },
   { withServer = withVerifyStorybook, nextPort = freePort, launch, compare = frozenStoryFiles,
     headOf = currentHead, resolveCommit: resolve = resolveCommit, buildStatic = rebuildStatics } = {}) {
   const basePort = await nextPort();
@@ -329,7 +356,7 @@ export async function runOwnedFrozenComparison({ repo, baseDir, base, storyFiles
     const baseHead = headOf(baseDir);
     const head = headOf(repo);
     if (baseHead !== comparisonBase) throw new Error("Prepared base checkout does not match the named base commit.");
-    await buildStatic([baseDir, repo], { storyFiles });
+    await buildStatic([baseDir, repo], { storyFiles, ...(fleetDir ? { fleetDir } : {}) });
     if (headOf(baseDir) !== baseHead || headOf(repo) !== head) {
       throw new Error("Storybook checkout head moved during its static build; comparison refused.");
     }
@@ -370,8 +397,7 @@ async function measurePhase(timings, phase, action) {
 
 /**
  * Renders one story in a fresh browser context and returns its play result, screenshot and phase timings.
- * Direct callers receive its exact pixel hash. `deferPixels` lets `frozenRenders` avoid every decode when raw PNGs match;
- * `dependencies.reference` preserves the pairwise short circuit, and the remaining dependencies exist for focused tests.
+ * Direct callers get the exact pixel hash. Deferred and referenced results keep the encoded-PNG short circuit.
  */
 export async function renderStory(browser, url, id, { viewport = DEFAULT_VIEWPORT, timeoutMs = DEFAULT_TIMEOUT_MS, now = DEFAULT_NOW } = {}, dependencies = {}) {
   const timingsMs = { contextCreation: 0, pageLoad: 0, playWait: 0, fonts: 0, screenshot: 0, decode: 0, hash: 0 };
@@ -396,7 +422,12 @@ export async function renderStory(browser, url, id, { viewport = DEFAULT_VIEWPOR
     }
     const events = (await page.evaluate(() => window.__vibePlayEvents ?? [])).map((event) => ({ ...event, storyId: event.storyId ?? id }));
     await measurePhase(timingsMs, "fonts", () => page.evaluate(() => document.fonts.ready.then(() => undefined)));
-    const screenshot = await measurePhase(timingsMs, "screenshot", () => page.screenshot({ animations: "disabled", caret: "hide", scale: "css", fullPage: true }));
+    const verdict = finished ? playVerdicts(events, [id])[0]
+      : { storyId: id, verdict: "FAIL", reason: `the play did not finish within ${timeoutMs} ms` };
+    const cause = events.find((event) => event.storyId === id && FINISH_EVENTS.includes(event.type) && event.type !== "storyFinished");
+    const failure = cause ? { type: cause.type, message: cause.message ?? null } : null;
+    const screenshot = await measurePhase(timingsMs, "screenshot", () => captureSettledFrozenScreenshot(page, timeoutMs))
+      .catch((error) => attachFrozenPlay(error, { verdict: verdict.verdict, reason: verdict.reason, failure, events, timingsMs }));
     const hash = async (action) => {
       const before = timingsMs.hash;
       const result = await measurePhase(timingsMs, "hash", action);
@@ -416,10 +447,7 @@ export async function renderStory(browser, url, id, { viewport = DEFAULT_VIEWPOR
     if (!dependencies.deferPixels) {
       pixels = reference?.rawPngHash === rawPngHash ? reference.pixels : await decodePixels();
     }
-    const verdict = finished ? playVerdicts(events, [id])[0]
-      : { storyId: id, verdict: "FAIL", reason: `the play did not finish within ${timeoutMs} ms` };
-    const failure = events.find((event) => event.storyId === id && FINISH_EVENTS.includes(event.type) && event.type !== "storyFinished");
-    return { verdict: verdict.verdict, reason: verdict.reason, failure: failure ? { type: failure.type, message: failure.message ?? null } : null,
+    return { verdict: verdict.verdict, reason: verdict.reason, failure,
       pixels, rawPngHash, decodePixels, screenshot, events, timingsMs };
   } finally {
     await context.close();
@@ -430,9 +458,9 @@ export async function renderStory(browser, url, id, { viewport = DEFAULT_VIEWPOR
  * Resolves the pixel identities needed by `classifyStory`. One raw-PNG group needs no decode; multiple groups decode
  * one representative each so differently encoded screenshots still compare by their exact decoded pixels.
  */
-async function resolvePixelHashes(renders) {
+async function resolvePixelHashes(renders, { exact = false } = {}) {
   const groups = Map.groupBy(renders, (render) => render.rawPngHash);
-  if (groups.size === 1) {
+  if (groups.size === 1 && !exact) {
     for (const render of renders) {
       render.pixels = render.rawPngHash;
       render.pixelsDecoded = false;
@@ -456,8 +484,16 @@ export function classifyStory(bases, head) {
   const [base] = bases;
   const basePlays = new Set(bases.map(playOutcome));
   const renders = bases.length === 2 ? "the two base renders" : `the ${bases.length} base renders`;
+  const repetition = repeatedFailureState(bases, [head]);
+  if (repetition.unstable && !basePlays.has(playOutcome(head))) {
+    return { outcome: FrozenOutcome.UnstableOnBase, reason: "every base repetition failed with varying errors and the branch passed" };
+  }
   if (!basePlays.has(playOutcome(head))) {
     return { outcome: FrozenOutcome.Blocking, reason: playChange(bases, head, renders), diff: [base, head] };
+  }
+  if (repetition.basePassed) {
+    return { outcome: FrozenOutcome.Blocking, reason: `a base repetition passed and the branch failed: ${describePlay(head)}`,
+      diff: [bases.find((render) => render.verdict === "PASS"), head] };
   }
   if (basePlays.size > 1) {
     return { outcome: FrozenOutcome.UnstableOnBase, reason: `the play's outcome differs between ${renders}; the branch matches one of them`,
@@ -476,24 +512,22 @@ export function classifyStory(bases, head) {
   return { outcome: FrozenOutcome.Identical };
 }
 
-/**
- * Renders every story once on the base and once on the branch, spread over the browsers in `browsers` (or the one
- * `browser`), each taking the next story when it finishes one. A second base render happens only when the first
- * comparison blocks: a branch render that matches the base's play and pixels cannot block whatever a second base
- * render shows, so the verdict is the one two base renders give. A story that still blocks gets the confirmation
- * renders as before, and the branch's too when its play outcome is one no base render had. Results keep `ids` order.
- */
-export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser, browsers = [browser], out, viewport, timeoutMs, now, command, head, inputs, repairedIds = new Map(), refused = [], baseCache = null }, renderDependencies = {}) {
+/** Compare stories in parallel, then isolate blocking candidates after every worker drains. Results keep ID order. */
+export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser, browsers = [browser], out, viewport, timeoutMs, now, command, base, head, inputs, repairedIds = new Map(), refused = [], baseCache = null }, renderDependencies = {}) {
   const options = { viewport, timeoutMs, now };
+  const compare = (worker, id) => frozenStory(worker, id,
+    { baseUrl, headUrl, out, options, repairedIds, renderDependencies, baseCache, parallelPrimary: browsers.length > 1 }).catch(frozenPixelBlock);
   const stories = new Array(ids.length);
+  const assignedBrowsers = new Array(ids.length);
   let next = 0;
   let failed = false;
   // Every worker finishes its current story before a failure is reported, so no render outlives the browsers.
   const settled = await Promise.allSettled(browsers.map(async (worker) => {
     while (!failed && next < ids.length) {
       const index = next++;
+      assignedBrowsers[index] = worker;
       try {
-        stories[index] = await frozenStory(worker, ids[index], { baseUrl, headUrl, out, options, repairedIds, renderDependencies, baseCache });
+        stories[index] = await compare(worker, ids[index]);
       } catch (error) {
         failed = true;
         throw error;
@@ -502,15 +536,21 @@ export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser,
   }));
   const rejected = settled.find((result) => result.status === "rejected");
   if (rejected) throw rejected.reason;
+  if (browsers.length > 1) {
+    await confirmParallelFrozenBlocks(stories, out, (id, output, index) =>
+      frozenStory(assignedBrowsers[index], id, { baseUrl, headUrl, out: output, options, repairedIds, renderDependencies, pairOnly: true }),
+    { base, head, inputs, now: now ?? DEFAULT_NOW, viewport: viewport ?? DEFAULT_VIEWPORT });
+  }
   stories.push(...refused.map((story) => ({ ...story, outcome: FrozenOutcome.Blocking })));
   return summarize(stories, { fileCount, out, command, head, inputs });
 }
 
 /** One story's renders and outcome, as `frozenRenders` records it. */
-async function frozenStory(browser, id, { baseUrl, headUrl, out, options, repairedIds, renderDependencies, baseCache }) {
+async function frozenStory(browser, id, { baseUrl, headUrl, out, options, repairedIds, renderDependencies, baseCache, pairOnly = false, parallelPrimary = false }) {
   const renders = {};
   const render = async (side, url) => {
-    renders[side] = await renderStory(browser, url, id, options, { ...renderDependencies, deferPixels: true });
+    renders[side] = await renderStory(browser, url, id, options, { ...renderDependencies, deferPixels: true })
+      .catch((error) => recordFrozenPixelBlock(error, { id, side, renders, save: (frame) => saveScreenshot(out, side, id, frame) }));
     saveScreenshot(out, side, id, renders[side]);
   };
   const baseRenders = () => Object.entries(renders).filter(([side]) => side.startsWith(Side.Base)).map(([, rendered]) => rendered);
@@ -523,9 +563,9 @@ async function frozenStory(browser, id, { baseUrl, headUrl, out, options, repair
     baseCache?.set(id, renders[Side.Base]);
   }
   await render(Side.Head, headUrl);
-  await resolvePixelHashes(Object.values(renders));
+  await resolvePixelHashes(Object.values(renders), { exact: pairOnly });
   let { diff, ...result } = classifyStory(baseRenders(), renders[Side.Head]);
-  if (result.outcome === FrozenOutcome.Blocking) {
+  if (!pairOnly && result.outcome === FrozenOutcome.Blocking) {
     await render(Side.BaseAgain, baseUrl);
     await resolvePixelHashes(Object.values(renders));
     if (renders[Side.Base].cached && !sameRender(renders[Side.Base], renders[Side.BaseAgain])) {
@@ -535,14 +575,14 @@ async function frozenStory(browser, id, { baseUrl, headUrl, out, options, repair
       saveScreenshot(out, Side.Base, id, renders[Side.Base]);
       baseCache.set(id, renders[Side.Base]);
       ({ diff, ...result } = classifyStory(baseRenders(), renders[Side.Head]));
-      if (result.outcome === FrozenOutcome.Blocking) {
+      if (!pairOnly && result.outcome === FrozenOutcome.Blocking) {
         await render(Side.BaseAgain, baseUrl);
         await resolvePixelHashes(Object.values(renders));
       }
     }
     ({ diff, ...result } = classifyStory(baseRenders(), renders[Side.Head]));
   }
-  if (result.outcome === FrozenOutcome.Blocking) {
+  if (!pairOnly && result.outcome === FrozenOutcome.Blocking) {
     // A base that matched itself twice can still vary: a blocking verdict stands only after more base renders agree.
     for (let n = 1; n <= CONFIRM_RENDERS; n++) await render(`${Side.BaseConfirm}-${n}`, baseUrl);
     await resolvePixelHashes(Object.values(renders));
@@ -553,7 +593,7 @@ async function frozenStory(browser, id, { baseUrl, headUrl, out, options, repair
     }
   }
   const playBases = () => new Set(baseRenders().map(playOutcome));
-  if (result.outcome === FrozenOutcome.Blocking && !playBases().has(playOutcome(renders[Side.Head]))) {
+  if (!pairOnly && result.outcome === FrozenOutcome.Blocking && !playBases().has(playOutcome(renders[Side.Head]))) {
     // A branch play outcome no base render had blocks only when more branch renders reproduce it.
     for (let n = 1; n <= CONFIRM_RENDERS; n++) await render(`${Side.HeadConfirm}-${n}`, headUrl);
     await resolvePixelHashes(Object.values(renders));
@@ -561,17 +601,20 @@ async function frozenStory(browser, id, { baseUrl, headUrl, out, options, repair
     const first = renders[Side.Head];
     const reproduced = confirms.some((confirm) => playOutcome(confirm) === playOutcome(first));
     const settled = confirms.find((confirm) => playBases().has(playOutcome(confirm)));
+    const proof = repeatedFailureState(baseRenders(), [first, ...confirms]);
     result.headConfirmRenders = CONFIRM_RENDERS;
-    if (!reproduced && settled) {
+    if (!reproduced && settled && !proof.basePassed && !proof.novelHead) {
       const { headConfirmRenders, confirmRenders } = result;
       ({ diff, ...result } = classifyStory(baseRenders(), settled));
       Object.assign(result, { headConfirmRenders, ...(confirmRenders ? { confirmRenders } : {}) });
       result.reason = `${result.reason ? `${result.reason}; ` : ""}the branch's first play (${first.verdict}: ${describePlay(first)}) did not reproduce in ${CONFIRM_RENDERS} more branch renders`;
     }
   }
+  const failedHead = parallelPrimary && result.outcome === FrozenOutcome.Blocking && renders[Side.Head].failure?.message;
+  const parallelFailurePixels = failedHead ? await renders[Side.Head].decodePixels() : null;
   const crop = diff ? writeCrop(out, id, diff[0].screenshot, diff[1].screenshot) : null;
   const order = [Side.Base, Side.BaseAgain, Side.Head, ...Object.keys(renders).filter((side) => side.startsWith(Side.BaseConfirm) || side.startsWith(Side.HeadConfirm))];
-  return { storyId: id, ...result, ...(crop ? { crop } : {}), ...(repairedIds.has(id) ? { headStoryFile: repairedIds.get(id) } : {}),
+  return { storyId: id, ...result, ...(parallelFailurePixels ? { parallelFailurePixels } : {}), ...(crop ? { crop } : {}), ...(repairedIds.has(id) ? { headStoryFile: repairedIds.get(id) } : {}),
     renders: Object.fromEntries(order.filter((side) => renders[side]).map((side) => {
       const { screenshot, rawPngHash, decodePixels, pixelsDecoded, ...rest } = renders[side];
       return [side, rest];
@@ -612,7 +655,7 @@ export async function frozenStoryFiles({ repo, base, storyFiles, cacheDir = null
       const head = source.head;
       const inputs = frozenInputs(repo, base, files);
       const baseCache = cacheDir ? baseCacheFor({ repo, base, cacheDir, compared, idsOf, render }) : null;
-      const summary = await frozenRenders({ ...render, ids: compared.flatMap(idsOf), fileCount: files.length, command, head, inputs, repairedIds, refused, baseCache });
+      const summary = await frozenRenders({ ...render, ids: compared.flatMap(idsOf), fileCount: files.length, command, base, head, inputs, repairedIds, refused, baseCache });
       // A source edit during rendering can make the comparison internally inconsistent.
       if (summary.changeLogLine && frozenInputs(repo, base, files) !== inputs) {
         const { changeLogLine, ...rest } = summary;
@@ -648,8 +691,8 @@ function baseCacheFor({ repo, base, cacheDir, compared, idsOf, render }) {
  * overlays on a compile-only repaired story file.
  */
 export function frozenBaseInputDigests(repo, base, storyFiles, overlays = new Map()) {
-  const { list, baseFiles, baseBlobs, baseText } = gitBaseReader(repo, base);
-  const blobIds = new Map(list(["ls-tree", "-r", "-z", base]).map((line) => {
+  const { baseFiles, baseBlobs, baseText } = gitBaseReader(repo, base);
+  const blobIds = new Map(readGitInventory(repo, ["ls-tree", "-r", "-z", base], { maxBuffer: SELECTION_MAX_BUFFER }).split("\0").filter(Boolean).map((line) => {
     const [meta, file] = line.split("\t");
     return [file, meta.split(" ")[2]];
   }));
@@ -680,10 +723,10 @@ export function frozenInputs(repo, base, storyFiles = []) {
   const run = (args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", maxBuffer: GIT_MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"] });
   // Base files come through one `git cat-file --batch` per request, not a `git show` per file.
   const { baseFiles, baseBlobs, baseText } = gitBaseReader(repo, base);
-  const headFiles = new Set(run(["ls-files", "--cached", "--others", "--exclude-standard"]).split("\n").filter(Boolean));
+  const headFiles = new Set(readGitInventory(repo, ["ls-files", "--cached", "--others", "--exclude-standard"]).split("\n").filter(Boolean));
   const changed = [...new Set([
     ...run(["diff", "--name-only", "--no-renames", "-z", base]).split("\0"),
-    ...run(["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
+    ...readGitInventory(repo, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
   ].filter(Boolean))];
   const headTexts = new Map();
   const headText = (file) => {
@@ -738,9 +781,9 @@ export function frozenAffectedStoryFiles({ changed, stories, baseFiles, headFile
  */
 export function selectFrozenStoryFiles(repo, base, exclude = new Set()) {
   const { run, list, baseFiles, baseBlobs, baseText } = gitBaseReader(repo, base);
-  const headFiles = new Set(list(["ls-files", "-z", "--cached", "--others", "--exclude-standard"]));
+  const headFiles = new Set(readGitInventory(repo, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: SELECTION_MAX_BUFFER }).split("\0").filter(Boolean));
   const changed = diffEntries(list(["diff", "--name-status", "-M", "-z", base]));
-  changed.push(...list(["ls-files", "-z", "--others", "--exclude-standard"]).map((file) => ({ path: file, oldPath: null })));
+  changed.push(...readGitInventory(repo, ["ls-files", "-z", "--others", "--exclude-standard"], { maxBuffer: SELECTION_MAX_BUFFER }).split("\0").filter(Boolean).map((file) => ({ path: file, oldPath: null })));
   const session = changed.filter((entry) => !exclude.has(entry.path));
   const headText = (file) => {
     const absolute = path.join(repo, file);
@@ -831,29 +874,8 @@ export function loadChromium(repo) {
   throw new Error(`Playwright is not installed in ${repo}; run the repo's bootstrap first`);
 }
 
-/** The verdict, reason and failure text that must match for two plays to count as the same outcome. */
-function playOutcome(render) {
-  return JSON.stringify([render.verdict, render.reason, render.failure?.type ?? null, render.failure?.message ?? null]);
-}
-
 function baseText(repo, base, file) {
   return execFileSync("git", ["-C", repo, "show", `${base}:${file}`], { encoding: "utf8", maxBuffer: GIT_MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"] });
-}
-
-/** The verdict reason and failure text on one line, so each story stays one line of output. */
-function describePlay(render) {
-  return `${render.reason}${render.failure?.message ? `: ${render.failure.message.replace(WHITESPACE_RUN, " ").trim()}` : ""}`;
-}
-
-function playChange(bases, head, renders) {
-  const [base] = bases;
-  if (new Set(bases.map(playOutcome)).size > 1) {
-    return `the play's outcome differs between ${renders} and the branch matches none of them: branch ${head.verdict} (${describePlay(head)})`;
-  }
-  if (base.verdict !== head.verdict) {
-    return `play ${base.verdict} on the base, ${head.verdict} on the branch${head.verdict === "FAIL" ? ` (${describePlay(head)})` : ""}`;
-  }
-  return `the failure changed: base ${describePlay(base)}, branch ${describePlay(head)}`;
 }
 
 function saveScreenshot(out, side, id, render) {
@@ -887,9 +909,11 @@ function summarize(stories, { fileCount, out, command, inputs }) {
   const headFiles = [...new Set(stories.map((story) => story.headStoryFile).filter(Boolean))];
   const repaired = headFiles.length ? `; head story file on both sides for ${headFiles.length} compile-only repaired story files (${headFiles.join(", ")})` : "";
   const states = stories.map((story) => story.storyId).join(",");
+  const repetitionReport = stories.flatMap(repeatedFailureLines);
   const summary = {
     ok, storyFiles: fileCount, stories: stories.length, identical, unstableOnBase, sameFailure, blocking, ...(inputs ? { inputs } : {}),
-    lines: [...stories.map(storyLine), `summary: ${stories.length} stories in ${fileCount} story files: ${counts}${repaired}; results ${results}`],
+    ...(repetitionReport.length ? { repetitionReport } : {}),
+    lines: [...stories.map(storyLine), ...repetitionReport, `summary: ${stories.length} stories in ${fileCount} story files: ${counts}${repaired}; results ${results}`],
     ...(ok ? { changeLogLine: `Frozen render unchanged: all ${fileCount} story files (${stories.length} stories): ${command}: ${counts}${repaired}; states ${states}${inputs ? `; inputs ${inputs}` : ""}; ${results}` } : {}),
   };
   mkdirSync(out, { recursive: true });

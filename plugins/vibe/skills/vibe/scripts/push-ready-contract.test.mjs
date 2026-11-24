@@ -106,3 +106,15 @@ test('review and verification precede publication, with explicit commit recovery
   const ticketFill = handoff.slice(handoff.indexOf('## 8.'), handoff.indexOf('## 9.'));
   assert.match(ticketFill, /source or\s+criterion mismatch[\s\S]*SAME writer[\s\S]*steps 3 through 7[\s\S]*new commit[\s\S]*never amend[\s\S]*(?:pull request|PR) body[\s\S]*retry/i);
 });
+
+test('AC-36 the writer definition carries each of the five ISS-14353 behavior and test-integrity rules', () => {
+  const writer = read('../../../agents/vibe-change-worker.md');
+  const rules = [
+    [/Latch subscribed defaults on open\./, 'opening-value lifecycle'],
+    [/Trace named list order to its owner/, 'exact reference-data semantics'],
+    [/test fixed values outside options/, 'read-only out-of-options state'],
+    [/Before deleting tests, map surviving cases to their owners\./, 'surviving-contract coverage on deletion'],
+    [/Isolate storage before and after,\s*exercise separate users and organizations, and perform the action named by each case\./, 'isolated multi-tenant tests that perform their action'],
+  ];
+  for (const [pattern, name] of rules) assert.match(writer, pattern, name);
+});

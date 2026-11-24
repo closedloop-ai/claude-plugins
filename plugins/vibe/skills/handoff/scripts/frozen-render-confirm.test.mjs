@@ -19,12 +19,12 @@ async function judge(t, head) {
   return { summary, story, sides: browser.visits.map((visit) => (visit.origin === BASE ? "base" : "head")) };
 }
 
-test("a branch play failure the branch does not reproduce in its confirmation renders does not block (ISS-14395)", async (t) => {
+test("a branch play failure blocks on a passing base even when later branch plays pass (ISS-14476 DT-038G)", async (t) => {
   const { summary, story, sides } = await judge(t, [flaky, passes(shot(GREY))]);
-  assert.equal(summary.ok, true);
-  assert.equal(story.outcome, FrozenOutcome.Identical);
+  assert.equal(summary.ok, false);
+  assert.equal(story.outcome, FrozenOutcome.Blocking);
   assert.equal(story.headConfirmRenders, CONFIRM_RENDERS);
-  assert.match(story.reason, /the branch's first play \(FAIL: storyThrewException fired: Unable to find an accessible element with the role "grid"\) did not reproduce in 2 more branch renders$/);
+  assert.match(story.reason, /play PASS on the base, FAIL on the branch \(storyThrewException fired: Unable to find an accessible element with the role "grid"\)$/);
   assert.deepEqual(sides, ["base", "head", "base", "base", "base", "head", "head"], "each confirmation render is counted");
   assert.deepEqual(Object.keys(story.renders), ["base", "base-again", "head", "base-confirm-1", "base-confirm-2", "head-confirm-1", "head-confirm-2"]);
 });
@@ -42,7 +42,7 @@ test("a branch play failure that reproduces blocks, every time or only some of t
 test("a branch whose failure does not reproduce still blocks when its passing render changed", async (t) => {
   const { summary, story } = await judge(t, [flaky, passes(shot(BLUE))]);
   assert.equal(summary.ok, false);
-  assert.match(story.reason, /^the render changed; the branch's first play \(FAIL: .*\) did not reproduce in 2 more branch renders$/);
+  assert.match(story.reason, /^play PASS on the base, FAIL on the branch \(storyThrewException fired: .*\)$/);
 });
 
 test("a changed render with the base's own play outcome gets no branch confirmation renders", async (t) => {

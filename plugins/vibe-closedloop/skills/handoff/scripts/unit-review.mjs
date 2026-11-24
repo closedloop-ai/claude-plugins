@@ -193,15 +193,15 @@ export function gapLines({ gaps, problems, outOfScope, notVisible = [], noSurfac
 }
 
 /** The criteria the unit is reviewed against: the ticket's, every member's and every PRD's. */
-export function unitCriteria({ slug, ticket, members = [], prds = [], plans = [], recorded = [] }) {
+export function unitCriteria({ slug, ticket, members = [], prds = [], plans = [], recorded = [], read = file => readFileSync(file, "utf8") }) {
   const own = ticketCriteria(ticket).map(({ id, text }) => ({ id: `${slug}:${id}`, text, origin: Origin.Ticket }));
-  const memberSet = memberCriteria(members, recorded);
+  const memberSet = memberCriteria(members, recorded, read);
   const problems = [...(own.length === 0 ? ["the ticket has no acceptance criteria checklist"] : []), ...unreadCriteriaProblems(ticket), ...memberSet.problems];
   const documentCriteria = (entries, flag, kind, origin) => entries.flatMap((entry) => {
     const at = entry.indexOf("=");
     const document = entry.slice(0, at);
     if (at <= 0 || !slugPattern().test(document)) throw new Error(`${flag} needs <slug>=<${kind} body file>, got ${entry}`);
-    const criteria = prdCriteria(document, readFileSync(entry.slice(at + 1), "utf8")).map((criterion) => ({ ...criterion, origin }));
+    const criteria = prdCriteria(document, read(entry.slice(at + 1))).map((criterion) => ({ ...criterion, origin }));
     if (criteria.length === 0) problems.push(`${kind} ${document} has no criteria this review can read (an acceptance checklist or lines that lead with an id)`);
     return criteria;
   });
@@ -336,15 +336,15 @@ function anchorSlug(worktree) {
 }
 
 /** Reviews a unit's completed work from files: the criteria, the gaps and the operator's lines. */
-export function reviewUnit({ worktree, ticket, review, body, slug, members = [], prds = [], plans = [], at, unitTickets, marks, audit }) {
+export function reviewUnit({ worktree, ticket, review, body, slug, members = [], prds = [], plans = [], at, unitTickets, marks, audit, read = file => readFileSync(file, "utf8") }) {
   const session = anchorSlug(worktree);
   const anchor = slug ?? session.slug;
   if (!anchor || !slugPattern().test(anchor)) throw new Error("name the ticket with --slug <slug>; the worktree has no session ticket");
-  const { criteria, problems: criteriaProblems } = unitCriteria({ slug: anchor, ticket: readFileSync(ticket, "utf8"), members, prds, plans, recorded: session.members });
-  const parsed = JSON.parse(readFileSync(review, "utf8"));
+  const { criteria, problems: criteriaProblems } = unitCriteria({ slug: anchor, ticket: read(ticket), members, prds, plans, recorded: session.members, read });
+  const parsed = JSON.parse(read(review));
   if (Array.isArray(parsed?.rows)) parsed.rows = parsed.rows.map((row) => (/^AC-\d+$/.test(row?.criterion ?? "") ? { ...row, criterion: `${anchor}:${row.criterion}` } : row));
   const tickets = [anchor, ...members.map((entry) => entry.slice(0, entry.indexOf("=")))];
-  const surface = audit ? noSurfaceMarks(readFileSync(audit, "utf8"), auditCriteria(criteria, anchor, tickets), { worktree, at }) : { marks: marks ?? new Map(), problems: [] };
+  const surface = audit ? noSurfaceMarks(read(audit), auditCriteria(criteria, anchor, tickets), { worktree, at }) : { marks: marks ?? new Map(), problems: [] };
   const unitMarks = new Map([...surface.marks].map(([id, mark]) => [/^AC-\d+$/.test(id) ? `${anchor}:${id}` : id, mark]));
   const result = reviewGaps(criteria, parsed, { codeRef: codeRefChecker(worktree, at), capture: captureChecker(path.dirname(path.resolve(review))), anchor, marks: unitMarks });
   result.problems.unshift(...criteriaProblems, ...surface.problems);

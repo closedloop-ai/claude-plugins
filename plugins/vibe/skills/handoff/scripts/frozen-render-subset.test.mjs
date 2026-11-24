@@ -60,7 +60,7 @@ test("both checkouts build at once in one heavy slot, each from its own subset c
   const run = (command, args, options) => {
     calls.push({ command, args, options });
     const slot = args.findIndex((arg) => path.basename(arg) === "slot-lock.sh");
-    assert.deepEqual(args.slice(slot + 1, slot + 5), ["--slots", "1", "heavy", "frozen-render base head"]);
+    assert.deepEqual(args.slice(slot + 1, slot + 7), ["--slots", "1", "--wait-seconds", "1800", "heavy", "frozen-render base head"]);
     const script = args.indexOf("-c");
     assert.ok(script > slot && args[script - 1] === "bash", "one bash runs both builds inside the one slot");
     // After -c come the script, its $0, node and run-bounded, then one `<cwd> <count> <args...>` group per checkout.
@@ -161,4 +161,18 @@ test("a subset build whose index lacks a story file it was given fails, leaving 
     assert.equal(readFileSync(path.join(dir, "apps", "storybook", "storybook-static", "index.html"), "utf8"), "prior");
     assert.deepEqual(readdirSync(path.join(dir, "apps", "storybook")).filter((name) => name.includes(".vibe-build-") || name.startsWith(".storybook-frozen-")), []);
   }
+});
+
+test("a heavy-slot admission timeout is reported as busy, and a failed build names both of its output streams", async (t) => {
+  const { FrozenSlotBusy } = await import("./frozen-render.mjs");
+  const home = makeHome("vibe-frozen-busy-");
+  t.after(home.cleanup);
+  const dir = worktree(home.root, "head", [FIRST]);
+  const busy = () => ({ status: 75, stdout: "", stderr: "slot-lock: admission deadline exceeded for heavy after 900 s\n" });
+  assert.throws(() => rebuildStatics([dir], { run: busy, env: {} }), (error) => error instanceof FrozenSlotBusy && /waiting for a heavy slot/.test(error.message));
+  const other75 = () => ({ status: 75, stdout: "", stderr: "a different temporary failure" });
+  assert.throws(() => rebuildStatics([dir], { run: other75, env: {} }), (error) => !(error instanceof FrozenSlotBusy) && /Storybook static build failed/.test(error.message));
+  const failed = () => ({ status: 1, stdout: "vite built 3 chunks\nlast stdout line", stderr: "Error: cannot resolve ./missing\nlast stderr line" });
+  assert.throws(() => rebuildStatics([dir], { run: failed, env: {} }),
+    (error) => /stdout: [^|]*last stdout line \| stderr: [^|]*last stderr line$/.test(error.message));
 });
