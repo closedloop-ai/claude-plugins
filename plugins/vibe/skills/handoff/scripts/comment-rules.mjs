@@ -51,7 +51,10 @@ const AGENT_DECISION = /\borchestrator\b|\bruled\b(?!\s+out\b)|\blanes?(?:'s)?\s
 // A decision-table row id is upper case and holds a digit (DT-7, ROW-P2-01), so "row-actions", "dt-label" and an
 // all-letter id are not ids.
 const TABLE_ROW_ID = /\b(?:DT|ROW|DEC)-(?=[A-Z0-9-]*\d)[A-Z0-9]+(?:-[A-Z0-9]+)*\b/;
-const PRODUCT_DECISION = /\b(?:order|first|last|word(?:ing)?|glyph|copy|show|hide|visible|visibility|rank)\w*\b/i;
+const PRODUCT_DECISION = /\b(?:order|first|last|word(?:ing)?|glyph|copy|label|caption|show|hide|visible|visibility|rank)\w*\b/i;
+const EXPLICIT_PRODUCT_SOURCE = /\bAC[-\s]\d+\b|\b[A-Z][a-z]+(?:[ -][A-Z][a-z]+){1,2},\s*20\d\d-\d\d-\d\d\b/;
+const AGENT_ROLE_RULING = /\bfleet\s+lead(?:\x27s)?\s+rulings?\b/i;
+const NAMED_PRODUCT_DECISION = /(?:^|\s)(?:V|UI)-\d+\s*[:(]/;
 const HUMAN_COMMENT_URL = /https?:\/\/\S+\/(?:pull|issues)\/\d+(?:#\S+)?/i;
 const OPEN = { "(": ")", "{": "}", "[": "]" };
 
@@ -202,7 +205,13 @@ export function checkAgentDecisionCitations(files, repo, add) {
       const ticketed = repo.rules?.ticketed;
       if (ticketed) ticketed.lastIndex = 0;
       const tableId = (repo.sessionIds ?? []).some((id) => text.includes(id));
-      if (!(AGENT_DECISION.test(text) || TABLE_ROW_ID.test(text) || tableId) || !PRODUCT_DECISION.test(text) || HUMAN_COMMENT_URL.test(text) || ticketed?.test(text)) continue;
+      const product = PRODUCT_DECISION.test(text) || (/\.[jt]sx$/.test(file.path) && NAMED_PRODUCT_DECISION.test(text));
+      const ticketSource = ticketed?.test(text);
+      // A tracking issue mentioned next to a fleet role does not identify the issue's ruling.
+      const roleRuling = AGENT_ROLE_RULING.test(text);
+      const explicitSource = roleRuling
+        ? EXPLICIT_PRODUCT_SOURCE.test(text) && Boolean(ticketSource) : ticketSource;
+      if (!(roleRuling || AGENT_DECISION.test(text) || TABLE_ROW_ID.test(text) || tableId) || !product || HUMAN_COMMENT_URL.test(text) || explicitSource) continue;
       add("agent-decision-citation", file.path, block[0].line,
         "comment cites an agent or session decision as the source of user-visible ordering, wording or visibility",
         "cite the ticket, PRD or durable human comment that decides the behavior; an agent decision is not product authority");

@@ -18,6 +18,7 @@
 // <red> red, <pending> pending`; exits 1 on any RED or NO-RUN and 2 when gh or
 // git cannot answer. `GREEN_WATCH_GH` overrides the gh binary.
 
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
@@ -49,7 +50,7 @@ export function greenReport({ runs, jobsOf, head, includesProgram, seen = new Se
 }
 
 function gh(args) {
-  return JSON.parse(execFileSync(process.env.GREEN_WATCH_GH || "gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 }));
+  return capturedJson(execFileSync(process.env.GREEN_WATCH_GH || "gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 }));
 }
 
 function isAncestor(worktree, ancestor, sha) {

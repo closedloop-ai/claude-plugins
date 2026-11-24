@@ -22,7 +22,7 @@
 // everything it started, then exits 124, the code GNU `timeout` uses, and
 // prints one line to stderr. Otherwise it exits with the command's own code.
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import os from "node:os";
 import { budgetDisabled, createBudget, isHeavyCommand } from "./heavy-budget.mjs";
 import { runAdmitted } from "./load-admission.mjs";
@@ -42,13 +42,14 @@ export function runBounded(command, args, options) {
  * `runBounded` with `{ code, output }`. With `capture`, stdout and stderr still stream to this
  * process unchanged and the last `captureBytes` of both are kept, so a caller can classify a failure.
  */
-export function runBoundedDetailed(command, args, { seconds, stdio = "inherit", env, capture = false, captureBytes = 256 * 1024 }) {
-  if (!Number.isFinite(seconds) || seconds <= 0) {
+export function runBoundedDetailed(command, args, { seconds, stdio = "inherit", env, capture = false, captureBytes = 256 * 1024, drainGroup = false }) {
+  if (seconds !== null && (!Number.isFinite(seconds) || seconds <= 0)) {
     return Promise.reject(new Error("The time limit must be a positive number of seconds."));
   }
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: capture ? ["inherit", "pipe", "pipe"] : stdio, detached: true, ...(env ? { env: { ...process.env, ...env } } : {}) });
     let timedOut = false;
+    let forwarded = false;
     let killTimer;
     let output = "";
     if (capture) {
@@ -73,18 +74,22 @@ export function runBoundedDetailed(command, args, { seconds, stdio = "inherit", 
     };
     // A caller's kill of this process must reach the detached group, or the group is orphaned.
     const forward = (signal) => {
+      forwarded = true;
       signalGroup(signal);
       killTimer ??= setTimeout(() => signalGroup("SIGKILL"), GRACE_MS);
     };
     const onTerm = () => forward("SIGTERM");
     const onInt = () => forward("SIGINT");
+    const onHup = () => forward("SIGHUP");
     process.on("SIGTERM", onTerm);
     process.on("SIGINT", onInt);
+    process.on("SIGHUP", onHup);
     const release = () => {
       process.off("SIGTERM", onTerm);
       process.off("SIGINT", onInt);
+      process.off("SIGHUP", onHup);
     };
-    const deadline = setTimeout(() => {
+    const deadline = seconds === null ? null : setTimeout(() => {
       timedOut = true;
       signalGroup("SIGTERM");
       killTimer = setTimeout(() => signalGroup("SIGKILL"), GRACE_MS);
@@ -92,11 +97,17 @@ export function runBoundedDetailed(command, args, { seconds, stdio = "inherit", 
     child.once("error", (error) => {
       release();
       clearTimeout(deadline);
+      clearTimeout(killTimer);
       reject(error);
     });
-    child.once("close", (code, signal) => {
-      release();
+    child.once("close", async (code, signal) => {
       clearTimeout(deadline);
+      if (drainGroup && (forwarded || timedOut)) {
+        clearTimeout(killTimer);
+        try { await settleGroup(child.pid, signalGroup); }
+        catch (error) { release(); reject(error); return; }
+      }
+      release();
       if (timedOut) {
         signalGroup("SIGKILL");
         clearTimeout(killTimer);
@@ -105,6 +116,35 @@ export function runBoundedDetailed(command, args, { seconds, stdio = "inherit", 
       }
       resolve({ code: code ?? 128 + (os.constants.signals[signal] ?? 0), output });
     });
+  });
+}
+
+/** Wait out polite cancellation of this spawn's group, then stop any remaining group members. */
+async function settleGroup(pid, signalGroup) {
+  if (!(pid > 1)) return;
+  const started = Date.now();
+  let forced = false;
+  while (runningInGroup(pid)) {
+    const elapsed = Date.now() - started;
+    if (elapsed >= 2 * GRACE_MS) throw new Error(`owned process group ${pid} did not stop after cancellation`);
+    if (elapsed >= GRACE_MS && !forced) {
+      signalGroup("SIGKILL");
+      forced = true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+/** Zombies can keep a process group addressable after its last runnable process has stopped. */
+function runningInGroup(pid) {
+  if (!(pid > 1)) return false;
+  try { process.kill(-pid, 0); }
+  catch (error) { if (error.code === "ESRCH") return false; throw error; }
+  const ps = spawnSync("ps", ["-Ao", "pgid=,stat="], { encoding: "utf8", timeout: 500 });
+  if (ps.status !== 0) return true;
+  return ps.stdout.split("\n").some((line) => {
+    const [group, state] = line.trim().split(/\s+/, 2);
+    return Number(group) === pid && state && !state.startsWith("Z");
   });
 }
 

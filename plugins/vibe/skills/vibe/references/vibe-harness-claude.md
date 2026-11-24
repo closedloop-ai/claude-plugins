@@ -46,6 +46,8 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
     fix the call (leave `agentRoot` out) or dispatch setup.
   - `PROTECTED_PATH_HOOK_UNAVAILABLE`: setup checks the Claude version and hook
     through the named preflight row, then relaunches.
+  - `GUARDS_DISABLED`: on a shared fleet host the named settings file turns
+    vibe's guards off; restore them as the refusal says, then relaunch.
   Use the canonical definition and parent-verified capabilities on stdin. Keep
   the recorded binding, writer ID and persisted Claude session. A missing or
   proven upgraded definition migrates through `writer-state.mjs migrate`, never

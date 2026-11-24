@@ -3,3 +3,6 @@ export function agentFrontmatter(source: string): { metadata: Record<string, unk
 
 /** Top-level YAML name of a repository agent definition used for role registration. */
 export function agentFrontmatterName(source: string): string;
+
+/** Replace only the canonical description scalar in fenced YAML metadata. */
+export function replaceFrontmatterDescription(source: string, description: string): string;
