@@ -95,3 +95,14 @@ test('spawned check and intent dispatch after disk constants initialize', (t) =>
   const intent = spawnSync(process.execPath, [script, 'intent', 'e2e/run-containerized.sh'], { encoding: 'utf8', env });
   assert.equal(intent.status, 0, intent.stderr);
 });
+
+test("conditional shell groups retain the status of the command that executed",async()=>{
+  const {containerizedIntent,explicitComposeProject,changesComposeImages}=await import("./docker-disk-admission.mjs");
+  const build="docker compose -plive -f e2e/compose.yml build";
+  for(const command of ["true || (false) && "+build,"false && (docker compose -pskipped -f e2e/compose.yml build); "+build]){
+    const args=["-c",command];
+    assert.equal(containerizedIntent("sh",args),"build");
+    assert.equal(explicitComposeProject("sh",args),"live");
+    assert.equal(changesComposeImages("sh",args),true);
+  }
+});

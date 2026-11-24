@@ -66,13 +66,16 @@ const dropped = (process.env.FAKE_CLAUDE_DROP_SERVER || '').split(',').filter(Bo
 const startsFile = path.join(process.cwd(), '.git', 'fake-mcp-starts.jsonl');
 const pendingUnlessWaited = process.env.FAKE_CLAUDE_PENDING_UNLESS_WAITED === '1';
 const mcpWait = process.env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS;
-const trackStartup = process.env.FAKE_CLAUDE_PENDING_FOREVER === '1' || pendingUnlessWaited
+// FAKE_CLAUDE_PENDING_TIMES=<n>: the connection stays pending for the first n starts, then connects.
+const pendingTimes = Number(process.env.FAKE_CLAUDE_PENDING_TIMES || 0);
+const trackStartup = process.env.FAKE_CLAUDE_PENDING_FOREVER === '1' || pendingUnlessWaited || pendingTimes > 0
   || process.env.FAKE_CLAUDE_PENDING_ONCE === '1' || process.env.FAKE_CLAUDE_FAILED_SERVER === '1';
 const starts = trackStartup && fs.existsSync(startsFile)
   ? fs.readFileSync(startsFile, 'utf8').trim().split('\n').filter(Boolean).length : 0;
 // Models a connection that is slower than Claude's default startup hold but within a held wait (ISS-14394).
 const pending = process.env.FAKE_CLAUDE_PENDING_FOREVER === '1'
   || (process.env.FAKE_CLAUDE_PENDING_ONCE === '1' && starts === 0)
+  || starts < pendingTimes
   || (pendingUnlessWaited && !(Number(mcpWait) >= 30000));
 const failedServer = process.env.FAKE_CLAUDE_FAILED_SERVER === '1';
 if (trackStartup) fs.appendFileSync(startsFile, JSON.stringify({ id, pending, failedServer, mcpWait }) + '\n');

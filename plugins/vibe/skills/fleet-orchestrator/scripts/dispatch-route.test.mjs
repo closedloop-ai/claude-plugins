@@ -86,7 +86,7 @@ test('the CLI honours the environment switch and reads the manifest file', () =>
   const dir = mkdtempSync(join(tmpdir(), 'route-'));
   const file = join(dir, 'triage.json');
   writeFileSync(file, JSON.stringify(manifestFor('fix the copy on the pricing page', ['apps/app/pricing.tsx'])));
-  const run = (args, env = {}) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', env: { ...process.env, FLEET_CLASS_ROUTING: '', ...env } });
+  const run = (args, env = {}) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', env: { ...process.env, FLEET_CLASS_ROUTING: '0', ...env } });
   const off = JSON.parse(run(['--manifest', file]).stdout);
   assert.deepEqual([off.routed, off.runtime], [false, null]);
   const on = JSON.parse(run(['--manifest', file, '--codex-usage', CODEX_OK], { FLEET_CLASS_ROUTING: '1' }).stdout);

@@ -41,3 +41,13 @@ test("owned prototype paths use the same portable checker decision as handoff", 
   assert.equal(classifyHandoffPath({ ...input,
     file: { path: "apps/prototypes/app/p/other/page.tsx", status: "A" } }).disposition, PathDisposition.Outside);
 });
+
+test("publisher admission needs an exact root instruction policy delta", () => {
+  const repository = ['closedloop-ai', 'claude-plugins'].join('/');
+  const file = 'vibe-handoff-paths.json';
+  const declaration = { ...policy, allowedFiles: [...policy.allowedFiles, 'AGENTS.md'] };
+  const check = (candidate, repo = repository) => classify(file, 'M', 'pull-request', {repository: repo, declaration: candidate});
+  assert.equal(check(declaration).disposition, PathDisposition.Allowed);
+  assert.equal(classify(file,'M','pull-request',{repository, declaration:{...declaration,rootTests:false}}).disposition,PathDisposition.Forbidden);
+  assert.equal(check(declaration,'fixture/other').disposition, PathDisposition.Forbidden);
+});
