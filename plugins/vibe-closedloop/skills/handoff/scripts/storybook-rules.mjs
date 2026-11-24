@@ -80,6 +80,11 @@ export function readStorybookRules(read) {
   }
 }
 
+/** Story support paths, from the same declaration used to validate story-specific code. */
+export function isStorySupportFile(file, config) {
+  return config?.supportPaths ? config.supportPaths.some((matches) => matches(file)) : DEFAULT_SUPPORT_PATH.test(file);
+}
+
 /** Blocking findings for the declared rules; `repo` reads `head`, `base`, `headFiles` and `baseFiles`. */
 export function checkStorybookRules(files, repo, logged, add) {
   const loaded = readStorybookRules(repo.head);
@@ -482,8 +487,7 @@ function checkStoryCopies(files, repo, config, logged, add) {
   if (!deleted.length) {
     return;
   }
-  const isSupport = (file) => (config.supportPaths ? config.supportPaths.some((matches) => matches(file)) : DEFAULT_SUPPORT_PATH.test(file));
-  const added = files.filter((file) => file.status === "A" && SOURCE_FILE.test(file.path) && !isTestFile(file.path) && isSupport(file.path));
+  const added = files.filter((file) => file.status === "A" && SOURCE_FILE.test(file.path) && !isTestFile(file.path) && isStorySupportFile(file.path, config));
   for (const gone of deleted) {
     const stem = path.basename(gone.path).replace(/\.[^.]+$/, "");
     const names = [...(repo.base(gone.path) ?? "").matchAll(EXPORTED_NAME)].map((match) => match[1]);

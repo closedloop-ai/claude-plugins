@@ -5,6 +5,8 @@
 // reached one writer as text while another PR rendered the same behavior.
 //
 // Usage: board.mjs <orchDir> writer <name> [--tickets <a,b>] [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--ready <sha> [--visual-qa <findings.json>]] [--base <trusted remote ref or OID>] [--status <text>] [--deps <a,b>] [--runtime codex|claude] [--where local|remote] [--worktree <path>]
+//        board.mjs <orchDir> writer <name> --retired --pr <its terminal PR>
+//        board.mjs <orchDir> writer <name> --scope-locked <operator words> --ruling-source <citation>
 //        board.mjs <orchDir> retire <writer> --reason <merged or otherwise terminal reason>
 //        board.mjs <orchDir> placement <ticket> --evidence <file> | --keep-local <the operator's reason>
 //        board.mjs <orchDir> push-check <writer> --head <sha>
@@ -101,27 +103,34 @@
 // not running: a watcher left unarmed overnight let writers' questions sit
 // unanswered for 7 hours.
 
-import { execFileSync } from "node:child_process";
+import { ghHead, ghOid, repositoryGit, trustedBaseOid, readyVisualQa, readyVisualQaProblem, releaseSuiteProblem } from "./board-release.mjs";
+export { readyVisualQaProblem, releaseSuiteProblem };
+import { githubRepository } from "../../../lib/vibe/scripts/github-remote.mjs";
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
+import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { watcherState } from "../../codex-fleet-monitor/scripts/watcher.mjs";
 import { configuredStaleSeconds, readUsageReadings, usageProblems, usageStatuses } from "../../codex-fleet-monitor/scripts/usage-state.mjs";
+import { acquireLedgerLock } from "../../../lib/fleet-orchestrator/scripts/helpers.mjs";
+import { remoteWriterRead, retirementExclusions, writerRetirement } from "./writer-retirement.mjs";
+import { runtimeMixLine } from "./fleet-capacity.mjs";
 import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
 import { freeUnitName, renderUnits, unitMemberProblems } from "./ticket-units.mjs";
 import { placementLines, readPlacementEvidence, recordPlacement, renderPlacements, writerPlacementProblem, writerTickets } from "./writer-placement.mjs";
+import { assertScopeDeliveryAllowed, writerScopeLock } from "./writer-scope-lock.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { trackerBound, workItem } from "../../vibe/scripts/tracker-key.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
+const { cloudCapacityLines } = await vibeCore("lib/fleet-orchestrator/scripts/cloud-slot-routing.mjs");
 const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 const { homeProblems, programShape, Shape } = await vibeCore("lib/fleet-orchestrator/scripts/fleet-home.mjs");
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { unitReviewProblem } = await vibeCore("lib/handoff/scripts/unit-review-record.mjs");
-const { failScript, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
-const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
-const { changedPaths, declaresUiPaths, VISUAL_QA_STEP, visualQaFindingsProblems, visualQaRequired } = await vibeCore("lib/vibe/scripts/required-visual-qa.mjs");
+const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
 const STATE = "board.json";
 const PAGE = "board.md";
@@ -136,14 +145,14 @@ const BOTS = new RegExp(process.env.BOT_LOGIN_REGEX || "vercel|codex|github-acti
 /** Rows whose recorded head differs from the pushed head; a row with no known pushed head is not judged. */
 export function staleRows(board, pushed) {
   return Object.entries(board.writers)
-    .filter(([name, row]) => pushed[name] && row.head !== pushed[name])
+    .filter(([name, row]) => !row.retiredAt && pushed[name] && row.head !== pushed[name])
     .map(([name, row]) => ({ name, head: row.head ?? "none", pushed: pushed[name] }));
 }
 
 /** Codex writers whose head has not moved for SLOW_MINUTES while their PR has unresolved human threads. */
 export function slowRows(board, threads, now) {
   return Object.entries(board.writers)
-    .filter(([name, row]) => row.runtime === "codex" && threads[name] > 0 && row.headAt && now - Date.parse(row.headAt) >= SLOW_MINUTES * 60_000)
+    .filter(([name, row]) => !row.retiredAt && row.runtime === "codex" && threads[name] > 0 && row.headAt && now - Date.parse(row.headAt) >= SLOW_MINUTES * 60_000)
     .map(([name, row]) => ({ name, minutes: Math.floor((now - Date.parse(row.headAt)) / 60_000), threads: threads[name] }));
 }
 
@@ -160,7 +169,8 @@ export function unownedDuties(board, helpers) {
 /** Questions unanswered, and answers unacknowledged, for QUESTION_MINUTES or more. */
 export function lateQuestions(board, now) {
   const minutesSince = (at) => Math.floor((now - Date.parse(at)) / 60_000);
-  const entries = Object.entries(board.questions).map(([key, entry]) => ({ writer: entry.writer ?? key, id: entry.id ?? "-", ...entry }));
+  const entries = Object.entries(board.questions).map(([key, entry]) => ({ writer: entry.writer ?? key, id: entry.id ?? "-", ...entry }))
+    .filter((entry) => !board.writers?.[entry.writer]?.retiredAt);
   return {
     unanswered: entries.filter((entry) => !entry.answeredAt && minutesSince(entry.at) >= QUESTION_MINUTES)
       .map((entry) => ({ ...entry, minutes: minutesSince(entry.at) })),
@@ -186,6 +196,7 @@ export function scopeProblems(board, now, readState = worktreeState) {
   for (const [item, delivery] of Object.entries(board.deliveries)) {
     if (delivery.kind !== "scope") continue;
     for (const writer of delivery.to) {
+      if (board.writers[writer]?.retiredAt) continue;
       const toldAt = delivery.told[writer];
       if (!toldAt) continue;
       const minutes = Math.floor((now - Date.parse(toldAt)) / 60_000);
@@ -235,13 +246,13 @@ function requiredDuties(orchDir) {
 /** Every recipient of every delivery not yet told. */
 export function untold(board) {
   return Object.entries(board.deliveries).flatMap(([item, delivery]) =>
-    delivery.to.filter((recipient) => !delivery.told[recipient]).map((recipient) => ({ item, recipient, delivery })));
+    delivery.to.filter((recipient) => !board.writers?.[recipient]?.retiredAt && !delivery.told[recipient]).map((recipient) => ({ item, recipient, delivery })));
 }
 
 /** The page writers read. */
 export function render(board) {
   const rows = Object.entries(board.writers).map(([name, row]) =>
-    `| ${name} | ${row.pr ? `${row.repo ?? ""}#${row.pr}` : ""} | ${row.head ?? ""} | ${row.ready ?? ""} | ${row.status ?? ""} | ${(row.deps ?? []).join(", ")} | ${row.updatedAt} |`);
+    `| ${name} | ${row.pr ? `${row.repo ?? ""}#${row.pr}` : ""} | ${row.head ?? ""} | ${row.ready ?? ""} | ${row.retiredAt ? `Retired (${(row.retiredReason ?? "terminal").replaceAll("|", "\\|")})` : row.mergeHold ? `Held: ${row.mergeHold.reason.replaceAll("|", "\\|")}` : row.status ?? ""} | ${(row.deps ?? []).join(", ")} | ${row.updatedAt} |`);
   const open = untold(board).map(({ item, recipient, delivery }) =>
     `- ${item} (${delivery.kind}) for ${recipient}${delivery.reference ? `: ${delivery.reference}` : ""}${delivery.head ? ` at ${delivery.head}` : ""}`);
   const duties = Object.entries(board.duties).map(([duty, { owner, at }]) => `- ${duty}: ${owner} (since ${at})`);
@@ -253,6 +264,11 @@ export function render(board) {
     "| Writer | PR | Head | Ready | Status | Depends on | Updated |",
     "|---|---|---|---|---|---|---|",
     ...rows,
+    "",
+    "## Operator merge list",
+    "",
+    ...Object.entries(board.writers).flatMap(([name, row]) =>
+      row.mergeListed && !row.mergeHold && !row.retiredAt ? [`- ${name}: ${row.repo}#${row.pr} at ${row.mergeListed.head}`] : []),
     "",
     "## Standing duties",
     "",
@@ -308,43 +324,79 @@ function list(text) {
   return (text ?? "").split(",").map((part) => part.trim()).filter(Boolean);
 }
 
-function ghOid(row, field) {
-  try {
-    return execFileSync(process.env.BOARD_GH || "gh", ["pr", "view", String(row.pr), "-R", row.repo, "--json", field, "-q", `.${field}`],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000 }).trim() || null;
-  } catch {
-    return null;
+/** Read the verified GitHub state for exactly the repository and PR on the writer row. */
+function readPull(row) {
+  return capturedJson(execFileSync(process.env.BOARD_GH || "gh",
+    ["pr", "view", String(row.pr), "--repo", row.repo, "--json", "number,url,state,isDraft,headRefName,headRefOid"],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 }));
+}
+
+/** Unprotected or unverifiable holds stay visible until GitHub confirms draft. */
+export function heldPullProblems(writers, readState = readPull) {
+  return Object.entries(writers).flatMap(([name, row]) => {
+    if (!row.mergeHold || row.retiredAt || row.status?.trim().toUpperCase() === "DONE") return [];
+    let pull;
+    try { pull = readState(row); }
+    catch { return [`PR-HOLD-UNKNOWN ${name}: cannot verify the held PR's draft state`]; }
+    if (pull.state === "MERGED" || pull.state === "CLOSED") return [];
+    return pull.state === "OPEN" && pull.isDraft === true ? []
+      : [`PR-HELD-NOT-DRAFT ${name} ${row.repo}#${row.pr}: ${row.mergeHold.reason}`];
+  });
+}
+
+/** Only an active, unique writer row with an exact GitHub PR identity grants fleet transitions. */
+function managedPull(board, name) {
+  const row = board.writers[name];
+  if (!row || !/^[\w.-]+\/[\w.-]+$/.test(row.repo ?? "") || !/^[1-9][0-9]*$/.test(String(row.pr))
+    || !row.tickets?.length || row.retiredAt || row.status?.trim().toUpperCase() === "DONE") {
+    throw new Error("the writer has no active fleet-owned pull request");
+  }
+  const owners = Object.values(board.writers).filter((other) => other.repo?.toLowerCase() === row.repo.toLowerCase() && String(other.pr) === String(row.pr));
+  const pull = readPull(row);
+  const expectedHeads = [row.head, row.ready, row.mergeListed?.head, row.mergeHold?.head].filter((head) => /^[0-9a-f]{7,40}$/i.test(head ?? ""));
+  if (owners.length !== 1 || pull.state !== "OPEN" || !namesWriterPr(pull.url ?? "", row)
+    || String(pull.number) !== String(row.pr) || typeof pull.isDraft !== "boolean" || !/^[0-9a-f]{40}$/i.test(pull.headRefOid ?? "")
+    || !expectedHeads.some((head) => pull.headRefOid.startsWith(head.toLowerCase()))) {
+    throw new Error("cannot prove the open PR and its published head belong to exactly this fleet writer");
+  }
+  return { row, pull };
+}
+
+/** Hold first in the board, then reconcile GitHub. Promotion requires the exact ready head. */
+function setMergeList(orchDir, board, name, action, reason, at) {
+  const { row, pull } = managedPull(board, name);
+  const hold = action === "hold-pr";
+  if (hold && (!reason?.trim() || /[\r\n]/.test(reason))) throw new Error("hold-pr needs a one-line --reason");
+  if (hold) {
+    row.mergeHold = { reason: reason.trim(), head: pull.headRefOid, at };
+    delete row.mergeListed;
+    write(orchDir, board, `${name}: held ${row.repo}#${row.pr} (${row.mergeHold.reason})`, at);
+  } else if (!row.ready || row.ready.length < 7 || !pull.headRefOid.startsWith(row.ready) || readyVisualQaProblem(row)
+    || unitReviewLines(orchDir, { ...board, units: Object.fromEntries(Object.entries(board.units).filter(([, unit]) => unit.writer === name)) }).length) {
+    throw new Error("merge-list-add needs the pushed, verified ready head and passing unit review");
+  } else {
+    row.mergeHold ??= { reason: "waiting for operator merge-list admission", head: pull.headRefOid, at };
+    row.mergeListed = { head: pull.headRefOid, at, pending: true };
+    write(orchDir, board, `${name}: recording merge-list admission for ${row.repo}#${row.pr} at ${pull.headRefOid}`, at);
+  }
+  if (pull.isDraft !== hold) {
+    execFileSync(process.env.BOARD_GH || "gh", ["pr", "ready", String(row.pr), "--repo", row.repo, ...(hold ? ["--undo"] : [])],
+      { stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 });
+  }
+  const current = read(orchDir);
+  const verified = managedPull(current, name);
+  if (verified.row.repo !== row.repo || String(verified.row.pr) !== String(row.pr)
+    || verified.pull.isDraft !== hold || (!hold && (verified.pull.headRefOid !== pull.headRefOid
+      || verified.row.mergeListed?.head !== pull.headRefOid || !verified.row.mergeListed?.pending))) {
+    throw new Error("the PR or its draft state changed during the fleet transition; recheck GitHub and the board");
+  }
+  if (!hold) {
+    delete verified.row.mergeHold;
+    verified.row.mergeListed = { head: pull.headRefOid, at };
+    write(orchDir, current, `${name}: added ${row.repo}#${row.pr} to the operator merge list at ${pull.headRefOid}`, at);
   }
 }
 
-function ghHead(row) { return ghOid(row, 'headRefOid'); }
-
-/** Read Git from an exact recorded worktree; callers never rely on the coordinator cwd. */
-function repositoryGit(worktree, args) {
-  return execFileSync('git', ['-C', worktree, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 }).trim();
-}
-
-/** Use the live PR target, an orchestrator-pinned base, or the repository default before PR creation. */
-function trustedBaseOid(row, git, published) {
-  if (row.pr && row.repo) {
-    const oid = ghOid(row, 'baseRefOid');
-    if (!/^[a-f0-9]{40}$/i.test(oid ?? '')) throw new Error('Cannot establish the live PR base');
-    return git('rev-parse', '--verify', '--end-of-options', `${oid}^{commit}`);
-  }
-  if (row.trustedBase) {
-    if (!/^[a-f0-9]{40}$/i.test(row.trustedBase.oid ?? '')) throw new Error('Recorded trusted base is invalid');
-    return git('rev-parse', '--verify', '--end-of-options', `${row.trustedBase.oid}^{commit}`);
-  }
-  let ref;
-  try { ref = git('symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'); }
-  catch {
-    try { return git('rev-parse', '--verify', 'refs/remotes/origin/main^{commit}'); }
-    catch { return published; }
-  }
-  return git('rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`);
-}
-
-/** Unresolved review threads a human opened, or null when gh cannot answer. */
 function ghThreads(row) {
   const threads = readThreads(row.repo, row.pr, process.env.BOARD_GH || "gh");
   return threads === null ? null : threads.filter((thread) => !thread.resolved && !BOTS.test(thread.opener ?? "bot")).length;
@@ -380,7 +432,7 @@ function readHelpers(orchDir) {
 function pushedHeads(board, texts) {
   const pushed = pairs(texts, "--pushed");
   for (const [name, row] of Object.entries(board.writers)) {
-    if (!pushed[name] && row.pr && row.repo) {
+    if (!row.retiredAt && !pushed[name] && row.pr && row.repo) {
       const head = ghHead(row);
       if (head) pushed[name] = head;
     }
@@ -388,11 +440,12 @@ function pushedHeads(board, texts) {
   return pushed;
 }
 
-/** Inspect every ahead commit; exempt only ancestry reachable from the actual trusted target base. */
-export function unreadyCommits(board, pushed = {}) {
+/** Inspect active writers' ahead commits against their actual trusted target base. */
+export function unreadyCommits(board, pushed = {}, pullState = (row) => ghOid(row, "state")) {
   const problems = [];
   for (const [name, row] of Object.entries(board.writers)) {
-    if (!row.worktree || row.where === 'remote' || row.retiredAt) continue;
+    if (!row.worktree || row.where === 'remote' || row.retiredAt || row.status?.trim().toUpperCase() === "DONE") continue;
+    if (row.pr && row.repo && pullState(row) === "MERGED") continue;
     const git = (...args) => repositoryGit(row.worktree, args);
     try {
       let base = pushed[name];
@@ -417,52 +470,43 @@ export function unreadyCommits(board, pushed = {}) {
   return problems;
 }
 
+/** Warn once a locally finished single writer has spent fifteen minutes without a published branch or recorded PR. */
+function missingHandoffs(board, dir, now) {
+  if (programShape(dir) !== Shape.OneWriter) return [];
+  const lines = [];
+  for (const [name, row] of Object.entries(board.writers)) {
+    if (row.retiredAt || row.pr || row.status?.trim().toUpperCase() !== "DONE") continue;
+    const at = Date.parse(row.doneAt ?? row.updatedAt);
+    if (!Number.isFinite(at) || now - at < 15 * 60_000) continue;
+    const verify = `HANDOFF-UNVERIFIED ${name}: check the writer's remote branch and PR`;
+    if (!path.isAbsolute(row.worktree ?? "")) { lines.push(verify); continue; }
+    try {
+      const gitRead = (args) => row.where === "remote"
+        ? remoteWriterRead(readConfig(resolveWorkDir(dir)).REMOTE_HOST, ["git", "-C", row.worktree, ...args], 10000)
+        : repositoryGit(row.worktree, args);
+      const branch = gitRead(["symbolic-ref", "--quiet", "--short", "HEAD"]);
+      try { gitRead(["ls-remote", "--exit-code", "--heads", "origin", `refs/heads/${branch}`]); continue; }
+      catch (error) { if (error.status !== 2) throw error; }
+      const repo = row.repo ?? githubRepository(gitRead(["remote", "get-url", "origin"]));
+      if (repo) {
+        const pulls = capturedJson(execFileSync(process.env.BOARD_GH || "gh",
+          ["pr", "list", "--repo", repo, "--state", "all", "--head", branch, "--limit", "1", "--json", "number"],
+          { encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "ignore"] }));
+        if (!Array.isArray(pulls)) throw new Error("Unreadable PR list");
+        if (pulls.length) continue;
+      }
+      lines.push(`HANDOFF-MISSING ${name}: completed locally with no remote branch or PR`);
+    } catch { lines.push(verify); }
+  }
+  return lines;
+}
+
 function noHeadRows(board) {
   return Object.entries(board.writers).filter(([, row]) => row.where === 'remote' && !row.retiredAt)
     .map(([name]) => `NO-HEAD ${name}: remote worktree history is checked on its owning machine`);
 }
 
-/**
- * The visual QA verdict for a writer's ready head ({ head, required, reason, findings }), or a thrown refusal
- * naming the visual QA step. The diff is the ready head against the row's trusted base in its local worktree. A
- * remote or worktree-less row has no repository binding to read UI paths from, so an undeclared set counts as UI.
- */
-function readyVisualQa(row, ready, findings) {
-  const local = row.worktree && row.where !== "remote";
-  const binding = sessionBinding(local ? row.worktree : null);
-  if (local && !declaresUiPaths(binding)) return { head: ready, ...visualQaRequired(binding, []), findings: null };
-  let verdict;
-  let git = null;
-  if (local) {
-    git = (...args) => repositoryGit(row.worktree, args);
-    try {
-      let published;
-      try { published = git("rev-parse", "@{upstream}"); } catch { published = null; }
-      verdict = visualQaRequired(binding, changedPaths(git, trustedBaseOid(row, git, published), ready));
-    } catch { verdict = null; }
-  }
-  verdict ??= { required: true, reason: "no local tree to diff, so the ready head is treated as user-visible", paths: [] };
-  if (!verdict.required) return { head: ready, required: false, reason: verdict.reason, findings: null };
-  const problems = visualQaFindingsProblems(findings, ready, git, binding);
-  if (problems.length) throw new Error(`visual QA is required before this head is called ready (${verdict.reason}): ${problems.join("; ")}`);
-  return { head: ready, required: true, reason: verdict.reason, findings: evidenceFingerprint(path.resolve(findings)) };
-}
-
-/** Why a writer's declared ready head lacks current visual QA, or null. */
-export function readyVisualQaProblem(row) {
-  if (!row?.ready || row.retiredAt) return null;
-  const verdict = row.visualQa;
-  if (!verdict?.head || !(verdict.head.startsWith(row.ready) || row.ready.startsWith(verdict.head))) {
-    return `no visual QA verdict for ready head ${row.ready}; declare it again with writer --ready <sha> [--visual-qa <findings.json>]`;
-  }
-  if (!verdict.required) return null;
-  try {
-    if (JSON.stringify(evidenceFingerprint(verdict.findings.path)) !== JSON.stringify(verdict.findings)) return `visual QA findings ${verdict.findings.path} changed since the ready declaration`;
-  } catch { return `visual QA findings for ready head ${row.ready} cannot be read: ${VISUAL_QA_STEP}`; }
-  return null;
-}
-
-const ACTIONS = ["writer", "retire", "placement", "deliver", "told", "duty", "unit", "question", "answered", "ack", "pending", "push-check", "status", "watch-lines"];
+const ACTIONS = ["writer", "retire", "placement", "deliver", "told", "duty", "unit", "question", "answered", "ack", "pending", "hold-pr", "merge-list-add", "push-check", "status", "watch-lines", "watch-exclusions"];
 
 /** A scope delivery's acknowledgements and each recipient's worktree head when it was sent; refuses a recipient status cannot watch. */
 function scopeBase(board, to, values, previous) {
@@ -502,6 +546,11 @@ export function unitReviewLines(orchDir, board) {
 }
 
 /** Adds or extends a unit; tickets are only ever added, and the resume log records each change. */
+function programRulings(orchDir) {
+  const file = path.join(orchDir, "rulings.md");
+  return existsSync(file) ? readFileSync(file, "utf8") : "";
+}
+
 function recordUnit(orchDir, board, name, values, at) {
   if (values.closed !== undefined) {
     const unit = board.units[name];
@@ -536,7 +585,7 @@ function recordUnit(orchDir, board, name, values, at) {
   };
   const assigned = unit.writer !== previous?.writer ? unit.tickets : added;
   if (unit.writer && board.writers[unit.writer] && assigned.length > 0) {
-    const problem = writerPlacementProblem(board.placements, unit.writer, assigned);
+    const problem = writerPlacementProblem(board.placements, unit.writer, assigned, { rulings: programRulings(orchDir), worktree: board.writers[unit.writer]?.worktree });
     if (problem) throw new Error(problem);
   }
   board.units[name] = unit;
@@ -545,7 +594,7 @@ function recordUnit(orchDir, board, name, values, at) {
   appendFileSync(path.join(orchDir, "resume-log.md"), `\n## ${at.slice(0, 16).replace("T", " ")}\n- Unit ${name} (${unit.writer ?? "no writer yet"}) ${change}: ${unit.tickets.join(", ")}\n`);
 }
 
-function main(argv) {
+async function main(argv) {
   const [workDir, action, ...rest] = argv;
   const { values, positionals } = parseArgs({
     args: rest,
@@ -556,19 +605,58 @@ function main(argv) {
       pushed: { type: "string", multiple: true }, threads: { type: "string", multiple: true }, now: { type: "string" },
       runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" }, ready: { type: "string" }, id: { type: "string" },
       worktree: { type: "string" }, base: { type: "string" }, where: { type: "string" }, tickets: { type: "string" }, writer: { type: "string" }, closed: { type: "string" },
-      evidence: { type: "string" }, "keep-local": { type: "string" },
-      reason: { type: "string" }, "visual-qa": { type: "string" },
+      evidence: { type: "string" }, "keep-local": { type: "string" }, "ruling-source": { type: "string" },
+      "scope-locked": { type: "string" },
+      "import-request": { type: "string" }, "lane-receipt": { type: "string" },
+      reason: { type: "string" }, "visual-qa": { type: "string" }, runs: { type: "string" }, retired: { type: "boolean" },
     },
   });
   if (!workDir || !ACTIONS.includes(action)) {
     throw new Error(`Usage: board.mjs <orchDir> ${ACTIONS.join("|")} ...`);
   }
-  const orchDir = resolveWorkDir(workDir).dir;
+  const { dir: orchDir, home } = resolveWorkDir(workDir);
+  const readsOnly = new Set(["push-check", "pending", "watch-exclusions"]);
+  const release = home && !readsOnly.has(action) ? await acquireLedgerLock(orchDir, { file: "board.lock" }) : null;
+  try { return boardAction(workDir, orchDir, home, action, values, positionals); }
+  finally { release?.(); }
+}
+
+function boardAction(workDir, orchDir, home, action, values, positionals) {
   const board = read(orchDir);
   const now = values.now ? Date.parse(values.now) : Date.now();
   const at = new Date(now).toISOString();
+  const automatic = ["status", "watch-lines", "watch-exclusions"].includes(action);
+  const retire = (name, pr) => {
+    const { REMOTE_HOST: remoteHost, REMOTE_STATE_DIR: remoteStateDir } = readConfig(resolveWorkDir(workDir));
+    return writerRetirement({ dir: orchDir, name, row: board.writers[name], pr, at, readPull, remoteHost, remoteStateDir });
+  };
+  if (automatic && home) {
+    const records = Object.keys(board.writers).flatMap((name) => {
+      const { record } = retire(name);
+      return record ? [[name, record]] : [];
+    });
+    if (records.length) {
+      Object.assign(board.writers, Object.fromEntries(records));
+      if (action !== "watch-exclusions") write(orchDir, board, records.map(([name, row]) => `${name}: retired (${row.retiredReason})`).join(", "), at);
+    }
+  }
+  if (action === "watch-exclusions") {
+    for (const line of retirementExclusions(board.writers)) process.stdout.write(line + "\n");
+    return 0;
+  }
+  const capacity = () => {
+    const staleSeconds = configuredStaleSeconds(orchDir);
+    const rows = usageStatuses(readUsageReadings(orchDir), { now, staleSeconds });
+    const { MOVE_AT_PERCENT } = readConfig(resolveWorkDir(workDir));
+    const runtime = runtimeMixLine(board.writers, rows, { now, staleSeconds, moveAt: Number(MOVE_AT_PERCENT || 80) });
+    const { missing, idle } = cloudCapacityLines(orchDir, board.writers, { now, staleSeconds });
+    return { usage: usageProblems(rows), missing, signals: [...idle, ...(runtime ? [runtime] : [])] };
+  };
   if (action === "watch-lines") {
+    for (const line of missingHandoffs(board, orchDir, now)) process.stdout.write(`board ${line}\n`);
+    for (const line of capacity().signals) process.stdout.write(`board ${line}\n`);
     for (const line of unreadyCommits(board, pushedHeads(board, values.pushed ?? []))) process.stdout.write(`board ${line}\n`);
+    for (const line of heldPullProblems(board.writers)) process.stdout.write(`board ${line}\n`);
     for (const line of noHeadRows(board)) process.stdout.write(`board ${line}\n`);
     const { unanswered, unacked } = lateQuestions(board, now);
     const scope = scopeProblems(board, now);
@@ -582,7 +670,12 @@ function main(argv) {
     const pushed = pushedHeads(board, values.pushed ?? []);
     const stale = staleRows(board, pushed);
     const commits = unreadyCommits(board, pushed);
+    const holds = heldPullProblems(board.writers);
+    const { usage, missing: cloud, signals } = capacity();
+    for (const line of signals) process.stdout.write(`${line}\n`);
+    for (const line of cloud) process.stdout.write(`${line}\n`);
     for (const line of commits) process.stdout.write(`${line}\n`);
+    for (const line of holds) process.stdout.write(`${line}\n`);
     for (const line of noHeadRows(board)) process.stdout.write(`${line}\n`);
     for (const row of stale) process.stdout.write(`STALE ${row.name} board head ${row.head}, pushed ${row.pushed}\n`);
     const open = untold(board);
@@ -609,9 +702,6 @@ function main(argv) {
     for (const entry of scope.notStarted) {
       process.stdout.write(`SCOPE-NOT-STARTED ${entry.item} ${entry.writer} ${entry.minutes}m: its worktree is clean at ${entry.head.slice(0, 10)}, the head it had when the change was sent; ask what it is doing this minute, or stop and relaunch it\n`);
     }
-    const usage = usageProblems(usageStatuses(readUsageReadings(orchDir), {
-      now, staleSeconds: configuredStaleSeconds(orchDir),
-    }));
     for (const line of usage) process.stdout.write(`${line}\n`);
     for (const line of placementLines(board)) process.stdout.write(`${line}\n`);
     const visual = Object.entries(board.writers).flatMap(([writer, row]) => {
@@ -625,15 +715,24 @@ function main(argv) {
     if (!watcher.ok) process.stdout.write(`WATCHER-MISSING ${watcher.line.replace("watcher MISSING", "")}: re-arm watch.sh now (run_in_background)\n`);
     const home = watched || resolveWorkDir(workDir).home ? homeProblems(orchDir) : [];
     for (const line of home) process.stdout.write(`${line}\n`);
-    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked, ${scope.unacked.length} scope unacked, ${scope.notStarted.length} scope not started, ${usage.length} usage problems, ${members.length} unit member problems, ${reviews.length} units unreviewed${watcher.ok ? "" : ", watcher missing"}${home.length > 0 ? `, ${home.length} outside the fleet home` : ""}\n`);
-    return visual.length + members.length + reviews.length + commits.length + stale.length + open.length + slow.length + duties.length + missing.length + asked.length + usage.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
+    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked, ${scope.unacked.length} scope unacked, ${scope.notStarted.length} scope not started, ${usage.length} usage problems, ${cloud.length} cloud validation gaps, ${members.length} unit member problems, ${reviews.length} units unreviewed${watcher.ok ? "" : ", watcher missing"}${home.length > 0 ? `, ${home.length} outside the fleet home` : ""}\n`);
+    return signals.length + cloud.length + visual.length + members.length + reviews.length + commits.length + holds.length + stale.length + open.length + slow.length + duties.length + missing.length + asked.length + usage.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
   }
   const [name, recipient] = positionals;
   if (!name) {
     throw new Error(`${action} needs a name.`);
   }
+  if (action === "hold-pr" || action === "merge-list-add") {
+    setMergeList(orchDir, board, name, action, values.reason, at);
+    return 0;
+  }
   if (action === "push-check") {
+    if (board.writers[name]?.retiredAt) {
+      process.stdout.write(`NOT-READY ${name}: writer retired\n`);
+      return 1;
+    }
     const commits = unreadyCommits({ ...board, writers: { [name]: board.writers[name] ?? {} } }, pushedHeads(board, values.pushed ?? []));
+    commits.push(...heldPullProblems({ [name]: board.writers[name] ?? {} }));
     if (commits.length) {
       for (const line of commits) process.stdout.write(`${line}\n`);
       return 1;
@@ -646,7 +745,24 @@ function main(argv) {
       process.stdout.write(`NOT-READY ${name} head ${values.head}, declared ready ${ready ?? "none"}: ask the writer for its push-ready head and wait for it; never push a head it has not called ready\n`);
       return 1;
     }
-    const visual = readyVisualQaProblem(board.writers[name]);
+    const row = board.writers[name];
+    const remoteHost = row.where === "remote" ? readConfig(resolveWorkDir(orchDir)).REMOTE_HOST : undefined;
+    // Older remote rows can carry only a ready SHA and visual evidence, with no repository or host to inspect.
+    const headOnly = row.where === "remote" && !remoteHost && !row.repo && !row.releaseRuns;
+    if (row.worktree && !headOnly) {
+      const git = (...args) => row.where === "remote"
+        ? remoteWriterRead(remoteHost, ["git", "-C", row.worktree, ...args])
+        : repositoryGit(row.worktree, args);
+      const head = git("rev-parse", "--verify", "--end-of-options", `${values.head}^{commit}`);
+      const manifests = git("ls-tree", "-r", "--name-only", head, "--", "plugins", ".claude-plugin");
+      if (/(?:^|\/)\.claude-plugin\/plugin\.json$/m.test(manifests)) {
+        const base = trustedBaseOid(row, git, null);
+        const report = row.releaseRuns ? JSON.parse(readFileSync(row.releaseRuns, "utf8")) : null;
+        const problem = !base ? "missing trusted release base" : releaseSuiteProblem(git, base, head, report);
+        if (problem) { process.stdout.write(`NOT-READY ${name}: ${problem}\n`); return 1; }
+      }
+    }
+    const visual = readyVisualQaProblem(row);
     if (visual) {
       process.stdout.write(`VISUAL-QA-MISSING ${name} head ${values.head}: ${visual}\n`);
       return 1;
@@ -698,7 +814,14 @@ function main(argv) {
   }
   if (action === "placement") {
     const evidence = values.evidence === undefined ? undefined : readPlacementEvidence(path.resolve(values.evidence));
-    const decision = recordPlacement(board.placements, name, { evidence, keepLocal: values["keep-local"] }, at);
+    const hasImport = values["import-request"] || values["lane-receipt"];
+    if (hasImport && !(values.worktree && values["import-request"] && values["lane-receipt"])) {
+      throw new Error("record a cloud import with --worktree <path> --import-request <file> --lane-receipt <receipt basename>");
+    }
+    const imported = hasImport ? { worktree: values.worktree, requestFile: values["import-request"], laneReceiptName: values["lane-receipt"] } : undefined;
+    const decision = recordPlacement(board.placements, name, {
+      evidence, keepLocal: values["keep-local"], rulingSource: values["ruling-source"], rulings: programRulings(orchDir), imported,
+    }, at);
     write(orchDir, board, `placement ${name}: ${decision.placement}${decision.keepLocal ? `, kept local: ${decision.keepLocal.reason}` : ""} (${decision.reason})`, at);
     process.stdout.write(`PLACEMENT ${name} ${decision.placement}: ${decision.reason}\n`);
     return 0;
@@ -712,6 +835,17 @@ function main(argv) {
     return 0;
   }
   if (action === "writer") {
+    if (values.retired) {
+      if (!values.pr || Object.keys(values).some((key) => !["retired", "pr", "now"].includes(key))) throw new Error("--retired needs only the writer’s exact bound --pr <n>");
+      const { record, problem } = retire(name, values.pr);
+      if (problem) throw new Error(problem);
+      if (record) {
+        board.writers[name] = record;
+        write(orchDir, board, `${name}: retired (${record.retiredReason})`, at);
+      }
+      return 0;
+    }
+    if (board.writers[name]?.retiredAt) throw new Error("the retired writer is retained as history; choose a new writer name");
     if (values.runtime !== undefined && !RUNTIMES.has(values.runtime)) {
       throw new Error("--runtime must be codex or claude.");
     }
@@ -723,11 +857,21 @@ function main(argv) {
     const row = board.writers[name] ?? {};
     const named = values.tickets === undefined ? [] : list(values.tickets);
     const taking = board.writers[name] ? named.filter((ticket) => !(row.tickets ?? []).includes(ticket)) : writerTickets(board, name, { tickets: named });
-    const placementProblem = taking.length > 0 || !board.writers[name] ? writerPlacementProblem(board.placements, name, taking) : null;
+    const placementProblem = taking.length > 0 || !board.writers[name] ? writerPlacementProblem(board.placements, name, taking, {
+      rulings: programRulings(orchDir), worktree: values.worktree ?? row.worktree,
+    }) : null;
     if (placementProblem) throw new Error(placementProblem);
     const worktree = values.worktree === undefined ? undefined : path.resolve(values.worktree);
     const update = Object.fromEntries(Object.entries({ pr: values.pr, repo: values.repo, head: values.head, ready: values.ready, status: values.status, runtime: values.runtime, worktree, where: values.where })
       .filter(([, value]) => value !== undefined));
+    if (named.length > 0) update.tickets = [...new Set([...(row.tickets ?? []), ...named])];
+    if (values["scope-locked"] !== undefined) {
+      const next = { ...row, ...update };
+      const lock = writerScopeLock({ row: next, tickets: writerTickets(board, name, next), quote: values["scope-locked"],
+        source: values["ruling-source"], rulings: programRulings(orchDir), at });
+      if (lock !== row.scopeLock) update.scopeLock = lock;
+      else if (Object.keys(values).every((key) => ["scope-locked", "ruling-source", "now"].includes(key))) return 0;
+    }
     if (values.base !== undefined) {
       const root = worktree ?? row.worktree;
       if (!root || !/^(?:[a-f0-9]{40}|(?:refs\/remotes\/)?[^/\s]+\/.+)$/i.test(values.base)) {
@@ -760,13 +904,19 @@ function main(argv) {
       const root = worktree ?? row.worktree;
       const local = root && (values.where ?? row.where) !== "remote";
       const full = local ? repositoryGit(root, ["rev-parse", "--verify", "--end-of-options", `${values.ready}^{commit}`]) : values.ready;
-      update.visualQa = readyVisualQa({ ...row, ...update, worktree: root }, full, values["visual-qa"]);
+      if (values.runs) update.releaseRuns = path.resolve(values.runs);
+      update.visualQa = readyVisualQa({ ...row, ...update, worktree: root }, full, values["visual-qa"], readHelpers(orchDir));
     }
     if (values.ready) update.readyHeads = [...new Set([...(row.readyHeads ?? []), row.ready, values.ready].filter(Boolean))];
+    if (values.status !== undefined) {
+      update.doneAt = values.status.trim().toUpperCase() === "DONE" ? (row.doneAt ?? at) : null;
+    }
     const moved = values.head !== undefined && values.head !== row.head;
-    if (named.length > 0) update.tickets = [...new Set([...(row.tickets ?? []), ...named])];
     board.writers[name] = { ...row, ...update, ...(values.deps === undefined ? {} : { deps: list(values.deps) }), ...(moved ? { headAt: at } : {}), updatedAt: at };
-    const logged = Object.entries(update).map(([key, value]) => (key === "visualQa" ? `visual QA ${value.required ? "covered" : "not required"} (${value.reason})` : `${key} ${value}`));
+    const logged = Object.entries(update).map(([key, value]) => {
+      if (key === "visualQa") return `visual QA ${value.required ? "covered" : "not required"} (${value.reason})`;
+      return key === "scopeLock" ? `scope locked for ${value.ticket}` : `${key} ${value}`;
+    });
     write(orchDir, board, `${name}: ${logged.join(", ") || "touched"}`, at);
     return 0;
   }
@@ -776,6 +926,9 @@ function main(argv) {
     if (to.length === 0 || !KINDS.has(kind)) {
       throw new Error("deliver needs --to <a,b> and a --kind of ruling, checkpoint or note.");
     }
+    const previous = board.deliveries[name];
+    const recipients = [...new Set([...(previous?.to ?? []), ...to])];
+    if (kind === "scope") assertScopeDeliveryAllowed(orchDir, board.writers, recipients);
     if (kind === "ruling" && !values.reference) {
       throw new Error("a ruling is saved once as a reference file (its screenshots beside it); pass --reference <file>.");
     }
@@ -788,11 +941,10 @@ function main(argv) {
     }
     const promptIssues = promptProblems(versionRecord, brief);
     if (promptIssues.length) throw new Error(promptIssues.join("; "));
-    const previous = board.deliveries[name];
     const scope = kind === "scope" ? scopeBase(board, to, values, previous) : {};
     board.deliveries[name] = {
       kind,
-      to: [...new Set([...(previous?.to ?? []), ...to])],
+      to: recipients,
       told: previous?.told ?? {},
       ...(values.reference ? { reference: values.reference } : {}),
       ...(values.text?.trim() ? { text: values.text.trim() } : {}),
@@ -814,7 +966,7 @@ function main(argv) {
 
 if (isEntryPoint(import.meta.url)) {
   try {
-    process.exit(main(process.argv.slice(2)));
+    process.exit(await main(process.argv.slice(2)));
   } catch (error) {
     process.exit(failScript(error, 2));
   }

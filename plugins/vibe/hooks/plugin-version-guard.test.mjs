@@ -221,6 +221,7 @@ test("a session checkout's own plugin source is a script root; another checkout'
   };
   const checkout = path.join(dir, "checkout");
   const own = pluginSource(checkout);
+  writeFileSync(path.join(own, "skills", "vibe", "scripts", "branch-new.mjs"), "export {};\n");
   const other = pluginSource(path.join(dir, "other-checkout"));
   record(dir, { status: "current", loadedSkill: loaded(dir) });
   const send = (message) => pluginVersionGuard({ tool_name: "SendMessage", session_id: SESSION, cwd: checkout,

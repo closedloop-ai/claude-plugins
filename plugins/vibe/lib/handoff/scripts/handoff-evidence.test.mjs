@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -24,4 +24,14 @@ test("evidence fingerprints are bounded regular files hashed incrementally", () 
   const fifo = path.join(dir, "fifo");
   const made = spawnSync("mkfifo", [fifo]);
   if (made.status === 0) assert.throws(() => evidenceFingerprint(fifo), /regular file/);
+});
+
+
+test("AC-088 public handoff identifies the file containing a malformed receipt", async (t) => {
+  const { readReviewReceipts } = await import("./handoff-gate-check.mjs");
+  const dir = mkdtempSync(path.join(tmpdir(), "handoff-receipt-format-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "review.json");
+  writeFileSync(file, "{");
+  assert.throws(() => readReviewReceipts([file]), /review\.json.*JSON object/i);
 });

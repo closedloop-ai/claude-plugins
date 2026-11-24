@@ -170,7 +170,7 @@ test("the configured heavy slot wait wraps the bounded Storybook build", (t) => 
     const bounded = args.findIndex((arg) => path.basename(arg) === "run-bounded.mjs");
     const pnpm = args.indexOf("pnpm");
     assert.ok(slot >= 0 && bounded > slot && pnpm > bounded, JSON.stringify(args));
-    assert.deepEqual(args.slice(slot + 1, slot + 5), ["--slots", "3", "heavy", `frozen-render ${path.basename(worktree)}`]);
+    assert.deepEqual(args.slice(slot + 1, slot + 7), ["--slots", "3", "--wait-seconds", "1800", "heavy", `frozen-render ${path.basename(worktree)}`]);
     assert.deepEqual(args.slice(bounded + 1, bounded + 3), ["600", "pnpm"]);
     const staging = args.at(-1);
     mkdirSync(staging, { recursive: true });
@@ -300,12 +300,12 @@ test("a blocking story is rendered twice more on the base and becomes unstable o
   const details = JSON.parse(readFileSync(path.join(out, "results.json"), "utf8")).details;
   assert.deepEqual(details.map((story) => [story.storyId, story.outcome, story.confirmRenders ?? 0]), [
     ["a--pixels", FrozenOutcome.UnstableOnBase, CONFIRM_RENDERS],
-    ["b--play", FrozenOutcome.UnstableOnBase, CONFIRM_RENDERS],
+    ["b--play", FrozenOutcome.Blocking, CONFIRM_RENDERS],
     ["c--changed", FrozenOutcome.Blocking, CONFIRM_RENDERS],
     ["d--same", FrozenOutcome.Identical, 0],
   ]);
   assert.equal(details[0].reason, "the 4 base renders differ (found by 2 more base renders after a blocking first comparison)");
-  assert.equal(details[1].reason, "the play's outcome differs between the 4 base renders; the branch matches one of them (found by 2 more base renders after a blocking first comparison)");
+  assert.equal(details[1].reason, "a base repetition passed and the branch failed: storyThrewException fired: expected dialog");
   assert.equal(details[2].reason, "the render changed");
   // The unstable story's crop shows the base renders that differ, not the branch.
   assert.ok(existsSync(details[0].crop));
@@ -313,14 +313,14 @@ test("a blocking story is rendered twice more on the base and becomes unstable o
   const visits = (id) => browser.visits.filter((visit) => visit.id === id).map((visit) => visit.origin === BASE ? "base" : "head");
   assert.deepEqual(visits("c--changed"), ["base", "head", "base", "base", "base"]);
   assert.deepEqual(visits("d--same"), ["base", "head"]);
-  assert.deepEqual(summary.blocking.map((story) => story.storyId), ["c--changed"]);
+  assert.deepEqual(summary.blocking.map((story) => story.storyId), ["b--play", "c--changed"]);
   assert.ok(existsSync(path.join(out, "base-confirm-2", "c--changed.png")));
 });
 
 test("a base whose play outcome varies clears only when the branch matches one of its outcomes", () => {
   const pass = { verdict: "PASS", reason: "completed with no exception or error event", failure: null, pixels: "p" };
   const fail = (message) => ({ verdict: "FAIL", reason: "storyThrewException fired", failure: { type: "storyThrewException", message }, pixels: "f" });
-  assert.equal(classifyStory([pass, fail("flaky")], fail("flaky")).outcome, FrozenOutcome.UnstableOnBase);
+  assert.equal(classifyStory([pass, fail("flaky")], fail("flaky")).outcome, FrozenOutcome.Blocking);
   assert.equal(classifyStory([pass, fail("flaky")], pass).outcome, FrozenOutcome.UnstableOnBase);
   const neither = classifyStory([pass, fail("flaky")], fail("other"));
   assert.equal(neither.outcome, FrozenOutcome.Blocking);
