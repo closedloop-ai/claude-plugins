@@ -70,14 +70,14 @@ export function recoveryTurnProblem(saved, prompt) {
 /**
  * Why vibe's guards cannot run in Codex for a writer started in `cwd`, judged on the hooks that will run there:
  * an older vibe's own when it lists any, else vibe-core's, which must be listed, enabled and approved.
- * Null when they all run; an App Server without hooks/list is not checked.
+ * Null only when the target App Server can prove the guards run.
  */
 export async function vibeHookTrustProblem(client, cwd) {
   let listing;
   try {
     listing = await client.request('hooks/list', { cwds: [cwd] });
   } catch (error) {
-    if (UNKNOWN_METHOD.test(error.message)) return null;
+    if (UNKNOWN_METHOD.test(error.message)) return "this Codex App Server cannot prove hook trust; update it before starting fleet work on this host";
     return `could not list Codex hooks: ${error.message}`;
   }
   const approval = runningHookApproval(listing);

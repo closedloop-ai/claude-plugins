@@ -33,11 +33,12 @@ function setup(t, slug = "cache") {
 
 const inventory = (fixture, ...args) => runNode(INVENTORY, ["--worktree", fixture.worktree, ...args], fixture.home);
 
-/** Plant a marker finding in every cached entry, so a reused entry is visible in the result. */
+/** Mark aggregate inventories so their reuse is visible independently of per-file findings. */
 function plantMarker(gitDir) {
   const dir = path.join(gitDir, "vibe-inventory-cache");
   for (const name of readdirSync(dir).filter((entry) => entry.endsWith(".json"))) {
     const entry = JSON.parse(readFileSync(path.join(dir, name), "utf8"));
+    if (entry.key.kind === "file-local-rules") continue;
     entry.value.diffRules.blocking.push({ rule: "planted", file: "apps/app/page.tsx", line: 1, problem: "planted", fix: "planted" });
     writeFileSync(path.join(dir, name), JSON.stringify(entry));
   }
