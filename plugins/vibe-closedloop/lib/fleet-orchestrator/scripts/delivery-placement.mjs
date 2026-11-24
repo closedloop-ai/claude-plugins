@@ -53,20 +53,25 @@ function recordedPlacements(content) {
 }
 
 /** The single creation boundary for tracker issues and new PRs in a delivery session. */
-export function deliveryPlacementProblem({ content, repository, operation, board,
+export function deliveryPlacementProblem({ content, repository, sourceRepository, operation, board,
   chat, env = process.env, isOpenPullRequest = openPullRequest }) {
   const placements = recordedPlacements(content);
   if (placements.length !== 1) return HELP;
   if (!REPO.test(repository ?? "")) return "delivery placement needs the target GitHub repository";
+  const [line] = placements;
+  const reason = /^unrelated:\s*(\S.*)$/i.exec(line)?.[1];
+  if (reason && /^none\.?$/i.test(reason)) return HELP;
+  const repo = repository.toLowerCase();
+  const crossRepositoryIssue = operation === "issue" && REPO.test(sourceRepository ?? "") && sourceRepository.toLowerCase() !== repo;
+  if (crossRepositoryIssue && reason) return null;
+
   try { board ??= readDeliveryBoard(chat, env); }
   catch { return "the current fleet board could not be read; verify delivery placement against the bound program"; }
 
-  const repo = repository.toLowerCase();
   const units = Object.entries(board.units ?? {}).filter(([, unit]) => {
     const owner = unit.repo ?? board.writers?.[unit.writer]?.repo;
     return !unit.closed && (!owner || owner.toLowerCase() === repo);
   });
-  const [line] = placements;
   const unitName = /^unit\s+([\w.-]+)$/i.exec(line)?.[1];
   if (unitName) {
     const unit = units.find(([name]) => name === unitName)?.[1];
@@ -85,8 +90,7 @@ export function deliveryPlacementProblem({ content, repository, operation, board
     if (!isOpenPullRequest(repository, number)) return `PR #${number} could not be verified open for ${repository}`;
     return operation === "pull-request" ? `open PR #${number} already takes this work; add it there` : null;
   }
-  const reason = /^unrelated:\s*(\S.*)$/i.exec(line)?.[1];
-  if (!reason || /^none\.?$/i.test(reason)) return HELP;
+  if (!reason) return HELP;
   const named = new Set(reason.match(/[A-Za-z0-9_.-]+/g) ?? []);
   const omitted = units.map(([name]) => name).filter((name) => !named.has(name) && !named.has(`${name}.`));
   return omitted.length ? `state why the work is unrelated to these in-flight units for ${repository}: ${omitted.join(", ")}` : null;

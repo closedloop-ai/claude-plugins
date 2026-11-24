@@ -6,6 +6,7 @@ import type { EvalRuntime, EvalSkill } from "./eval-policy.ts";
 import { EVAL_POLICY } from "./eval-policy.ts";
 import type { LocalEvalResult } from "./eval-collector.ts";
 import { verifyLocalEvalHash } from "./eval-collector.ts";
+import { isClaudeNativeFailure } from "./eval-nightly-diagnostics.ts";
 
 /** Human-owned waiver for one runtime-case pair that is failing on main. */
 export interface EvalQuarantineEntry {
@@ -129,6 +130,9 @@ export function loadEvalQuarantine(file: string | URL = EVAL_QUARANTINE_FILE): E
  * auth-unavailable, and a reason with any other character is left out.
  */
 function runtimeIncomplete(runtime: EvalRuntime, invalidReason: string | null | undefined): Error {
+  if (runtime === "claude" && invalidReason && isClaudeNativeFailure(invalidReason)) {
+    return new Error(`eval-baseline-runtime-incomplete:claude:${invalidReason}`);
+  }
   const reason = (invalidReason || "eval-runtime-artifact-missing").toLowerCase().replaceAll("_", "-");
   return new Error(/^[a-z0-9:-]+$/.test(reason)
     ? `eval-baseline-runtime-incomplete:${runtime}:${reason}`

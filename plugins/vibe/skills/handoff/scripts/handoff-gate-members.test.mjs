@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -56,7 +57,7 @@ function fixture(t) {
   const receipts = REVIEW_ROLES.map((role, index) => {
     const sessionId = `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
     const tracePath = file(`${role}.jsonl`, `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "mcp__closedloop_graph__code_symbols" }] } })}\n${JSON.stringify({ type: "result", session_id: sessionId })}\n`);
-    const resultFile = file(`${role}-result.json`, JSON.stringify({ runtime: "claude", agentName: role, status: "DONE", sessionId, requestId: `request-${index}`, tracePath,
+    const resultFile = file(`${role}-result.json`, JSON.stringify({ runtime: "claude", agentName: role, status: "DONE", sessionId, requestId: `request-${index}`, tracePath, worktree: realpathSync(worktree),
       source: sourceIdentity(worktree), graphToolAliases: ["mcp__closedloop_graph__code_symbols"], data: { findings: [] } }));
     const outFile = path.join(gitDir, `${role}-receipt.json`);
     captureReviewReceipt({ worktree, resultFile, outFile, role });
@@ -105,6 +106,9 @@ test("the gate runs the real criteria audit over each member ticket it is given,
   assert.deepEqual(inventoryArgs, [], "no inventory runs once the audit fails");
 
   gate([`ISS-124=${member}`], ["AC-1", "ISS-124:AC-1"]);
+  assert.ok(inventoryArgs[0].includes("--bound-inputs"), "the inventory authenticates all supplied documents");
+  const checkedRuns = inventoryArgs[0][inventoryArgs[0].indexOf("--runs-sha256") + 1];
+  assert.match(checkedRuns, /^[0-9a-f]{64}$/, "child inventory receives the fingerprint of the authenticated runs");
   assert.deepEqual(inventoryArgs[0].filter((arg, index, all) => all[index - 1] === "--ticket"), [ticket, member], "the inventory reads the member's asks too");
   const witness = JSON.parse(readFileSync(gatePath(worktree), "utf8"));
   assert.equal(witness.evidence.members[0].path, member);

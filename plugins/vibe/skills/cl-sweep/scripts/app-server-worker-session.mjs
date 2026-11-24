@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { createHash, randomUUID } from 'node:crypto';
 import { recordSessionDisplayEvent, callbackDisplayDetail } from './display-event.mjs';
 import { execFileSync, spawn } from 'node:child_process';
@@ -143,8 +144,7 @@ function checkpointFingerprint(worktree) {
   const working = command(['diff', 'HEAD', '--binary', '--no-ext-diff']);
   const index = command(['diff', '--cached', '--binary', '--no-ext-diff']);
   const status = command(['status', '--porcelain=v1', '-z', '--untracked-files=all']);
-  const paths = command(['ls-files', '--others', '--exclude-standard', '-z'])
-    .toString('utf8').split('\0').filter(Boolean);
+  const paths = readGitInventory(worktree, ['ls-files', '--others', '--exclude-standard', '-z']).split('\0').filter(Boolean);
   return {
     statusSha256: sha256(status),
     payloads: { 'working.patch': sha256(working), 'index.patch': sha256(index) },
@@ -168,7 +168,7 @@ function verifyCutoverCheckpoint(pathValue, current) {
   if (!pathValue) return null;
   const checkpoint = realpathSync(pathValue);
   const helper = resolve(dirname(fileURLToPath(import.meta.url)), 'checkpoint-worktree.mjs');
-  const verified = JSON.parse(execFileSync(process.execPath, [
+  const verified = capturedJson(execFileSync(process.execPath, [
     helper, 'verify', '--checkpoint', checkpoint,
   ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
   if (verified.repoCommonDir !== current.repoCommonDir) fail('Checkpoint repository does not match worker worktree');
@@ -515,7 +515,7 @@ function parseCallback(message, session) {
   if (callbackLines.length !== 1 || callbackLines[0] !== line) {
     fail('Worker final response must contain exactly one final CL_SWEEP_EVENT v1 line');
   }
-  const event = JSON.parse(line.slice(EVENT_PREFIX.length));
+  const event = capturedJson(line.slice(EVENT_PREFIX.length));
   if (!event || Object.getPrototypeOf(event) !== Object.prototype) fail('Callback must be a plain JSON object');
   const requiredFields = [
     'event_id', 'parent_thread_id', 'ticket', 'worker_id', 'owner_surface',
@@ -1478,7 +1478,7 @@ function rawCallbackEvent(message) {
   if (eventLines.length !== 1 || lines.at(-1) !== eventLines[0]) {
     fail('Completed worker message has no unique final callback');
   }
-  return JSON.parse(eventLines[0].slice(EVENT_PREFIX.length));
+  return capturedJson(eventLines[0].slice(EVENT_PREFIX.length));
 }
 
 async function superviseTurn(args, dependencies = {}) {
@@ -2062,7 +2062,7 @@ function validateRecoveryExpectations(session, args) {
 
 function verifyRecoveryLease(session, args) {
   const ownershipScript = resolve(dirname(fileURLToPath(import.meta.url)), 'ownership-lease.mjs');
-  const result = JSON.parse(execFileSync(process.execPath, [
+  const result = capturedJson(execFileSync(process.execPath, [
     ownershipScript,
     'status',
     '--ledger', required(args, 'ownership-ledger'),
