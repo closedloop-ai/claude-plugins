@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
 import { createHash, randomUUID } from 'node:crypto';
 import { recordDisplayActivation } from './display-event.mjs';
 import { execFileSync } from 'node:child_process';
@@ -351,7 +351,7 @@ export async function assertRootOwner(options) {
 }
 
 function runOwnership(args) {
-  return JSON.parse(execFileSync(process.execPath, [ownershipScript, ...args], {
+  return capturedJson(execFileSync(process.execPath, [ownershipScript, ...args], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }));
@@ -657,7 +657,7 @@ async function inspectWorkerDefault(worker) {
     });
     return { active: status.status === 'active' || Boolean(status.activeTurnId), status };
   }
-  const status = JSON.parse(execFileSync(process.execPath, [
+  const status = capturedJson(execFileSync(process.execPath, [
     fallbackWorkerScript, 'status', '--session-file', worker.stateFile,
   ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
   return { active: status.state === 'RUNNING' || status.activeProcess, status };
@@ -684,7 +684,7 @@ async function rebindWorkerDefault(worker, transfer) {
       'parent-cwd': common.parentCwd,
     });
   }
-  return JSON.parse(execFileSync(process.execPath, [
+  return capturedJson(execFileSync(process.execPath, [
     fallbackWorkerScript, 'rebind-parent',
     '--session-file', worker.stateFile,
     '--expected-parent-thread-id', common.expectedParentThreadId,
@@ -722,7 +722,7 @@ function stopMonitorDefault(entry) {
   execFileSync(process.execPath, [
     monitorScript, 'stop', '--state-file', entry.stateFile, '--wait-seconds', '15',
   ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  const verified = JSON.parse(execFileSync(process.execPath, [
+  const verified = capturedJson(execFileSync(process.execPath, [
     monitorScript, 'verify-stopped', '--state-file', entry.stateFile,
   ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
   if (!verified.verifiedStopped) fail(`Monitor did not stop: ${entry.stateFile}`);
@@ -731,7 +731,7 @@ function stopMonitorDefault(entry) {
 
 function startMonitorDefault(entry, transfer, receiptFile) {
   const monitorScript = resolveMonitorScript();
-  return JSON.parse(execFileSync(process.execPath, [
+  return capturedJson(execFileSync(process.execPath, [
     monitorScript, 'start', entry.prUrl,
     '--thread-id', transfer.to.threadId,
     '--cwd', transfer.to.cwd,
@@ -1164,7 +1164,7 @@ function canonicalFile(pathValue, label) {
 
 function verifyMonitorStoppedDefault(entry) {
   const monitorScript = resolveMonitorScript();
-  const result = JSON.parse(execFileSync(process.execPath, [
+  const result = capturedJson(execFileSync(process.execPath, [
     monitorScript, 'verify-stopped', '--state-file', entry.stateFile,
   ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
   return result.verifiedStopped;

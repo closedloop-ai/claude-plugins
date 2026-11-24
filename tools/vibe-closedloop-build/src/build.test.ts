@@ -173,6 +173,21 @@ describe("assembly", () => {
       + " or `cache/<marketplace>/vibe/<version>/`; `my-vibe-generic@x`, `vibe-generic-x/`, `vibe-generic.md` and `/vibe-generic` stay.\n");
   });
 
+  it("keeps a replacement description inside its flow mapping", () => {
+    const paths = fixture({ "agents/a.md": "---\n{name: sample, description: Old}\n---\nBody.\n" }, {},
+      { descriptions: { "agents/a.md": "Build, then verify." } });
+    buildClosedLoopVibe(paths);
+    expect(readFileSync(join(paths.output, "agents/a.md"), "utf8")).toContain('{name: sample, description: "Build, then verify."}');
+  });
+
+  it("AC-082 replaces the YAML description scalar and preserves the rest of the skill", () => {
+    const before = "\uFEFF---\r\n'description': 'old' # retained\r\nname: a\r\n---\r\ndescription: body\r\n";
+    const paths = fixture({ "agents/a.md": before }, {}, { descriptions: { "agents/a.md": "value: with punctuation" } });
+    buildClosedLoopVibe(paths);
+    const built = readFileSync(join(paths.output, "agents/a.md"), "utf8");
+    expect(built).toBe(before.replace("'old'", '"value: with punctuation"'));
+  });
+
   it("writes the provider's manifest and frontmatter descriptions, its contract with the placement, and each placed file over the source's", () => {
     const paths = fixture({ "agents/a.md": "---\nname: a\ndescription: generic words\nmodel: x\n---\nBody.\n", "bin/run.sh": "#!/bin/sh\n",
       "skills/vibe/references/graph.md": "Generic graph text.\n" },
@@ -313,5 +328,28 @@ describe("the ClosedLoop vibe from this repository", () => {
     for (const file of ["skills/vibe/SKILL.md", "skills/vibe/references/closedloop-environment.md", ".codex-plugin/plugin.json", "provider/provider.json"]) {
       expect(builtText(file), file).toBe(readFileSync(join(dir, file), "utf8"));
     }
+  });
+});
+
+describe("AC-22 tested head", () => {
+  it("AC-22 the built change worker freezes the final tested head next to its tested-head report", () => {
+    const built = builtText("agents/vibe-change-worker.md");
+    const report = built.indexOf("Report HEAD plus diff/tree hashes from");
+    const freeze = built.indexOf("Freeze that final tested head: after\nits checks pass, change nothing, an amend or recommit included, except a fix that\nreruns the checks it affects;");
+    expect(report).toBeGreaterThan(-1);
+    expect(freeze).toBeGreaterThan(report);
+    expect(built.slice(report, freeze)).not.toContain("\n## ");
+  });
+});
+
+describe("AC-45 visual QA overflow source", () => {
+  it("AC-45 the built visual QA text keeps the absolute and sr-only descendant rule at each captured width and names no ticket id", () => {
+    const built = builtText("skills/vibe/references/quality-loop-visual-qa.md");
+    const width = built.indexOf("At each captured width, use `captureVisualQaViewport(page, options)`");
+    const rule = built.indexOf("In static cells and rows, trace absolute and sr-only descendants to their\ncontaining block.");
+    expect(width).toBeGreaterThan(-1);
+    expect(rule).toBeGreaterThan(width);
+    expect(built.slice(width, rule)).not.toContain("\n## ");
+    expect(built).not.toMatch(/\b(?:ISS|PRD|PLN|FEA|PRO)-\d+\b/);
   });
 });

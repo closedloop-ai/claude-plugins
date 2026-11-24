@@ -17,6 +17,7 @@
 // writers found a half-fixed thread, six broken tests and a 10 s per insert trigger behind "done" claims.
 // `last` prints the thread's status line and its last <n> agent messages (default 1).
 // The state file is the one codex-fleet-monitor reads for a `local|remote <name>` session line.
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -38,7 +39,7 @@ const { assertVibeCreatedWorktree, readSessionRecord, sessionLiveTicket } = awai
 const { isSkillReload, LoadBasis, loadedSkillEvidence, loadedSkillEvidenceProblem, reloadableSkill, skillReloadPage, SKILL_RELOAD } = await vibeCore("lib/vibe/scripts/loaded-skill.mjs");
 const { promptProblems } = await vibeCore("lib/fleet-orchestrator/scripts/skill-freshness.mjs");
 const { recordWorkerScope } = await vibeCore("lib/vibe/scripts/worker-scope.mjs");
-const { parseLeadBinding, sessionBinding, useLeadBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
+const { parseLeadBinding, providerProbeProblem, sessionBinding, useLeadBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { canonicalWorktree, ensureReloadFence, e2eLockDir: machineE2eLockDir, machineSlotLockDir, readE2eWaiters, regularJson, releaseReloadFence, waitsForReloadFence, writeAtomic } = await vibeCore("lib/vibe/scripts/owned-state.mjs");
 const { processIdentityStatus, readProcessIdentity, readProcessStart } = await vibeCore("shared/process-identity.mjs");
 
@@ -60,7 +61,7 @@ const REVERIFY = /^\s*Re-verify:\s*\S/m;
 export const PLUGIN_LIST_TIMEOUT_MS = 120_000;
 
 /** A root hint is transport data, never authority: verify it against this host's enabled installation. */
-export function verifiedPluginRoot(requested, { list = () => JSON.parse(execFileSync('codex', ['plugin', 'list', '--json'],
+export function verifiedPluginRoot(requested, { list = () => capturedJson(execFileSync('codex', ['plugin', 'list', '--json'],
   { encoding: 'utf8', timeout: PLUGIN_LIST_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] })) } = {}) {
   const installed = list().installed?.filter(row => row.name === OWN_PLUGIN && row.installed === true && row.enabled === true);
   if (installed?.length !== 1 || typeof installed[0].source?.path !== 'string') throw new Error('cannot establish one verified installed root for vibe');
@@ -86,6 +87,7 @@ export function parseCli(argv) {
       'fleet-claim': { type: 'string' },
       'lead-provider': { type: 'string' },
       retry: { type: 'boolean' },
+      'fleet-program': { type: 'string' },
     },
   });
   const [command, stateDir, name, ...extra] = positionals;
@@ -95,6 +97,7 @@ export function parseCli(argv) {
   if (command === 'turn' || command === 'steer') {
     if (!values['prompt-file']) throw new Error(`${command} needs --prompt-file`);
   } else if (values['prompt-file'] !== undefined) throw new Error(`--prompt-file applies to turn and steer only`);
+  if (command !== 'end' && values['fleet-program'] !== undefined) throw new Error('--fleet-program applies to end only');
   if (command === 'end' && !END_REASONS.includes(values.reason)) throw new Error(`end needs --reason ${END_REASONS.join('|')}`);
   if (command === 'interrupt' && (!values.reason?.trim() || values.reason.length > 1000)) throw new Error('interrupt needs a nonempty --reason (at most 1000 characters)');
   if (!['end', 'interrupt'].includes(command) && values.reason !== undefined) throw new Error('--reason applies to end only or interrupt');
@@ -120,6 +123,7 @@ export function parseCli(argv) {
     cwd: values.cwd === undefined ? undefined : resolve(values.cwd),
     ticket: values.ticket,
     reason: values.reason,
+    ...(values['fleet-program'] === undefined ? {} : { fleetProgram: resolve(values['fleet-program']) }),
     model: values.model,
     effort: values.effort,
     sandbox: values.sandbox,
@@ -136,7 +140,7 @@ export function statePath(stateDir, name) {
 }
 
 /** Refuses a fleet writer whose exact worktree has no active vibe session record. */
-export function assertVibeSession(worktree) {
+export function assertVibeSession(worktree, prompt = "") {
   if (!worktree) throw new Error('a vibe writer needs a session worktree');
   let record;
   try {
@@ -145,7 +149,9 @@ export function assertVibeSession(worktree) {
     throw new Error(`vibe session record cannot be read in ${worktree}`);
   }
   if (!record) throw new Error(`no vibe session record in ${worktree}; the first $vibe turn must create it before any resume`);
-  if (record.status !== 'active' || typeof record.branch !== 'string' || !record.branch
+  const reactivating = record.status === 'handed-off' && sectionTenFixMatches(record.pullRequest, prompt);
+  if (record.status === 'handed-off' && !reactivating) throw new Error(`no active vibe session record in ${worktree}; use handoff-pr.md section-10 PR changes for its recorded PR`);
+  if ((record.status !== 'active' && !reactivating) || typeof record.branch !== 'string' || !record.branch
     || typeof record.slug !== 'string' || !record.slug || typeof record.summary !== 'string' || !record.summary
     || typeof record.operator !== 'object' || !record.operator || !/^[a-f0-9]{40}$/.test(record.baseCommit ?? '')
     || !Number.isFinite(Date.parse(record.createdAt ?? ''))) {
@@ -153,7 +159,21 @@ export function assertVibeSession(worktree) {
   }
   const branch = execFileSync('git', ['-C', worktree, 'branch', '--show-current'], { encoding: 'utf8' }).trim();
   if (branch !== record.branch) throw new Error(`vibe session branch ${record.branch} does not match ${branch}`);
+  if (reactivating) {
+    execFileSync(process.execPath, [path.join(PLUGIN_ROOT, 'skills/vibe/scripts/vibe-sessions.mjs'), 'touch', '--worktree', worktree, '--status', 'active']);
+    return readSessionRecord(worktree);
+  }
   return record;
+}
+
+/** Only the named change workflow for the session's recorded repository and PR can reactivate it. */
+function sectionTenFixMatches(pr, prompt) {
+  if (!pr?.repo || !Number.isSafeInteger(pr.number) || !/\bsection[- ]10\b/i.test(prompt ?? '')) return false;
+  const refs = [...String(prompt).matchAll(/(?:https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/|(\b[\w.-]+\/[\w.-]+)#)(\d+)\b/gi)];
+  const numbers = [...String(prompt).matchAll(/\bPR\s*#(\d+)\b/gi)];
+  if (numbers.some(([, number]) => Number(number) !== pr.number)) return false;
+  return (refs.length > 0 || numbers.length > 0) && refs.every(([, urlRepo, shortRepo, number]) =>
+    (urlRepo ?? shortRepo).toLowerCase() === pr.repo.toLowerCase() && Number(number) === pr.number);
 }
 
 /**
@@ -172,7 +192,7 @@ export function requireResumeSession(saved, requestedCwd, prompt) {
     if (problem) throw new Error(problem);
     return null;
   }
-  return assertVibeSession(worktree);
+  return assertVibeSession(worktree, prompt);
 }
 
 /** Bind a new writer's brief to the canonical live ticket of its Vibe-created worktree. */
@@ -185,9 +205,10 @@ function requireNewSessionWorktree(saved, worktree, ticket, prompt) {
     throw new Error(`cannot inspect --cwd ${worktree}: ${error.message}`);
   }
   const fix = `pass a not-yet-existing path and let the writer's vibe new create it, or use cloud-worker.mjs / pr-takeover for imported work`;
-  const briefTicket = vibeBriefTicket().exec(prompt)?.[1];
+  const named = vibeBriefTicket().exec(prompt)?.[1];
+  const briefTicket = named ?? ticket;
   if (!briefTicket) throw new Error(`existing --cwd ${worktree} needs a $vibe brief naming its ticket; ${fix}`);
-  if (ticket && ticket !== briefTicket) throw new Error(`--ticket ${ticket} does not match the $vibe brief ticket ${briefTicket}; ${fix}`);
+  if (ticket && named && ticket !== named) throw new Error(`--ticket ${ticket} does not match the $vibe brief ticket ${named}; ${fix}`);
   let record;
   try {
     record = assertVibeSession(worktree);
@@ -497,6 +518,8 @@ async function deliverReloadFenced(client, options, dependencies) {
     } else {
       state.loadedSkill = target; // every page has a causal assistant acknowledgement on its recorded App Server turn
       if (!state.reload.pendingPrompt) { delete state.reload; persist(); return { complete: true, threadId: state.threadId }; }
+      const probe = providerProbeProblem(sessionBinding(state.cwd));
+      if (probe) { persist(); throw new Error(probe); }
       state.reload.delivery = { kind: 'brief', nonce, baselineTurnId: live.turn.id,
         text: textInput(`${state.reload.pendingPrompt}\nVIBE_RETAINED_BRIEF v1 ${nonce}`)[0].text };
     }
@@ -643,10 +666,15 @@ export function lastMessages(name, thread, count) {
 }
 
 /** Records the writer stopped or merged, then archives its thread; a running turn is refused before either. */
-export async function endSession(client, stateDir, name, saved, reason) {
+export async function endSession(client, stateDir, name, saved, reason, fleetProgram) {
   let state = saved;
   if (!state.ended) {
     await assertWorkerNotLive(client, state.threadId);
+    if (fleetProgram) {
+      const { fleetTurnEnd } = await import('./turn-end-check.mjs');
+      const check = fleetTurnEnd(fleetProgram, name, state.cwd);
+      if (!check.ok) throw new Error(check.lines.join('\n'));
+    }
     state = { ...state, ended: endRecord(reason) };
     const fence = state.reload?.fence;
     if (fence) releaseReloadFence(fence);
@@ -663,7 +691,7 @@ export async function endSession(client, stateDir, name, saved, reason) {
 
 /** `run`, after refusing a turn while vibe's Codex hooks are unapproved: the thread would record no load evidence for itself. */
 export async function launchWriter(client, options, dependencies = {}) {
-  if (options.command === 'turn') {
+  if (['turn', 'steer', 'reload'].includes(options.command)) {
     const problem = await vibeHookTrustProblem(client, threadCwd(loadState(options.stateDir, options.name)?.cwd ?? options.cwd));
     // A refusal before any thread or turn starts settles like the pre-connection checks (exit 2).
     if (problem) throw Object.assign(new Error(problem), { preStart: true });
@@ -707,7 +735,7 @@ async function runControlled(client, options, { warn = (text) => console.error(`
   }
   if (options.command === 'end') {
     if (!saved) throw new Error(`no session ${options.name} in ${options.stateDir}`);
-    return endSession(client, options.stateDir, options.name, saved, options.reason);
+    return endSession(client, options.stateDir, options.name, saved, options.reason, options.fleetProgram);
   }
   if (options.command === 'interrupt') {
     if (!saved) throw new Error(`no session ${options.name} in ${options.stateDir}`);
@@ -840,6 +868,10 @@ async function main() {
   exitAfterTotalTimeout();
   let options, fleetClaim;
   try {
+    if (process.argv.length === 3 && process.argv[2] === 'verified-plugin-root') {
+      console.log(verifiedPluginRoot());
+      process.exit(0);
+    }
     options = parseCli(process.argv.slice(2));
     fleetClaim = verifiedFleetClaim(options);
     if (options.command === 'turn') {

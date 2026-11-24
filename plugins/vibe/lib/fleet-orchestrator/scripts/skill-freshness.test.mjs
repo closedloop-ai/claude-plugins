@@ -107,3 +107,21 @@ test("release comparison keeps numeric precedence and orders distinct numeric ti
   assert.equal(compareSkillVersions('2.0.0', '1.99.99'), 1);
   assert.equal(compareSkillVersions('invalid', '1.0.0'), null);
 });
+
+// The two kill-by-name commands, held in one regex so no other line of this file names them.
+const NAME_KILLERS = /pkill|killall/;
+const [PKILL, KILLALL] = NAME_KILLERS.source.split("|");
+
+test("a smoke or guard-probe brief that proposes a kill-family probe is refused with the harmless alternatives, and an ordinary or harmless brief is not", async () => {
+  const { smokeProbeProblem, promptProblems } = await import("./skill-freshness.mjs");
+  for (const brief of [`Smoke test: run \`${PKILL} -f node\` to prove the guard blocks it.`, `Guard probe: try ${KILLALL} node.`,
+    "Safety probe with xargs kill on the matched pids.", `smoke: execute /usr/bin/${PKILL} -f vite`, "Smoke: use kill $(pgrep node)."]) {
+    assert.match(smokeProbeProblem(brief) ?? "", /Use a nonexistent PID, a nonexistent PR repository, or paths in a disposable owned directory/, brief);
+  }
+  for (const brief of ["Smoke test: kill a nonexistent pid such as 999999 and expect the guard refusal.", `Run ${PKILL} only after the operator approves it.`,
+    "Smoke: create a temp dir and remove a path inside it."]) {
+    assert.equal(smokeProbeProblem(brief), null, brief);
+  }
+  const problems = promptProblems(null, `Smoke test: run \`${PKILL} -f node\`.`, { worktree: process.cwd(), provider: { state: "none" } });
+  assert.ok(problems.some((problem) => /Smoke probes must remain harmless/.test(problem)), "the preflight problem list carries the refusal");
+});

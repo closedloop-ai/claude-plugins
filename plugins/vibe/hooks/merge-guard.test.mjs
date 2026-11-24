@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { capturedFindings } from "../skills/vibe/scripts/fixtures/visual-qa-capture.mjs";
+import { visualQaBodySection } from "../lib/vibe/scripts/required-visual-qa.mjs";
 import { mergeCalls, mergeGuard, mergeProblem } from "./merge-guard.mjs";
 import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
 import { activatedChat } from "./activation-test-support.mjs";
@@ -205,13 +207,16 @@ test("a pull request that changes UI paths is merged only with visual QA finding
   const head = "c".repeat(40);
   const prs = { 7: { files: [{ path: "apps/app/header.tsx" }, { path: "README.md" }], changedFiles: 2 }, 8: { files: [{ path: "apps/api/route.ts" }], changedFiles: 1 },
     9: { files: [{ path: "README.md" }], changedFiles: 150 } };
+  let body = "";
   const gh = (args) => {
     if (args[0] === "api") return "operator\n";
-    if (args.includes("files,changedFiles,headRefOid")) return JSON.stringify({ ...prs[args[2]], headRefOid: head });
+    if (args.includes("files,changedFiles,headRefOid,body")) return JSON.stringify({ ...prs[args[2]], headRefOid: head, body });
     return JSON.stringify({ author: { login: "operator" }, headRefName: "vibe/ui" });
   };
   const findings = (value) => {
-    writeFileSync(path.join(worktree, "findings.json"), JSON.stringify(value));
+    const record = capturedFindings(worktree, value, ["apps/app/header.tsx"]);
+    body = visualQaBodySection(record);
+    writeFileSync(path.join(worktree, "findings.json"), JSON.stringify(record));
     return "findings.json";
   };
   const problem = (command, bound = binding) => mergeProblem(command, gh, { cwd: worktree, environment: {}, binding: bound });
@@ -229,7 +234,7 @@ test("a pull request that changes UI paths is merged only with visual QA finding
   assert.match(problem("gh pr merge 9 --squash --auto") ?? "", /listed only part of its changed files/, "a cut-short file list is treated as UI");
   assert.equal(problem("gh pr merge 7 --squash --auto", null), null, "a repository that declares no UI paths needs no findings");
   const silent = (args) => {
-    if (args.includes("files,changedFiles,headRefOid")) throw new Error("HTTP 502");
+    if (args.includes("files,changedFiles,headRefOid,body")) throw new Error("HTTP 502");
     return gh(args);
   };
   assert.match(mergeProblem("gh pr merge 7 --squash --auto", silent, { cwd: worktree, environment: {}, binding }) ?? "",
@@ -241,7 +246,7 @@ test("the hook reads the session's binding and refuses a UI pull request without
   const gh = path.join(worktree, "gh");
   writeFileSync(gh, `#!/usr/bin/env bash
 if [ "$1" = api ]; then echo operator; exit 0; fi
-case " $* " in *" files,changedFiles,headRefOid "*) echo '{"files":[{"path":"apps/app/header.tsx"}],"changedFiles":1,"headRefOid":"${"c".repeat(40)}"}'; exit 0;; esac
+case " $* " in *" files,changedFiles,headRefOid,body "*) echo '{"files":[{"path":"apps/app/header.tsx"}],"changedFiles":1,"headRefOid":"${"c".repeat(40)}"}'; exit 0;; esac
 echo '{"author":{"login":"operator"},"headRefName":"vibe/ui"}'
 `, { mode: 0o755 });
   const chat = activatedChat(t);

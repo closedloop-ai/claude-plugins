@@ -2,18 +2,20 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { identifierSchema, workerIdSchema, type Ledger, type RetainedRecord } from "./contracts.js";
+import { identifierSchema, statusSchema, workerIdSchema, type Ledger, type RetainedRecord } from "./contracts.js";
 import { observeDefinitionDigest, readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, checkoutLocation, location, readWriterSummary, releaseRecordTurnAt } from "./ledger.js";
 import { sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
-import { recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
+import { checkPreparationResult } from "./main-sync-preparation.js";
+import { isPublisherContext, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 
 const grantSchema = recordContextSchema.extend({ agentRoot: z.string().min(1), workerId: workerIdSchema,
   requestId: identifierSchema, primaryOwner: z.object({ workerId: workerIdSchema, lease: z.string().uuid() }).strict().optional(),
 }).strict();
 const releaseSchema = grantSchema.extend({ lease: z.string().uuid(), stoppedTurn: z.object({ runtime: z.literal("codex"),
   workerId: workerIdSchema, requestId: identifierSchema, lease: z.string().uuid(),
-  state: z.enum(["completed", "failed", "canceled"]) }).strict() }).strict();
+  state: z.enum(["completed", "failed", "canceled"]),
+  result: z.object({ status: statusSchema, data: z.record(z.unknown()).optional() }).optional() }).strict() }).strict();
 export const nativeRecordOwnerSchema = z.object({ grant: grantSchema, lease: z.string().uuid(), branch: z.string(), targetDir: z.string().optional() }).strict();
 const ownerFile = "native-owner.json";
 
@@ -68,6 +70,9 @@ export function releaseNativeRecord(input: unknown) {
     if (owner.lease !== lease || owner.branch !== place.branch || JSON.stringify(owner.grant) !== JSON.stringify(grant)
       || stoppedTurn.workerId !== grant.workerId || stoppedTurn.requestId !== grant.requestId || stoppedTurn.lease !== lease) {
       throw new Error("Native record release requires the exact owner's stopped-turn completion evidence");
+    }
+    if (isPublisherContext(owner.grant) && stoppedTurn.state === "completed") {
+      checkPreparationResult(stoppedTurn.result ?? { status: "DONE" }, place.dir, owner.grant, owner.lease);
     }
     if (owner.targetDir) rmSync(join(owner.targetDir, "vibe-record-turn.lock"), { recursive: true, force: true });
   });

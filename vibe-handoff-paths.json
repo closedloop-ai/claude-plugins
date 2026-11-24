@@ -1,7 +1,7 @@
 {
   "version": 1,
   "allowedPrefixes": ["plugins/", "tools/", "evals/", "docs/"],
-  "allowedFiles": ["CHANGELOG.md"],
+  "allowedFiles": ["CHANGELOG.md", "AGENTS.md"],
   "forbiddenPrefixes": [".github/"],
   "forbiddenBasenames": ["AGENTS.md", "CLAUDE.md", "AGENTS.override.md"],
   "rootTests": false,
