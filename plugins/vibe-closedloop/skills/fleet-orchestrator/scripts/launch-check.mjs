@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Usage:
 //   node launch-check.mjs codex <stateDir> <name> [--within <seconds>] [--interval <seconds>] [--settings <file>]...
-//   node launch-check.mjs pane --capture <shell command printing the session's screen> [--within <s>] [--interval <s>] [--settings <file>]...
+//   node launch-check.mjs pane --tmux-pane <pane-id> | --capture <shell command printing the session's screen> [--within <s>] [--interval <s>] [--settings <file>]...
 //   node launch-check.mjs gui-hooks [--settings <file>]...
 // Run on the host the session runs on. A session started on another host once sat 14 minutes on its first tool
 // call, "running PreToolUse hooks 3/4": a user-level hook called osascript, which never answers outside the
@@ -150,8 +150,9 @@ async function readNewestTurn(client, threadId) {
   return { turns: [{ ...turn, items: (items?.data ?? []).map((entry) => entry.item) }] };
 }
 
-function readPane(command) {
-  const result = spawnSync('sh', ['-c', command], { encoding: 'utf8', timeout: 15_000 });
+function readPane(command, pane) {
+  const request = pane ? ["tmux", "capture-pane", "-p", "-t", pane] : ["sh", "-c", command];
+  const result = spawnSync(request[0], request.slice(1), { encoding: 'utf8', timeout: 15_000 });
   if (result.status !== 0) throw new Error(`screen read failed (exit ${result.status ?? result.signal}): ${(result.stderr ?? '').trim()}`);
   return classifyScreen(result.stdout);
 }
@@ -166,7 +167,7 @@ async function codexReader(stateDir, name) {
 
 async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: {
-    within: { type: 'string' }, interval: { type: 'string' }, capture: { type: 'string' }, settings: { type: 'string', multiple: true },
+    within: { type: 'string' }, interval: { type: 'string' }, capture: { type: 'string' }, 'tmux-pane': { type: 'string' }, settings: { type: 'string', multiple: true },
   } });
   const [mode, ...rest] = positionals;
   const files = values.settings ?? defaultSettingsFiles();
@@ -181,7 +182,9 @@ async function main(argv) {
   const interval = Number(values.interval ?? DEFAULT_INTERVAL_SECONDS);
   if (!(within > 0) || !(interval > 0)) throw new Error('--within and --interval must be positive seconds');
   let reader;
-  if (mode === 'pane' && rest.length === 0 && values.capture) reader = { read: async () => readPane(values.capture), close() {} };
+  const pane = values['tmux-pane'];
+  if (pane !== undefined && (!/^%[0-9]+$/.test(pane) || values.capture)) throw new Error("--tmux-pane needs one exact pane id (% followed by digits)");
+  if (mode === 'pane' && rest.length === 0 && (values.capture || pane)) reader = { read: async () => readPane(values.capture, pane), close() {} };
   else if (mode === 'codex' && rest.length === 2) reader = await codexReader(rest[0], rest[1]);
   else {
     process.stderr.write(`${readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 4).map((line) => line.slice(3)).join('\n')}\n`);

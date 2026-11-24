@@ -1,9 +1,13 @@
+import { realpathSync } from "node:fs";
+import { completeCapturePng } from "../../../lib/vibe/scripts/required-visual-qa.mjs";
+import { encodePng } from "./png-diff.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
+import { visualQaBodySection } from "../../../lib/vibe/scripts/required-visual-qa.mjs";
 import { recordHandoffGate, visualQaGate } from "./handoff-gate.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { bindProviderInProcess, seedAlignedDecisionTable } from "../../vibe/scripts/test-fixtures.mjs";
@@ -51,14 +55,24 @@ function fixture(t, changed) {
   const receipts = REVIEW_ROLES.map((role, index) => {
     const sessionId = `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
     const tracePath = file(`${role}.jsonl`, `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "mcp__closedloop_graph__code_symbols" }] } })}\n${JSON.stringify({ type: "result", session_id: sessionId })}\n`);
-    const resultFile = file(`${role}-result.json`, JSON.stringify({ runtime: "claude", agentName: role, status: "DONE", sessionId, requestId: `request-${index}`, tracePath,
+    const resultFile = file(`${role}-result.json`, JSON.stringify({ runtime: "claude", agentName: role, status: "DONE", sessionId, requestId: `request-${index}`, tracePath, worktree: realpathSync(worktree),
       source: sourceIdentity(worktree), graphToolAliases: ["mcp__closedloop_graph__code_symbols"], data: { findings: [] } }));
     const outFile = path.join(gitDir, `${role}-receipt.json`);
     captureReviewReceipt({ worktree, resultFile, outFile, role });
     return outFile;
   });
   const body = file("body.md", "Delivers ISS-123.\n");
-  const findings = (value) => file("findings.json", JSON.stringify(value));
+  const findings = (value) => {
+    const png = "fixture-preview.png";
+    file(png, encodePng({ width: 1, height: 1, data: Buffer.alloc(4) }));
+    const record = { ...value, rounds: [{ id: "fixture", head: value.head, runtime: "web", captures: [{
+      png, surface: "web", target: "/", viewport: "1280x800", theme: "light", paths: changed,
+      overflow: { width: 1280, height: 800, checkedContainers: 1, entries: [] },
+    }] }] };
+    const currentBody = readFileSync(body, "utf8").split("\n## Visual QA\n", 1)[0].trimEnd();
+    writeFileSync(body, currentBody + "\n\n" + visualQaBodySection(record) + "\n");
+    return file("findings.json", JSON.stringify(record));
+  };
   const gate = (visualQa) => recordHandoffGate({ worktree, base: "main", body, runs: receipts[0], receipts, visualQa }, { runScript });
   // The hook reads the binding as the harness hands it: the chat id on the event.
   const create = (prefix = "") => prCreateGuard({ cwd: worktree, session_id: process.env.CLAUDE_CODE_SESSION_ID, transcript_path: null, tool_input: { command: `${prefix}gh pr create --base main --title "ISS-123: Header" --body-file ${body}` } });
@@ -76,7 +90,7 @@ test("a UI diff opens no pull request without visual QA findings for its current
   assert.throws(() => gate(findings({ head, findings: [{ id: "F1", summary: "clipped", route: "/", viewport: "1280", selector: "h1", touchedSurface: true }] })),
     /F1: a finding on a touched surface needs disposition/);
 
-  const passing = findings({ head, findings: [{ id: "F1", touchedSurface: true, disposition: "ticket: ISS-900" }] });
+  const passing = findings({ head, findings: [{ id: "F1", summary: "Header clips the title", touchedSurface: true, disposition: "ticket: ISS-900" }] });
   gate(passing);
   const witness = JSON.parse(readFileSync(gatePath(worktree), "utf8"));
   assert.equal(witness.visualQa.required, true);
@@ -163,4 +177,11 @@ test("uncommitted UI changes are never covered by findings for the commit", (t) 
   assert.deepEqual(visualQaGate(worktree, git("rev-parse", "origin/main"), heads[0], covered).problems, []);
   writeFileSync(path.join(worktree, "apps/app/header.tsx"), "edited\n");
   assert.match(visualQaGate(worktree, git("rev-parse", "origin/main"), heads[0], covered).problems[0], /uncommitted UI changes \(apps\/app\/header\.tsx\)/);
+});
+
+test("a visual capture has a complete raster", () => {
+  const png = encodePng({ width: 1, height: 1, data: Buffer.alloc(4) });
+  assert.equal(completeCapturePng(png), true);
+  assert.equal(completeCapturePng(png.subarray(0, 8)), false);
+  assert.equal(completeCapturePng(png.subarray(0, -1)), false);
 });
