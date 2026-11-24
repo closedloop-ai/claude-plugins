@@ -40,6 +40,11 @@ export function readRetiredTests(worktree) {
   return entries;
 }
 
+/** Exact file paths whose retirement record covers the entire file. */
+export function wholeRetiredTestPaths(records) {
+  return new Set(records.filter((entry) => entry.case === undefined).map((entry) => entry.path));
+}
+
 /** Adds one deletion, replacing an earlier entry for the same file and case. */
 export function recordRetiredTest(worktree, entry) {
   const normalized = {
@@ -47,6 +52,8 @@ export function recordRetiredTest(worktree, entry) {
     ...(entry.case ? { case: entry.case } : {}),
     retiredBy: entry.retiredBy,
     covers: entry.covers,
+    ...(entry.assertions ? { assertions: entry.assertions } : {}),
+    ...(entry.supersession ? { supersession: entry.supersession } : {}),
   };
   if (!isValidEntry(normalized)) {
     throw new Error(
@@ -66,13 +73,37 @@ function recordPath(worktree) {
   return path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), RECORD_FILE);
 }
 
+function relativeFile(file) {
+  return typeof file === "string" && !path.isAbsolute(file) && !file.split("/").includes("..") && file.includes(".");
+}
+
+function validAssertion(row) {
+  return row && isText(row.case) && Number.isSafeInteger(row.index) && row.index > 0 && relativeFile(row.source)
+    && (row.replacement === undefined || (relativeFile(row.replacement?.path) && isTestFile(row.replacement.path) && isText(row.replacement.case)));
+}
+
+/** Scope an assertion supersession to one parsed case, captured base and authorized frozen-policy change. */
+export function validTestSupersession(proof) {
+  const sha = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+  const authorizedReason = (proof?.row === "DT-038G" && proof.reason === "authorized stricter frozen repetition rule")
+    || (proof?.row === "DT-017A" && proof.reason === "authorized separate frozen admission budget");
+  return authorizedReason && /^[a-f0-9]{40}$/.test(proof.base ?? "") && isText(proof.source)
+    && (proof.replacementCase === undefined || isText(proof.replacementCase))
+    && Array.isArray(proof.changes) && proof.changes.length > 0
+    && proof.changes.every((change) => Number.isSafeInteger(change?.index) && change.index > 0
+      && sha(change.oldSha256) && sha(change.newSha256) && change.oldSha256 !== change.newSha256)
+    && new Set(proof.changes.map(({ index }) => index)).size === proof.changes.length;
+}
+
 function isValidEntry(entry) {
   return Boolean(entry) && typeof entry === "object" &&
     typeof entry.path === "string" && !path.isAbsolute(entry.path) && !entry.path.split("/").includes("..") &&
     isTestFile(entry.path) &&
     (entry.case === undefined || isText(entry.case)) &&
     typeof entry.retiredBy === "string" && new RegExp(`^(?:${issueKey()}|${requirementsKey()})$`).test(entry.retiredBy) &&
-    isText(entry.covers);
+    isText(entry.covers) &&
+    (entry.assertions === undefined || Array.isArray(entry.assertions) && entry.assertions.every(validAssertion)) &&
+    (entry.supersession === undefined || isText(entry.case) && validTestSupersession(entry.supersession));
 }
 
 function isText(value) {
@@ -85,7 +116,7 @@ if (isEntryPoint(import.meta.url)) {
       allowPositionals: true,
       options: {
         worktree: { type: "string" }, path: { type: "string" }, case: { type: "string" },
-        "retired-by": { type: "string" }, covers: { type: "string" },
+        "retired-by": { type: "string" }, covers: { type: "string" }, "assertion-map": { type: "string" }, supersession: { type: "string" },
       },
     });
     if (!values.worktree) throw new Error("--worktree is required.");
@@ -94,6 +125,8 @@ if (isEntryPoint(import.meta.url)) {
     if (command === "record") {
       retiredTests = recordRetiredTest(values.worktree, {
         path: values.path, case: values.case, retiredBy: values["retired-by"], covers: values.covers,
+        ...(values["assertion-map"] ? { assertions: JSON.parse(readFileSync(values["assertion-map"], "utf8")) } : {}),
+        ...(values.supersession ? { supersession: JSON.parse(readFileSync(values.supersession, "utf8")) } : {}),
       });
     } else if (command === "list") {
       retiredTests = readRetiredTests(values.worktree);

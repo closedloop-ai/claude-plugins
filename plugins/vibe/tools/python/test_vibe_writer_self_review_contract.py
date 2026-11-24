@@ -14,7 +14,7 @@ SELF_REVIEW = section(CHANGE, "### Self-review before `DONE`")
 def test_writer_runs_the_reviewers_duplicate_and_contradiction_checks_before_review() -> None:
     assert "skills/handoff/scripts/guardrails-gate.mjs --worktree" in SELF_REVIEW
     assert "`duplicate-helper` and `owner-duplicates`" in SELF_REVIEW
-    assert "leaves out untracked files" in SELF_REVIEW
+    assert "includes untracked files" in SELF_REVIEW
     assert "repeats at more than one site, even under different names, also moves to one owner" in SELF_REVIEW
     assert "Fix a line your change contradicts" in SELF_REVIEW
     gate = (ROOT / "skills" / "handoff" / "scripts" / "guardrails-gate.mjs").read_text()

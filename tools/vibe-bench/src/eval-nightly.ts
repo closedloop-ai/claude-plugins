@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { KEPT_SANDBOX_LINE_PREFIX, SlackNightlyRegressionReporter } from "./eval-slack.ts";
+import { readClaudeFailureEvidence } from "./eval-nightly-diagnostics.ts";
 import { runOwnedProcess } from "./owned-process.ts";
 
 const NIGHTLY_DEADLINE_MS = 3 * 60 * 60_000;
@@ -30,13 +31,14 @@ export class SystemNightlyCommands implements EvalNightlyCommands {
       maxBuffer: 16 * 1024 * 1024,
     });
     if (result.exitCode !== 0) {
-      // A failed child's stdout is dropped, yet its kept-sandbox lines belong
-      // in the machine log. They stay on stdout: on stderr a claude-eval-<id>
-      // path would be read as the failure reason below.
+      // Keep only the failed child's machine-log records on stdout. The
+      // scheduler still reads the failure code independently from stderr.
       for (const line of result.stdout.split(/\r?\n/)) {
-        if (line.startsWith(KEPT_SANDBOX_LINE_PREFIX)) this.writeOutput(`${line}\n`);
+        if (line.startsWith(KEPT_SANDBOX_LINE_PREFIX) || readClaudeFailureEvidence(line)) {
+          this.writeOutput(`${line}\n`);
+        }
       }
-      const reason = result.stderr.match(/(?:eval|benchmark)-[a-z0-9:-]+/)?.[0] ??
+      const reason = result.stderr.match(/(?:eval|benchmark)-[a-z0-9_:-]+/)?.[0] ??
         "eval-nightly-child-failed";
       throw new Error(reason);
     }

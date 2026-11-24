@@ -1,3 +1,4 @@
+import { readGitInventory } from "../../../plugins/vibe/lib/vibe/scripts/git-inventory.mjs";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
@@ -46,7 +47,7 @@ function tree(root: string): CommittedTree {
 }
 
 function load(root: string): CommittedTree {
-  const files = git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean);
+  const files = readGitInventory(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean);
   return { root, files, tracked: new Set(files) };
 }
 

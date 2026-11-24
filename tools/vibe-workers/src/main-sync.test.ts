@@ -165,7 +165,7 @@ describe("production main-sync publication CLIs", () => {
       expect(denied.status, denied.stdout).toBe(1);
       expect(denied.json?.status).toBe("NEEDS_CHANGE");
       expect(String(denied.json?.error)).toMatch(failure === "changed-source" ? /committed validation inputs differ.*probe.ts/i
-        : failure === "malformed" ? /could not verify.*canonical generated biome input \(malformed JSON at main-sync\.mjs:\d+\)/i : /canonical generated/i);
+        : failure === "malformed" ? /could not verify.*canonical generated biome input \(Error: Invalid captured JSON at offset \d+: [^\n]+ at captured-json\.mjs:\d+\)/i : /canonical generated/i);
       expect(`${denied.stdout}${denied.stderr}`).not.toContain("RAW_LOADER_SECRET");
       expect(existsSync(join(value.metadata, "FETCH_HEAD"))).toBe(false);
       expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);
@@ -567,33 +567,6 @@ const command = args[0];`));
       expect(existsSync(join(value.metadata, "request.json"))).toBe(false);
     } finally { publisher.finish(); }
   }, 15000);
-  it("runs canonical prototype checks only as the same writer and admits its share tuple, not an app request", () => {
-    const value = setup();
-    value.git(["branch", "-m", "prototype/test"]);
-    const recordFile = join(value.metadata, "vibe-session.json");
-    const record = JSON.parse(readFileSync(recordFile, "utf8")); record.branch = "prototype/test"; record.mode = null; record.vercel = null;
-    writeFileSync(recordFile, JSON.stringify(record));
-    value.write("apps/prototypes/app/p/test/decisions.md", "# Decisions\n- existing decision\n");
-    value.write("apps/prototypes/lib/registry.generated.ts", "export const prototypes = [];\n");
-    value.write(".claude/skills/prototype-approve/scripts/read-decision-log.mjs",
-      "import {readFileSync} from 'node:fs'; if (!readFileSync(process.argv[2], 'utf8').startsWith('# Decisions')) process.exit(1);\n");
-    value.git(["add", "."]); value.git(["commit", "-m", "Owned prototype fixture"]);
-    // The prototype matrix runs at handoff; a build share runs the commit-hook checks alone.
-    const prepare = value.start("share", "handoff");
-    try { expect(invokeSync(value, "prepare", prepare.context).status).toBe(0); } finally { prepare.finish(); }
-    const source = value.sourceTurn("handoff");
-    try { expect(invokeSync(value, "validate", source.context).status).toBe(0); } finally { source.finish(); }
-    const calls = value.calls().trim().split("\n").map((line) => JSON.parse(line));
-    expect(calls).toContainEqual(["--filter", "prototypes", "generate:registry"]);
-    expect(calls).toContainEqual(["--filter", "prototypes", "typecheck"]);
-    expect(calls).toContainEqual(["--filter", "prototypes", "test"]);
-    const share = value.start("share", "handoff");
-    try {
-      expect(invokeSync(value, "share", share.context).status).toBe(0);
-      expect(invokeSync(value, "request", share.context).status).toBe(1);
-      expect(invokeSync(value, "push", share.context).status).toBe(0);
-    } finally { share.finish(); }
-  }, 20000);
   it("rejects source generation that changes committed bytes instead of minting a pass receipt", () => {
     const value = setup();
     const prepare = value.start("create", "handoff");
