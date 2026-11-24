@@ -29,10 +29,20 @@ const envSplit = value => {
 export function commandPrefix(words, start = 0) {
   const env = {};
   let chdir;
+  const unset = new Set();
+  const appended = new Set();
+  let clearEnv = false;
   let index = start;
   while (index < words.length) {
     const assignment = ENV_ASSIGN.exec(words[index]);
-    if (assignment) { env[assignment[1]] = assignment[3]; index += 1; continue; }
+    if (assignment) {
+      const [,name,operator,value] = assignment;
+      unset.delete(name);
+      if (operator === "+=") appended.add(name); else appended.delete(name);
+      env[name] = value;
+      index++;
+      continue;
+    }
     const wrapper = path.basename(words[index]);
     if (!WRAPPERS.has(wrapper)) break;
     // command -v/-V only inspect names; they never execute the argument.
@@ -55,11 +65,22 @@ export function commandPrefix(words, start = 0) {
         const split = envSplit(word.slice('--split-string='.length));
         words.splice(index, 1, ...split);
         break;
-      } else if (boolean.includes(word)) index += 1;
+      } else if (boolean.includes(word)) {
+        if (wrapper === "env" && ["-i","--ignore-environment"].includes(word) || wrapper === "exec" && word === "-c") {
+          clearEnv = true;
+          for (const key of Object.keys(env)) delete env[key];
+        }
+        index++;
+      }
       else if (valued.includes(word)) {
+        if (wrapper === "env" && ["-u","--unset"].includes(word)) {
+          unset.add(words[index + 1]); delete env[words[index + 1]];
+        }
         if (CHDIR_OPTIONS[wrapper]?.includes(word)) chdir = words[index + 1] ?? '';
         index += 2;
       } else if (valued.some(option => attachedValue(word, option) !== null)) {
+        const removed = wrapper === "env" ? attachedValue(word,"--unset") ?? attachedValue(word,"-u") : null;
+        if (removed) { unset.add(removed); delete env[removed]; }
         const option = CHDIR_OPTIONS[wrapper]?.find(name => attachedValue(word, name) !== null);
         if (option) chdir = attachedValue(word, option);
         index += 1;
@@ -67,7 +88,7 @@ export function commandPrefix(words, start = 0) {
       else break;
     }
   }
-  return chdir === undefined ? { env, index } : { env, index, chdir };
+  return { env, index, ...(appended.size ? {appended:[...appended]} : {}), ...(chdir === undefined ? {} : {chdir}), ...(clearEnv ? {clearEnv} : {}), ...(unset.size ? {unset:[...unset]} : {}) };
 }
 
 /** The value `word` attaches to `option` (`--chdir=dir`, `-Cdir`), or null. */
@@ -194,14 +215,14 @@ function splitCommandText(command) {
       index = substitution.end;
       continue;
     }
-    if (pair === '&&' || pair === '||') { finish(); events.push({ kind: 'separator' }); index += 1; continue; }
+    if (pair === '&&' || pair === '||') { finish(); events.push({ kind: 'conditional', operator:pair }); index += 1; continue; }
     if (char === '(') { finish(); events.push({ kind: 'open' }); continue; }
     if (char === ')') { finish(); events.push({ kind: 'close' }); continue; }
     if (char === '|') { finish(); events.push({ kind: 'pipe' }); continue; }
     if (char === '&' && (command[index - 1] === '>' || command[index - 1] === '<')) {
       text += char; continue;
     }
-    if (';&\n'.includes(char)) { finish(); events.push({ kind: 'separator' }); continue; }
+    if (';&\n'.includes(char)) { finish(); events.push({ kind: char === '&' ? 'background' : 'separator' }); continue; }
     text += char;
   }
   finish();
@@ -371,7 +392,7 @@ function expandSegment(segment, depth, expandShellPayloads, remote, scope, child
   while (CONTROL.has(current[0])) controls.push(current.shift());
   const moved = prefix.chdir === undefined ? {} : { chdir: prefix.chdir };
   const entry = (extra = {}) => ({ env: prefix.env, words: current, globWords, controls, remote, scope, hasSubstitution,
-    substitutions, ...moved, ...extra });
+    substitutions, ...(prefix.appended ? {appended:prefix.appended} : {}), ...(prefix.clearEnv ? {clearEnv:true} : {}), ...(prefix.unset ? {unset:prefix.unset} : {}), ...moved, ...extra });
   if (current.length === 0) return controls.length || Object.keys(prefix.env).length
     ? [entry()] : [];
   if (!expandShellPayloads) return [entry()];
@@ -408,10 +429,15 @@ function expandSegment(segment, depth, expandShellPayloads, remote, scope, child
         || (!payload && substitutions.length)) {
         return [entry({ wrapperPayload: payload, wrapper: program })];
       }
-      // A shell started by env -C or sudo -D begins elsewhere; callers cannot prove a cwd inside it.
-      if (payload) return expandCommand(payload, depth + 1, true, remote,
-        childScope(scope), childScope, hasSubstitution, new Map(), [])
-        .map((nested) => prefix.chdir === undefined ? nested : { ...nested, chdirPayload: prefix.chdir });
+      if (payload) {
+        const inner = childScope(scope);
+        const nested = expandCommand(payload, depth + 1, true, remote, inner, childScope, hasSubstitution, new Map(), []);
+        for (const item of nested) item.processScopes = [inner,...(item.processScopes ?? [])];
+        if (prefix.clearEnv || prefix.unset || Object.keys(prefix.env).length || prefix.chdir !== undefined) {
+          return [entry({scope:inner,words:[],scopeEntry:true,processScopes:[inner]}), ...nested];
+        }
+        return nested;
+      }
     }
   }
   if (program === 'eval' && (current.length > 1 || substitutions.length)) {
@@ -503,15 +529,28 @@ function expandCommand(command, depth, expandShellPayloads, remote, rootScope, c
   const scopes = [rootScope];
   const functionScopes = [functions];
   const segments = [];
+  let lastStatus;
+  const groups = [];
+  const skips = (operator,status) => operator === "&&" && status === false || operator === "||" && status === true;
+  // A conditional list returns either its left status or the status of the command/group it ran.
+  const joined = (operator,left,right) => !operator || left !== undefined ? right
+    : operator === "&&" && right === false ? false : operator === "||" && right === true ? true : undefined;
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
+    const connector=events[index-1]?.operator;
     if (event.kind === 'open') {
+      groups.push({skip:groups.at(-1)?.skip || skips(connector,lastStatus),connector,left:lastStatus});
+      lastStatus=undefined;
       scopes.push(childScope(scopes.at(-1)));
       functionScopes.push(new Map(functionScopes.at(-1)));
       continue;
     }
     if (event.kind === 'close') {
-      if (scopes.length > 1) { scopes.pop(); functionScopes.pop(); }
+      if (scopes.length > 1) {
+        scopes.pop(); functionScopes.pop();
+        const group=groups.pop();
+        lastStatus=group.skip ? group.left : joined(group.connector,group.left,lastStatus);
+      }
       continue;
     }
     if (event.kind !== 'command') continue;
@@ -519,18 +558,30 @@ function expandCommand(command, depth, expandShellPayloads, remote, rootScope, c
     const pipeline = events[index - 1]?.kind === 'pipe' || events[index + 1]?.kind === 'pipe';
     const scope = pipeline ? childScope(parent) : parent;
     const visibleFunctions = pipeline ? new Map(functionScopes.at(-1)) : functionScopes.at(-1);
+    const skip = groups.at(-1)?.skip || skips(connector,lastStatus);
     const definition = /^__VIBE_FUNC_DEF_(\d+)__$/.exec(event.text);
     if (definition) {
       const entry = extracted.definitions[Number(definition[1])];
-      if (entry) visibleFunctions.set(entry.name, entry.body);
+      if (entry && !skip) { visibleFunctions.set(entry.name, entry.body); lastStatus=joined(connector,lastStatus,true); }
       continue;
     }
+
+    const literal = event.text.trim();
+    const known = !visibleFunctions.has(literal) && ["true","false"].includes(literal) ? literal === "true" : undefined;
+    if (!skip) lastStatus=joined(connector,lastStatus,known);
     for (const payload of event.substitutions) {
-      segments.push(...expandCommand(payload, depth + 1, true, remote, childScope(scope), childScope,
-        false, new Map(visibleFunctions), functionStack));
+      const inner=expandCommand(payload, depth + 1, true, remote, childScope(scope), childScope,
+        false, new Map(visibleFunctions), functionStack);
+      for (const entry of inner) { if (skip) entry.unreachable=true; segments.push(entry); }
     }
-    segments.push(...expandSegment(event.text, depth, expandShellPayloads, remote, scope, childScope,
-      event.substitutions, inheritedSubstitution, visibleFunctions, functionStack));
+    const expanded = expandSegment(event.text, depth, expandShellPayloads, remote, scope, childScope,
+      event.substitutions, inheritedSubstitution, visibleFunctions, functionStack);
+    for (const entry of expanded) {
+      if (skip) entry.unreachable = true;
+      if (events[index + 1]?.kind === "background") entry.background = true;
+      if (events[index - 1]?.kind === "conditional") entry.conditional = true;
+      segments.push(entry);
+    }
   }
   return segments;
 }

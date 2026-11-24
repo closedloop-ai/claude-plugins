@@ -2,14 +2,16 @@
 // `git cat-file --batch`, whole-word file search, importers by path, history lookups for deletions and unmounts,
 // and the shallow-clone deepening steps. Git reads and file reads only.
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { E2E_ROOT_PATHSPECS, isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { escapeRegExp } from "./source-imports.mjs";
 import { linguistGenerated } from "./generated-files.mjs";
 import { FROZEN_CANDIDATE, frozenInputs } from "./frozen-render.mjs";
-import { isUnversionedStory } from "./storybook-taxonomy.mjs";
+import { isUnversionedStory, storybookSchemeOf } from "./storybook-taxonomy.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
@@ -21,10 +23,15 @@ const TEMPLATE_PART = /\$\{[^}]*\}/;
 export const DEEPEN_STEPS = ["--deepen=1000", "--deepen=10000", "--unshallow"];
 const DEEPEN_TIMEOUT_MS = 10 * 60 * 1000;
 
-export function gitRepo(worktree, base, isFrozenStory, storyReplacements, rules, sessionIds = []) {
+export function gitRepo(worktree, base, isFrozenStory, storyReplacements, rules, sessionIds = [], storyOrderPath = null) {
   let deepened = 0;
-  const headFiles = git(worktree, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
-  const baseFiles = new Set(lines(() => git(worktree, ["ls-tree", "-r", "--name-only", base])));
+  const headFiles = readGitInventory(worktree, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
+  const baseObjects = new Map(readGitInventory(worktree, ["ls-tree", "-r", "-z", base]).split("\0").filter(Boolean).map((entry) => {
+    const tab = entry.indexOf("\t");
+    const [mode, , oid] = entry.slice(0, tab).split(" ");
+    return [entry.slice(tab + 1), { mode, oid }];
+  }));
+  const baseFiles = new Set(baseObjects.keys());
   const generatedFiles = linguistGenerated(worktree, headFiles, base);
   const blobs = new Map();
   const baseBlobs = (paths) => {
@@ -46,9 +53,12 @@ export function gitRepo(worktree, base, isFrozenStory, storyReplacements, rules,
       return null;
     }
   });
+  const scheme = storybookSchemeOf(storyOrderPath ? baseRead(storyOrderPath) : null);
+  const frozenStory = isFrozenStory ?? ((source) => scheme.frozenTitle(source) || scheme.frozenTag(source));
   return {
     head: read,
     base: baseRead,
+    baseCommit: base,
     shallow: () => lines(() => git(worktree, ["rev-parse", "--is-shallow-repository"]))[0] === "true",
     deepen: () => {
       const step = DEEPEN_STEPS[deepened++] ?? "--unshallow";
@@ -61,6 +71,20 @@ export function gitRepo(worktree, base, isFrozenStory, storyReplacements, rules,
     },
     headFiles,
     baseFiles,
+    baseObjects,
+    headRegularBlob: (file, oidLength) => {
+      const absolute = path.join(worktree, file);
+      try {
+        const stat = lstatSync(absolute);
+        if (!stat.isFile()) return null;
+        const bytes = readFileSync(absolute);
+        const oid = createHash(oidLength === 64 ? "sha256" : "sha1")
+          .update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+        return { mode: stat.mode & 0o111 ? "100755" : "100644", oid };
+      } catch {
+        return null;
+      }
+    },
     generatedFiles,
     baseBlobs,
     wordFiles: words.wordFiles,
@@ -96,12 +120,12 @@ export function gitRepo(worktree, base, isFrozenStory, storyReplacements, rules,
     frozenInputs: (ref, stories) => { try { return frozenInputs(worktree, ref, stories); } catch { return null; } },
     filesNaming: (text) => lines(() => git(worktree, ["grep", "-l", "-F", text, "--", ...E2E_ROOT_PATHSPECS, ...rules.docs, "*.test.*", "*.spec.*", "*.stories.*"])),
     rules,
-    isFrozenStory,
+    isFrozenStory: frozenStory,
     frozenStories: () => {
       const candidates = lines(() => git(worktree, ["grep", "-l", "-E", FROZEN_CANDIDATE, base, "--", "*.stories.tsx", "*.stories.ts"]))
         .map((hit) => hit.slice(base.length + 1));
       const texts = baseBlobs(candidates);
-      return candidates.filter((story) => !isUnversionedStory(texts.get(story)) && isFrozenStory(texts.get(story) ?? ""));
+      return candidates.filter((story) => !isUnversionedStory(texts.get(story)) && frozenStory(texts.get(story) ?? ""));
     },
     baseStoriesRendering: (component) =>
       lines(() => git(worktree, ["grep", "-l", "-E", `component:[[:space:]]*${component}([^[:alnum:]_]|$)`, base, "--", "*.stories.tsx", "*.stories.ts"]))
@@ -109,6 +133,39 @@ export function gitRepo(worktree, base, isFrozenStory, storyReplacements, rules,
     importersOf: (files) => importersOf(worktree, files),
     importerCounts: (files) => new Map([...importersOf(worktree, files)].map(([file, importing]) => [file, [...importing].filter((hit) => !isTestFile(hit)).length])),
   };
+}
+
+/** Recognize one-to-one exact regular-file moves where Git left a different file at the old path. */
+export function exactReplacedMoves(files, repo) {
+  const added = files.filter((file) => file.status === "A" && file.added.length > 0);
+  if (!added.length || !repo.baseObjects || !repo.headRegularBlob) return files;
+  const originals = new Map();
+  const identity = (blob) => `${blob.mode} ${blob.oid}`;
+  for (const file of files) {
+    if (file.status !== "M") continue;
+    const prior = repo.baseObjects.get(file.path);
+    if (!prior || !/^100(?:644|755)$/.test(prior.mode)) continue;
+    const next = repo.headRegularBlob(file.path, prior.oid.length);
+    if (!next || prior.oid === next.oid) continue;
+    const key = identity(prior);
+    originals.set(key, originals.has(key) ? null : file.path);
+  }
+  if (originals.size === 0) return files;
+  const candidates = new Map();
+  const count = new Map();
+  const oidLength = repo.baseObjects.values().next().value?.oid.length;
+  for (const file of added) {
+    const blob = repo.headRegularBlob(file.path, oidLength);
+    if (!blob) continue;
+    const key = identity(blob);
+    if (!originals.get(key)) continue;
+    candidates.set(file.path, key);
+    count.set(key, (count.get(key) ?? 0) + 1);
+  }
+  return files.map((file) => {
+    const key = candidates.get(file.path);
+    return count.get(key) === 1 ? { ...file, status: "R", oldPath: originals.get(key), added: [] } : file;
+  });
 }
 
 /**

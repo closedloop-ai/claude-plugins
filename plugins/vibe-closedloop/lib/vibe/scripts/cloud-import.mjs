@@ -4,13 +4,15 @@
 // match. cloud-worker.mjs re-exports every entry point here and owns the CLI.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { readSessionRecord } from "./session-record.mjs";
-import { gatePath, handoffGateProblem } from "../../handoff/scripts/handoff-gate-check.mjs";
+import { readReviewReceipts, gatePath, handoffGateProblem } from "../../handoff/scripts/handoff-gate-check.mjs";
 import { decisionTableProblems } from "../../handoff/scripts/decision-table-gate.mjs";
-import { verifiedReviewModel } from "../../handoff/scripts/review-receipts.mjs";
+import { reviewReceiptProblems, verifiedReviewModel } from "../../handoff/scripts/review-receipts.mjs";
+import { provenanceProblem } from "./cloud-repository.mjs";
+import { validationCommandKey, validationReceiptName } from "./cloud-receipts.mjs";
 import { FABLE_REVIEW_MODELS } from "./review-models.mjs";
 import { sameSource, sourceIdentity, validSourceIdentity } from "./tested-head.mjs";
 import { COMMAND_MS, evidencePath, firstLine, git, gitDir, hydrateCloudRequest, importWitnessPath, readReceipt, receiptPath, requestDigest, requireVibeSession,
@@ -152,8 +154,10 @@ export function importFromGit(request, receipt, { commit, confirm = false, run =
 /** Each handoff review receipt's harness, the model its trace proves (null when unproven) and its session identities. */
 function reviewRuntimes(worktree) {
   const handoff = JSON.parse(readFileSync(gatePath(worktree), "utf8"));
-  return (handoff.receipts ?? []).map((item) => {
-    const receipt = JSON.parse(readFileSync(item.path, "utf8"));
+  const receipts = readReviewReceipts(handoff.receipts);
+  const { problems } = reviewReceiptProblems(receipts, sourceIdentity(worktree), { worktree, reusableRoles: new Set(handoff.reviewCarry ?? []) });
+  if (problems.length) throw new Error(problems.join("; "));
+  return receipts.map((receipt) => {
     return { runtime: receipt.runtime, model: verifiedReviewModel(receipt), identities: [receipt.sessionId, receipt.workerId].filter(Boolean) };
   });
 }
@@ -185,6 +189,48 @@ function importMatchesReceipt(witness, receipt, ticket, receiptBytes) {
     && witness.receiptSha256 === sha256(receiptBytes) && /^[a-f0-9]{64}$/.test(witness.result?.diffSha256 ?? "")
     && (receipt.provider !== "claude" || /^[a-f0-9]{40}$/.test(witness.result?.commit ?? ""))
     && validSourceIdentity(witness.importedSource);
+}
+
+/**
+ * Verify the worktree's completed import, immutable dispatch request and completed exact-result lane receipt.
+ * Imported work can proceed to local handoff for this ticket without granting a human placement override.
+ */
+export function verifyCloudImportPlacement(worktree, ticket, requestFile, laneReceiptName) {
+  requireVibeSession(worktree, ticket);
+  const read = (file) => {
+    if (!lstatSync(file).isFile()) throw new Error("cloud import placement evidence must be a regular file");
+    return JSON.parse(readFileSync(file, "utf8"));
+  };
+  const request = hydrateCloudRequest(read(requestFile), { requireCurrentSource: false });
+  if (path.resolve(request.worktree) !== path.resolve(worktree) || request.ticket !== ticket) {
+    throw new Error("cloud import placement request belongs to another worktree or ticket");
+  }
+  const receiptBytes = readFileSync(receiptPath(worktree, ticket));
+  const receipt = JSON.parse(receiptBytes);
+  const witness = read(importWitnessPath(worktree));
+  if (requestDigest(request) !== receipt.requestDigest || !importMatchesReceipt(witness, receipt, ticket, receiptBytes)) {
+    throw new Error("cloud import placement witness differs from the completed dispatch request");
+  }
+  const current = sourceIdentity(worktree);
+  const reviewed = witness.reviewedSource && sameSource(current, witness.reviewedSource);
+  if (!sameSource(current, witness.importedSource) && !reviewed) throw new Error("cloud import placement witness is stale for the worktree");
+  const commit = witness.result.commit ?? (reviewed ? current.head : null);
+  if (!/^[a-f0-9]{40}$/.test(commit ?? "") || !/^cloud-validate-[a-f0-9]{12}-[a-f0-9]{12}\.json$/.test(laneReceiptName ?? "")) {
+    throw new Error("cloud import placement needs the canonical exact-result validation receipt name");
+  }
+  const laneReceipt = read(path.join(gitDir(worktree), laneReceiptName));
+  const report = laneReceipt.validationReport;
+  const repository = verifyRepository(worktree, request.repository);
+  const laneKeys = Array.isArray(report?.lanes) ? report.lanes.map(({ command }) => typeof command === "string" ? validationCommandKey(command) : null) : [];
+  const required = request.validationCommands.map(validationCommandKey);
+  if (laneReceipt.status !== "completed" || !laneReceipt.taskId || laneReceipt.commit !== commit
+    || !/^[a-f0-9]{64}$/.test(laneReceipt.requestDigest ?? "") || validationReceiptName(commit, laneReceipt.requestDigest) !== laneReceiptName
+    || report?.commit !== commit || report.repository !== repository || provenanceProblem(report.provenance, { repository, commit })
+    || !report.passed || !laneKeys.length || !report.lanes.every((lane) => lane.passed === true && lane.exitCode === 0)
+    || !isDeepStrictEqual(laneReceipt.laneKeys, laneKeys) || required.some((key) => !laneKeys.includes(key))) {
+    throw new Error("cloud import placement lane receipt does not prove the imported commit and requested validation lanes");
+  }
+  return { worktree: path.resolve(worktree), requestFile: path.resolve(requestFile), laneReceiptName, taskId: receipt.taskId };
 }
 
 /** Bind the cloud import to the exact source that passed the existing local handoff gate. */

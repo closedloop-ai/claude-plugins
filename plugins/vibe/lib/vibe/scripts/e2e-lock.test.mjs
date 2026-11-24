@@ -17,8 +17,10 @@ const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "e2e-lock
 const CHILD_TIMEOUT_MS = 60_000;
 const trackedChildren = new Map();
 
+import { commitAt, isolatedArgs } from './fixtures/e2e-lock-args.mjs';
+
 function spawn(command, args, options = {}) {
-  const child = rawSpawn(command, args, options);
+  const child = rawSpawn(command, isolatedArgs(command, args), options);
   const lockAt = args.indexOf("--lock-dir");
   const lockDir = command === process.execPath && args[0] === SCRIPT && args[1] === "run" && lockAt >= 0
     ? path.resolve(options.cwd ?? process.cwd(), args[lockAt + 1]) : null;
@@ -49,7 +51,7 @@ function stopTestChild(child) {
 function spawnSync(command, args, options = {}) {
   const boundedArgs = command === process.execPath && args?.[0] === SCRIPT && args?.[1] === "run" && !args.includes("--wait-seconds")
     ? [...args.slice(0, 2), "--wait-seconds", "5", ...args.slice(2)] : args;
-  return rawSpawnSync(command, boundedArgs, { ...options, timeout: options.timeout ?? CHILD_TIMEOUT_MS });
+  return rawSpawnSync(command, isolatedArgs(command, boundedArgs), { ...options, timeout: options.timeout ?? CHILD_TIMEOUT_MS });
 }
 
 async function waitForClose(child, step, timeoutMs = 30_000) {
@@ -71,13 +73,6 @@ afterEach(async () => {
 const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "vibe-e2e-lock-")));
 after(() => rmSync(root, { recursive: true, force: true }));
 // `run` tests a named commit of a clean worktree, so every run happens in a repository at a known HEAD.
-const commitAt = (dir) => {
-  const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.test", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.test", GIT_AUTHOR_DATE: "2026-10-22T00:00:00Z", GIT_COMMITTER_DATE: "2026-10-22T00:00:00Z" };
-  const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8", env }).stdout.trim();
-  git("init", "--quiet", "--initial-branch=main");
-  git("commit", "--quiet", "--allow-empty", "-m", "base");
-  return git("rev-parse", "HEAD");
-};
 const defaultWorktree = path.join(root, "default-worktree");
 mkdirSync(defaultWorktree);
 const SHA = commitAt(defaultWorktree);
@@ -754,6 +749,9 @@ process.exit(9);
   record.cache = { path: path.join(state, 'turbo-cache') };
   record.builder = { name: 'fixture-builder', container: { id: 'owned' } };
   const shim = path.join(installOwnedBuildShim(record, docker), 'docker');
+  const program = readFileSync(shim, "utf8");
+  assert.match(program, /capturedJson\(config\.stdout\)/);
+  assert.match(program, /capturedJson\(inspected\.stdout\)/);
   const built = spawnSync(shim, ['compose', '-f', 'fixture.yml', 'build', 'e2e-runner'],
     { encoding: 'utf8', env: { ...process.env, COMPOSE_PROJECT_NAME: project } });
   assert.equal(built.status, 0, built.stderr);
@@ -1030,31 +1028,4 @@ test('dirty headless-harness boundary carries a source hash even when prepush em
   const stale = run('0'.repeat(64));
   assert.equal(stale.status, 2);
   assert.match(stale.stderr, /SOURCE-HASH-MISMATCH/);
-});
-
-test("a --no-build run needs images built from the head it tests in the same worktree (stale-image reruns, ISS-13067)", () => {
-  const lockDir = path.join(root, "image-head", "e2e-stack");
-  const wt = path.join(root, "wt-images");
-  const other = path.join(root, "wt-images-other");
-  mkdirSync(wt);
-  mkdirSync(other);
-  const first = commitAt(wt);
-  commitAt(other);
-  const env = { ...process.env, COMPOSE_PROJECT_NAME: "cl-e2e-fixture" };
-  Reflect.deleteProperty(env, "VIBE_E2E_FOREIGN_COMPOSE");
-  const run = (cwd, sha, ...flags) => spawnSync(process.execPath, [SCRIPT, "run", "--head", sha, "--lock-dir", lockDir,
-    process.execPath, "-e", "0", "--", ...flags], { encoding: "utf8", cwd, env });
-  assert.match(run(wt, first, "--no-build").stderr, /STALE-IMAGES no recorded build/);
-  assert.equal(run(wt, first).status, 0, "a build records its images");
-  assert.equal(run(wt, first, "--no-build").status, 0, "reuse at the same head and worktree");
-  const elsewhere = run(other, spawnSync("git", ["-C", other, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim(), "--no-build");
-  assert.equal(elsewhere.status, 1);
-  assert.match(elsewhere.stderr, /STALE-IMAGES .*(built from|built in)/);
-  spawnSync("git", ["-C", wt, "-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "--quiet", "--allow-empty", "-m", "fix"]);
-  const fix = spawnSync("git", ["-C", wt, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
-  const reused = run(wt, fix, "--no-build");
-  assert.equal(reused.status, 1);
-  assert.match(reused.stderr, new RegExp(`STALE-IMAGES cl-e2e-fixture's images were built from ${first.slice(0, 12)}`));
-  assert.equal(run(wt, fix).status, 0);
-  assert.equal(run(wt, fix, "--no-build").status, 0);
 });

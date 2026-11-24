@@ -29,7 +29,7 @@ def test_the_remedy_names_the_command_and_counts_story_files() -> None:
 def test_handoff_change_worker_and_decomposer_point_at_the_command() -> None:
     handoff = flat((HANDOFF / "SKILL.md").read_text())
     assert "A `frozen-render` finding is settled only by one shell step that launches no agent" in handoff
-    assert "node scripts/frozen-render-gate.mjs --repo <worktree> --base <base>" in handoff
+    assert "node scripts/frozen-render-gate.mjs --repo <worktree>` fetches GitHub main" in handoff
     assert "Nobody captures frozen stories any other way" in handoff
     worker = flat((AGENTS / "vibe-change-worker.md").read_text())
     assert "done only by handoff's `scripts/frozen-render-gate.mjs`" in worker

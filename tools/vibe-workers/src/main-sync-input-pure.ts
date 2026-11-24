@@ -1,3 +1,4 @@
+import { capturedJson } from "../../../plugins/vibe/lib/vibe/scripts/captured-json.mjs";
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -94,7 +95,7 @@ function runPureOwner(root: string, producer: InputProducer, head: string, emit:
     timeout: 10000, maxBuffer: emit ? 256 * 1024 * 1024 : 1024 * 1024,
   });
   if (result.error || result.status !== 0) throw new MainSyncError(`Existing pure input owner failed: ${producer.id}`, "NEEDS_CHANGE");
-  return JSON.parse(result.stdout);
+  return capturedJson(result.stdout);
 }
 
 function huskyBody(root: string, producer: InputProducer): OriginFile[] {

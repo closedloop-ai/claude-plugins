@@ -7,6 +7,7 @@
 // Importer JSON shape: {"importers":{"changed/file":["importer/file"]}}.
 // Evidence JSON shape: {"screens":[{"id":"screen","states":[],"flagArms":[]}]}.
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -289,7 +290,7 @@ function changedEntries(worktree, since, atCommit) {
   for (const entry of rawEntries(worktree, [since, 'HEAD']).filter(entry => entry.newMode === '160000')) {
     if (!result.some(item => item.path === entry.path)) result.push(entry);
   }
-  for (const file of git(worktree, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean)) {
+  for (const file of readGitInventory(worktree, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean)) {
     if (!result.some(entry => entry.path === file)) result.push({ path: file, status: "A", oldMode: "000000", newMode: "100644", modeChanged: true });
   }
   return result;
@@ -421,7 +422,7 @@ export function qaImpact({ worktree, since, evidence, graphImporters, featureMap
     const after = new Map(files.map((file) => [file, (atCommit ? readAt(worktree, atCommit, file) : readHead(worktree, file))]));
     const origins = directTree ? { ownFiles: new Set(files), mergeFiles: new Set() } : changeOrigins(worktree, since, atCommit ?? "HEAD");
     for (const file of (atCommit ? [] : [...git(worktree, ['diff', '--name-only', '-z', 'HEAD']).split('\0'),
-      ...git(worktree, ['ls-files', '--others', '--exclude-standard', '-z']).split('\0')]).filter(Boolean)) {
+      ...readGitInventory(worktree, ['ls-files', '--others', '--exclude-standard', '-z']).split('\0')]).filter(Boolean)) {
       origins.ownFiles.add(file);
       origins.mergeFiles.delete(file);
     }
