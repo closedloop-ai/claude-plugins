@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { planProblems, programRulingProblems, recordRulings, rulingProblems, sequencingRequirements, uncitedExclusions, criteriaChangeProblems } from "./rulings-check.mjs";
+import { planProblems, programRulingProblems, recordRulings, rulingProblems, sequencingRequirements, settlementProblems, uncitedExclusions, unratifiedSettlements, criteriaChangeProblems } from "./rulings-check.mjs";
+import { SETTLED_BY_ORCHESTRATOR, TRADE_TWIN, settledTicket } from "./settlement-test-fixture.mjs";
 import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 import { readAssembled } from "../../vibe/scripts/skill-split.mjs";
 
@@ -277,4 +278,64 @@ test("a reworded or dropped acceptance criterion needs a ticket ruling amending 
   assert.deepEqual(criteriaChangeProblems(before, ruled), []);
   assert.equal(criteriaChangeProblems(before, ruled.replace("amends: AC-2", "amends: AC-1")).length, 1, "a ruling amending another criterion does not cover it");
   assert.equal(criteriaChangeProblems(before, "- Acceptance criteria:\n  - [ ] Drag reorders rows\n").length, 1, "a dropped criterion is a change");
+});
+
+test("ISS-14679: an orchestrator's AC reading and accepted cost from the ISS-13115 body are refused without a human ruling", () => {
+  const body = settledTicket();
+  assert.deepEqual(unratifiedSettlements(body).map(({ entry, kind }) => [kind, entry.replace(/^- /, "").slice(0, 40)]), [
+    ["trade", SETTLED_BY_ORCHESTRATOR.optionC.slice(0, 40)],
+    ["decision", SETTLED_BY_ORCHESTRATOR.axis.slice(0, 40)],
+    ["decision", SETTLED_BY_ORCHESTRATOR.acMet.slice(0, 40)],
+    ["trade", TRADE_TWIN.slice(0, 40)],
+  ], "the option C cost, both AC readings and the checklist's (accepted cost) twin are each refused");
+  const problems = settlementProblems(body);
+  assert.equal(problems.length, 4);
+  assert.ok(problems.every((problem) => /NEEDS_PERSON \(behavior\)/.test(problem)), "each refusal routes the question to the person");
+  assert.match(problems[2], /is met on the list's existing save-as-new-view action/);
+});
+
+test("ISS-14679: an operational orchestrator decision, a ruling line and a template known gap are not settlements", () => {
+  const body = settledTicket({ only: ["lanes"] });
+  assert.deepEqual(unratifiedSettlements(body), [], "a Decision entry that reads no criterion and records no trade is operational");
+  assert.deepEqual(unratifiedSettlements("- Visual evidence: no inspection; known gap is unverified appearance; remaining design decision is review at pickup.\n"), []);
+  assert.deepEqual(unratifiedSettlements('- Ruling 2026-11-24 (designer): "Accepted cost: stored owner:asc keeps Ascending"; amends: AC-3\n'), []);
+  assert.deepEqual(unratifiedSettlements("- Decision (orchestrator): AC-2 known gap is fine\n").map(({ kind }) => kind), ["decision"]);
+  assert.deepEqual(unratifiedSettlements("- Limits: AC-2 has a known gap on Desktop\n").map(({ kind }) => kind), ["known-gap"]);
+  assert.deepEqual(unratifiedSettlements("```\n- Decision (orchestrator): AC-2 is met\n```\n"), [], "fenced examples are not entries");
+});
+
+test("ISS-14679: each settlement passes once it quotes a dated human ruling, and only then", () => {
+  const ruled = [
+    '- Ruling 2026-11-24 (designer): "a new saved view is fine for AC-3"; amends: AC-3',
+    '- Ruling 2026-11-24 (designer): "a stored owner:asc on level 2 may keep plain Ascending"; amends: AC-3',
+    '- Ruling 2026-11-24 (designer): "each saved view keeps only its own grouping axis"; amends: none',
+  ];
+  const cited = settledTicket({
+    rulings: ruled,
+    optionC: `${SETTLED_BY_ORCHESTRATOR.optionC} Per Ruling 2026-11-24 (designer): "a stored owner:asc on level 2 may keep plain Ascending".`,
+    axis: `${SETTLED_BY_ORCHESTRATOR.axis} Per Ruling 2026-11-24 (designer): "each saved view keeps only its own grouping axis".`,
+    acMet: `${SETTLED_BY_ORCHESTRATOR.acMet} Per Ruling 2026-11-24 (designer): "a new saved view is fine for AC-3".`,
+    twin: `${TRADE_TWIN}, per Ruling 2026-11-24 (designer): "a stored owner:asc on level 2 may keep plain Ascending"`,
+  });
+  assert.deepEqual(settlementProblems(cited), []);
+
+  const elsewhere = settledTicket({ rulings: [], acMet: `${SETTLED_BY_ORCHESTRATOR.acMet} Per "a new saved view is fine for AC-3".`, only: ["acMet"] });
+  assert.equal(unratifiedSettlements(elsewhere).length, 1, "a quote that matches no ruling is not a citation");
+  assert.deepEqual(unratifiedSettlements(elsewhere, [elsewhere, `${ruled[0]}\n`]), [], "the session's rulings record is a source too");
+
+  const byAgent = settledTicket({ rulings: ['- Ruling 2026-11-24 (orchestrator): "a new saved view is fine for AC-3"; amends: AC-3'],
+    acMet: `${SETTLED_BY_ORCHESTRATOR.acMet} Per "a new saved view is fine for AC-3".`, only: ["acMet"] });
+  assert.equal(unratifiedSettlements(byAgent).length, 1, "a ruling attributed to the orchestrator is not a human ruling");
+
+  const undated = settledTicket({ rulings: ['- Ruling (designer): "a new saved view is fine for AC-3"; amends: AC-3'],
+    acMet: `${SETTLED_BY_ORCHESTRATOR.acMet} Per "a new saved view is fine for AC-3".`, only: ["acMet"] });
+  assert.equal(unratifiedSettlements(undated).length, 1, "an undated ruling is not a cited ruling");
+
+  const before = settledTicket({ rulings: ruled,
+    optionC: 'Decision (orchestrator, option C): per Ruling 2026-11-19 (designer): "Unassigned last too", second-level Owner rests on Custom order. Accepted cost: a stored owner:asc keeps plain Ascending, which AC-3 protects.',
+    only: ["optionC"] });
+  assert.equal(unratifiedSettlements(before).length, 1, "a ruling quoted before the trade label does not cover the trade");
+
+  const partial = settledTicket({ rulings: ruled, acMet: `${SETTLED_BY_ORCHESTRATOR.acMet} Per "fine".`, only: ["acMet"] });
+  assert.equal(unratifiedSettlements(partial).length, 1, "a one-word fragment of a ruling is not a citation");
 });

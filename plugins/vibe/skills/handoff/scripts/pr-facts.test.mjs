@@ -16,6 +16,7 @@ import { renderEvidenceComment } from "./pr-evidence-comment.mjs";
 import { qaImpact, qaImpactRequest } from "./qa-impact.mjs";
 import { RULING_ID, RULINGS, TICKET } from "./targeted-tests-ruling-test-fixture.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { SETTLED_BY_ORCHESTRATOR } from "./settlement-test-fixture.mjs";
 
 // The repository the ClosedLoop provider serves, whose areas these cases name.
 const AREAS = repositoryAreas(PROVIDER_BINDING);
@@ -303,6 +304,16 @@ test("the body gate refuses missing facts, uncited lines and a stacked base with
   const local = facts(s, { body: `${COMPLETE_BODY}\n![after](/Users/x/file.png)\nLog in ~/foo\nPlan: .closedloop-ai/vibe-plans/r1.md` }).prBodyProblems;
   assert.deepEqual(local.map((problem) => problem.replace(/:.*/, "")), ["body line 5", "body line 6", "body line 7"]);
   assert.ok(local.every((problem) => !problem.includes("/Users/x") && !problem.includes("~/foo")), "never echoes the path");
+});
+
+test("ISS-14679: the body gate refuses an orchestrator's AC reading in the PR body unless it quotes a human ruling from the ticket", (t) => {
+  const s = session(t);
+  const settled = `${COMPLETE_BODY}\n- ${SETTLED_BY_ORCHESTRATOR.acMet}`;
+  assert.match(facts(s, { body: settled }).prBodyProblems.join("\n"), /reads an acceptance criterion with no cited human ruling/);
+  const cited = `${settled} Per Ruling 2026-11-24 (designer): "a new saved view is fine for AC-3".`;
+  assert.match(facts(s, { body: cited }).prBodyProblems.join("\n"), /reads an acceptance criterion/, "the quote must match a ruling");
+  const ticketText = 'Say why POST vs DELETE in the PR.\n- Ruling 2026-11-24 (designer): "a new saved view is fine for AC-3"; amends: AC-3\n';
+  assert.deepEqual(facts(s, { body: cited, ticketText }).prBodyProblems, [], "a dated human ruling on the ticket is the source");
 });
 
 test("AC-005 DT-08 DT-09: PR facts reject false CI coverage and uncited universal Summary claims", (t) => {

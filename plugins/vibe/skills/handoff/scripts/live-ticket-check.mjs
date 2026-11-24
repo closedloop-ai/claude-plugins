@@ -41,6 +41,7 @@ import { sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
 import { localPlanFiles } from "../../vibe/scripts/session-plan.mjs";
 import { parseUnifiedDiff, touchesUiPath } from "./diff-rules.mjs";
 import { documentKey } from "../../vibe/scripts/tracker-key.mjs";
+import { isAgentAttribution, settlementProblems } from "./rulings-check.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
@@ -79,7 +80,7 @@ const ORCHESTRATOR_LINE = /^- (Codex session|Claude Code session) \(orchestrator
 const NO_ENVIRONMENT = /^- No environment:\s*(\S.*)$/m;
 function humanNoEnvironmentAuthority(value, rulingsText) {
   const match = /^([^,]+),\s*(\d{4}-\d{2}-\d{2}),\s*(\S.*)$/.exec(value.trim());
-  if (!match || /\b(?:orchestrator|reviewer|agent|worker|model|system)\b/i.test(match[1])) return false;
+  if (!match || isAgentAttribution(match[1])) return false;
   if (!/\b(?:AskUserQuestion|operator message|ticket|chat|session|PR #\d+|ruling)\b/i.test(match[3])) return false;
   return typeof rulingsText === "string" && rulingsText.split("\n").some((line) => line.trim() === `- No environment: ${value.trim()}`);
 }
@@ -181,6 +182,9 @@ export function checkLiveTicket(body, { baseCommit, record, headSha, branch, pla
       problems.push(...checkBaseCommit(content, baseCommit));
     }
   }
+  // An agent never settles an acceptance-criterion reading or a trade; each one quotes a human ruling (rulings-check.mjs).
+  const settled = adopted ? APPENDED_SECTIONS.map((heading) => sections.get(heading) ?? "").join("\n") : body;
+  problems.push(...settlementProblems(settled, [body, rulingsText]).map((problem) => ({ section: "Rulings", problem })));
   problems.push(...checkSessionPlan(record, planCount));
   // Operator ruling, 2026-10-20: no path on the operator's machine, and no plan pointed at by path.
   problems.push(...pointerProblems(body, planPrefix).map(({ line, kind }) => ({ section: "Body", problem: `line ${line}: ${kind}` })));
