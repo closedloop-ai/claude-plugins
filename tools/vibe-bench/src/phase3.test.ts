@@ -1143,7 +1143,7 @@ test("collectors reject partial, duplicate, identity-drifted and dishonest artif
   assert.throws(() => collectClaudeEval({ ...claudeNative(), partial: true }, [CASE], {
     version: "1.2.3", coreVersion: "1.5.3", cliVersion: "2.1.311",
     vibePath: "/snapshot/vibe", corePath: "/snapshot/core", model: "claude-sonnet-5-5",
-  }), /partial-or-schema/);
+  }), /eval-claude-partial:unknown/);
   const duplicate = claudeNative();
   duplicate.cases.push(duplicate.cases[0]);
   assert.throws(() => collectClaudeEval(duplicate, [CASE], {

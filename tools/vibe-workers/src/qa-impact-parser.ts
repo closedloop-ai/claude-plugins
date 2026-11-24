@@ -1,3 +1,7 @@
+export { registeredStoryNames, storyCollectionGlobs } from "./story-registration.js";
+export { storyFlagBindings, exportedStoryRenderer } from "./story-render.js";
+export { storyFlagArms } from "./story-flag-arms.js";
+import { posix } from "node:path";
 import * as ts from "typescript";
 
 export const BUNDLED_TYPESCRIPT_VERSION = ts.version;
@@ -30,6 +34,180 @@ export function commentlessAst(file: string, source: string): string | null {
   const diagnostics = (tree as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics ?? [];
   if (diagnostics.length > 0) return null;
   return ts.createPrinter({ removeComments: true, newLine: ts.NewLineKind.LineFeed }).printFile(tree);
+}
+
+function inventoryArray(node: ts.ArrayLiteralExpression): boolean {
+  const words = node.elements.map((item) => ts.isStringLiteralLike(item) ? item.text : null);
+  const command = words.findIndex((text) => text === "ls-tree" || text === "ls-files");
+  if (command < 0) return false;
+  const separator = words.indexOf("--", command + 1);
+  const flags = words.slice(command + 1, separator === -1 ? undefined : separator);
+  if (words[command] === "ls-tree") return flags.some((flag) => flag === "--recursive" || /^-[a-z]*r[a-z]*$/i.test(flag ?? ""));
+  if (separator === -1) return true;
+  return node.elements.slice(separator + 1).some((item) => {
+    if (ts.isSpreadElement(item)) return true;
+    const pathspec = ts.isTemplateExpression(item) ? item.head.text : ts.isStringLiteralLike(item) ? item.text : "";
+    return /^(?:\.?\/?$|:(?:\(glob\))?\*\*|\*\*)/.test(pathspec) && pathspec !== "";
+  });
+}
+
+function inventoryOwnerNames(tree: ts.SourceFile): Set<string> {
+  const bindings = new Set<string>();
+  for (const node of tree.statements) {
+    if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier)
+      || !node.moduleSpecifier.text.startsWith(".")
+      || posix.normalize(posix.join(posix.dirname(tree.fileName), node.moduleSpecifier.text))
+        !== "plugins/vibe/lib/vibe/scripts/git-inventory.mjs") continue;
+    const imports = node.importClause?.namedBindings;
+    if (!imports || !ts.isNamedImports(imports)) continue;
+    for (const specifier of imports.elements) {
+      if (!specifier.isTypeOnly && (specifier.propertyName ?? specifier.name).text === "readGitInventory") bindings.add(specifier.name.text);
+    }
+  }
+  return bindings;
+}
+
+/** Locate recursive tree or whole-index argv that reaches a runner outside the shared inventory owner. */
+export function rawGitInventoryLines(file: string, source: string): number[] | null {
+  const kind = scriptKind(file);
+  if (kind === null) return null;
+  const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
+  const diagnostics = (tree as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics ?? [];
+  if (diagnostics.length > 0) return null;
+  const owners = inventoryOwnerNames(tree);
+  const arrays: ts.ArrayLiteralExpression[] = [];
+  const references = new Map<string, ts.Identifier[]>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isArrayLiteralExpression(node) && inventoryArray(node)) arrays.push(node);
+    if (ts.isIdentifier(node)) {
+      const refs = references.get(node.text) ?? [];
+      refs.push(node);
+      references.set(node.text, refs);
+      if ((ts.isVariableDeclaration(node.parent) || ts.isParameter(node.parent) || ts.isFunctionDeclaration(node.parent))
+        && node.parent.name === node) owners.delete(node.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(tree);
+  const accepted = (node: ts.Node): boolean => {
+    const parent = node.parent;
+    return ts.isCallExpression(parent) && ts.isIdentifier(parent.expression) && owners.has(parent.expression.text)
+      && parent.arguments[1] === node;
+  };
+  const acceptedVariable = (array: ts.ArrayLiteralExpression): boolean => {
+    const declaration = array.parent;
+    if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name) || declaration.initializer !== array) return false;
+    let block: ts.Node = declaration;
+    while (block.parent && !ts.isBlock(block) && !ts.isSourceFile(block)) block = block.parent;
+    const uses = references.get(declaration.name.text)?.filter((node) => node !== declaration.name
+      && node.pos >= block.pos && node.end <= block.end) ?? [];
+    return uses.length > 0 && uses.every(accepted);
+  };
+  return [...new Set(arrays.filter((array) => !accepted(array) && !acceptedVariable(array))
+    .map((array) => tree.getLineAndCharacterOfPosition(array.getStart(tree)).line + 1))];
+}
+
+/** Prove a nested compare-shaped closure can only serve as an awaited call, never a callback value. */
+export function awaitedLocalCompareLines(file: string, source: string): number[] | null {
+  const kind = scriptKind(file);
+  if (kind === null) return null;
+  const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
+  const diagnostics = (tree as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics ?? [];
+  if (diagnostics.length > 0) return null;
+
+  const references = new Map<string, ts.Identifier[]>();
+  const declarations: Array<{ declaration: ts.VariableDeclaration; name: ts.Identifier; owner: ts.SignatureDeclaration }> = [];
+  const visit = (node: ts.Node, owner: ts.SignatureDeclaration | null): void => {
+    if (ts.isIdentifier(node) && /^compare[\w$]*$/.test(node.text)) {
+      const sameName = references.get(node.text) ?? [];
+      sameName.push(node);
+      references.set(node.text, sameName);
+      const declaration = node.parent;
+      if (owner && ts.isVariableDeclaration(declaration) && declaration.name === node && declaration.initializer
+        && (ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer))) {
+        declarations.push({ declaration, name: node, owner });
+      }
+    }
+    const scope = ts.isFunctionLike(node) ? node : owner;
+    ts.forEachChild(node, (child) => visit(child, scope));
+  };
+  visit(tree, null);
+  return declarations.flatMap(({ declaration, name, owner }) => {
+    // Closures nested within the owner can still use the binding. Separate functions cannot.
+    const uses = references.get(name.text)?.filter((reference) =>
+      reference !== name && reference.pos >= owner.pos && reference.end <= owner.end) ?? [];
+    if (uses.length === 0 || !uses.every((reference) => {
+      // Node identity distinguishes the call's callee from an identifier in its arguments.
+      const parent = reference.parent;
+      return ts.isCallExpression(parent) && parent.expression === reference
+        && ts.isAwaitExpression(parent.parent) && parent.parent.expression === parent;
+    })) return [];
+    return [tree.getLineAndCharacterOfPosition(declaration.getStart(tree)).line + 1];
+  });
+}
+
+const TEST_RUNNERS = new Set(["node:test", "vitest", "@playwright/test"]);
+type SourceSpan = { start: number; end: number };
+
+function assertionSpans(tree: ts.SourceFile, body: ts.Node): SourceSpan[] {
+  const bindings = new Set<string>();
+  for (const statement of tree.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)
+      || !["node:assert", "node:assert/strict", "assert", "assert/strict"].includes(statement.moduleSpecifier.text)) continue;
+    const clause = statement.importClause;
+    if (clause?.name && !clause.isTypeOnly) bindings.add(clause.name.text);
+  }
+  const spans: SourceSpan[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)) {
+      const call = node.expression;
+      const owner = ts.isPropertyAccessExpression(call.expression) ? call.expression.expression : call.expression;
+      if (ts.isIdentifier(owner) && bindings.has(owner.text)) spans.push({ start: call.getStart(tree), end: call.end });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(body);
+  return spans;
+}
+
+/**
+ * Finds direct top-level cases under real test runner imports. Exact source spans
+ * let the repair gate verify a moved declaration without normalizing assertions.
+ */
+export function topLevelTestCases(
+  file: string,
+  source: string,
+  includeAssertions = false,
+): Array<SourceSpan & { name: string; runner: string; assertions?: SourceSpan[] }> | null {
+  const kind = scriptKind(file);
+  if (kind === null) return null;
+  const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
+  const diagnostics = (tree as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics ?? [];
+  if (diagnostics.length > 0) return null;
+  const bindings = new Map<string, string>();
+  for (const statement of tree.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const runner = statement.moduleSpecifier.text;
+    const clause = statement.importClause;
+    if (!clause || clause.isTypeOnly || !TEST_RUNNERS.has(runner)) continue;
+    if (runner === "node:test" && clause.name) bindings.set(clause.name.text, `${runner}:test`);
+    if (!clause.namedBindings || !ts.isNamedImports(clause.namedBindings)) continue;
+    for (const specifier of clause.namedBindings.elements) {
+      const name = (specifier.propertyName ?? specifier.name).text;
+      if (!specifier.isTypeOnly && ["test", "it"].includes(name)) bindings.set(specifier.name.text, `${runner}:${name}`);
+    }
+  }
+  return tree.statements.flatMap((statement) => {
+    if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) return [];
+    const call = statement.expression;
+    if (!ts.isIdentifier(call.expression) || call.questionDotToken) return [];
+    const runner = bindings.get(call.expression.text);
+    const [title, callback] = call.arguments;
+    if (!runner || !title || !ts.isStringLiteral(title) || call.arguments.length !== 2
+      || !callback || !(ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))) return [];
+    return [{ name: title.text, runner, start: statement.getStart(tree), end: statement.end,
+      ...(includeAssertions ? { assertions: assertionSpans(tree, callback.body) } : {}) }];
+  });
 }
 
 /** Real comment trivia, excluding comment-like text in JSX, strings and templates. */

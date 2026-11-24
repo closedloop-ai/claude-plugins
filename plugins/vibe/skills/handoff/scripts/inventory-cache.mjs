@@ -81,6 +81,29 @@ export function writeInventoryCache(gitDir, key, value) {
   for (const { name } of entries.slice(CACHE_ENTRIES)) rmSync(path.join(dir, name), { force: true });
 }
 
+/**
+ * Reuse file-local findings within an exact head, unchanged rule sources and unchanged shared inputs.
+ * Each file key also covers its own patch and source bytes. Cross-file rules always run independently.
+ */
+export function fileRuleCache(gitDir, inventoryKey) {
+  const key = { kind: "file-local-rules", head: inventoryKey.head, phase: inventoryKey.phase,
+    rulesVersion: inventoryKey.rulesVersion, contextHash: inventoryKey.contextHash };
+  const prior = readInventoryCache(gitDir, key);
+  const current = Object.create(null);
+  return {
+    findings(group, file, source, compute) {
+      const id = hashParts([group, file, source]);
+      const hit = prior?.[id];
+      if (Array.isArray(hit) && hit.every((entry) => entry?.file === file.path
+        && Number.isInteger(entry.line) && ["rule", "problem", "fix"].every((field) => typeof entry[field] === "string"))) {
+        return current[id] = hit;
+      }
+      return current[id] = compute();
+    },
+    save() { writeInventoryCache(gitDir, key, current); },
+  };
+}
+
 function entryPath(gitDir, key) {
   return path.join(gitDir, CACHE_DIR, `${hashParts([key])}.json`);
 }

@@ -3,6 +3,7 @@
 // shepherd (an unresolved thread waiting on the writer is round-one work or
 // a later-round thread to triage).
 
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
 import { execFileSync } from "node:child_process";
 
 const QUERY = "query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login} createdAt}} latest:comments(last:1){nodes{author{login}}}}}}}}";
@@ -13,7 +14,7 @@ export function readThreads(repo, pr, gh = "gh") {
   try {
     const out = execFileSync(gh, ["api", "graphql", "-f", `query=${QUERY}`, "-F", `o=${owner}`, "-F", `n=${name}`, "-F", `p=${pr}`],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000 });
-    const nodes = JSON.parse(out)?.data?.repository?.pullRequest?.reviewThreads?.nodes;
+    const nodes = capturedJson(out)?.data?.repository?.pullRequest?.reviewThreads?.nodes;
     if (!Array.isArray(nodes)) return null;
     return nodes.map((node) => ({
       resolved: node?.isResolved === true,

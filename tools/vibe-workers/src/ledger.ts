@@ -440,10 +440,16 @@ export function acquireRecordTurnAt(place: ReturnType<typeof checkoutLocation>, 
         throw new Error("Record continuation requires the exact current source lease");
       }
       if (ledger.active?.lease && (owner?.workerId !== ledger.workerId || owner?.lease !== ledger.active.lease)) {
-        throw new Error("The implementation writer has a running turn; wait before changing shared records");
+        throw new WorkerRefusal("WRITER_BUSY", "The implementation writer has a running turn; wait before changing shared records.");
       }
     } else if (owner) throw new Error("Record continuation requires its registered source writer");
-    mkdirSync(file, { mode: 0o700 });
+    try { mkdirSync(file, { mode: 0o700 }); }
+    catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+        throw new WorkerRefusal("WRITER_BUSY", "A record turn is already running; wait before changing shared records.");
+      }
+      throw error;
+    }
     return file;
   });
 }
@@ -501,7 +507,12 @@ function save(place: ReturnType<typeof location>, ledger: Ledger) {
 }
 function locked<T>(place: ReturnType<typeof location>, operation: () => T): T {
   try { mkdirSync(place.lock, { mode: 0o700 }); }
-  catch { throw new Error("Writer state is locked by another operation; retry without starting a worker"); }
+  catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+      throw new WorkerRefusal("WRITER_BUSY", "Writer state is locked by another operation; retry without starting a worker.");
+    }
+    throw error;
+  }
   try { return operation(); } finally { rmSync(place.lock, { recursive: true }); }
 }
 function summary(ledger: Ledger) {

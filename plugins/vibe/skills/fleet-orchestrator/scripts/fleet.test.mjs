@@ -681,7 +681,8 @@ test('deterministic runner and Dagger e-2-e build shapes get preflight; --no-bui
   assert.ok(f.argv(built).some((arg) => arg.endsWith('e2e-lock.mjs')));
   const reused = f.run(['local', 'slot', 'heavy', 'writer', f.root, 'node', 'e2e/run-containerized.sh', '--no-build']);
   assert.equal(reused.status, 0, reused.stderr);
-  assert.equal(f.argv(reused).some((arg) => arg.endsWith('e2e-lock.mjs')), false);
+  assert.ok(f.argv(reused).includes('run'), 'the machine stack lock covers image reuse');
+  assert.ok(!f.argv(reused).includes('check'), 'image reuse needs no disk probe');
 });
 
 test('ordinary heavy checks have no Docker admission preflight', TIMEOUT, () => {
