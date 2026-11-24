@@ -56,10 +56,12 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSy
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { boundReviewContext } from "../../handoff/scripts/review-context.mjs";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { captureOwnedDockerResources, defaultLockDir, readHolder, removeOwnedDockerResources, sameWorktreeEntry } from "../../vibe/scripts/e2e-lock.mjs";
 import { readProcessIdentity } from "../../../shared/process-identity.mjs";
+import { reclaimStaleLock } from "./chat-binding.mjs";
 import { sameSource, sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { git, readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { agentFrontmatterName } from "../../vibe/scripts/agent-frontmatter.mjs";
@@ -394,6 +396,14 @@ export async function acquireLedgerLock(orchDir, options) {
 async function acquireForProcess(orchDir, processOwner, { waitMs = LEDGER_WAIT_MS, clock = Date.now, onWait } = {}) {
   const dir = path.join(orchDir, 'helpers.lock');
   const owner = { ...processOwner, token: randomUUID() };
+  const readOwner = () => {
+    try { return readFileSync(path.join(dir, 'owner.json'), 'utf8'); }
+    catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      const stat = statSync(dir, { throwIfNoEntry: false });
+      return stat ? `uninitialized:${stat.dev}:${stat.ino}:${stat.ctimeMs}` : '';
+    }
+  };
   const deadline = clock() + waitMs;
   while (clock() < deadline) {
     try {
@@ -409,19 +419,16 @@ async function acquireForProcess(orchDir, processOwner, { waitMs = LEDGER_WAIT_M
       if (error?.code !== 'EEXIST') throw error;
       // Even a peer that releases before its identity check invalidates pre-lock preparation.
       onWait?.();
+      const seen = readOwner();
+      if (!seen) continue;
       let saved;
-      try { saved = JSON.parse(readFileSync(path.join(dir, 'owner.json'), 'utf8')); } catch { saved = null; }
-      const unclaimed = !saved && statSync(dir, { throwIfNoEntry: false });
-      if (!saved && !unclaimed) continue;
+      try { saved = JSON.parse(seen); } catch { saved = null; }
       if (saved?.identity && readIdentity(saved.pid) === saved.identity
-        || unclaimed && Date.now() - unclaimed.mtimeMs < 60_000) {
+        || !saved && Date.now() - (statSync(dir, { throwIfNoEntry: false })?.mtimeMs ?? Date.now()) < 60_000) {
         await new Promise((resolve) => setTimeout(resolve, 100));
         continue;
       }
-      let current;
-      try { current = JSON.parse(readFileSync(path.join(dir, 'owner.json'), 'utf8')); } catch { current = null; }
-      if (current?.token !== saved?.token) continue;
-      rmSync(dir, { recursive: true });
+      reclaimStaleLock(dir, seen, { read: readOwner, remove: lock => rmSync(lock, { recursive: true }) });
     }
   }
   throw new Error('helper ledger lock remained active; ownership record was not overwritten');
@@ -445,13 +452,14 @@ function prepareReviewerStart(orchDir, values, readInput, rememberVersion) {
   const briefPath = resolveHelperBrief(orchDir, values.brief);
   rememberVersion(briefPath);
   const bytes = readFileSync(briefPath);
+  const reviewCriteria = boundReviewContext(bytes.toString("utf8"), values.worktree, orchDir, values.ticket);
   const problems = promptProblems({ loadedSkill }, bytes.toString("utf8"), { actorId: workerId, pluginRoot, worktree: values.worktree });
   if (problems.length) throw new Error(problems.join("; "));
   const capabilities = readInput(values.capabilities);
   graphAliases(JSON.parse(capabilities.text));
   const definition = readInput(values["agent-definition"]);
   if (agentFrontmatterName(definition.text) !== values.role) throw new Error("canonical agent definition does not name the requested role");
-  return { workerId, role: values.role, agentDefinition: definition.fingerprint, capabilities: capabilities.fingerprint, loadedSkill,
+  return { workerId, role: values.role, agentDefinition: definition.fingerprint, capabilities: capabilities.fingerprint, loadedSkill, reviewCriteria,
     ...(runtime === "codex" ? { briefEvidence: { path: briefPath, sha256: createHash("sha256").update(bytes).digest("hex") } } : {}) };
 }
 

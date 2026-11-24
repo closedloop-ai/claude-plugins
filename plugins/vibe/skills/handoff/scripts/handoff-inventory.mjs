@@ -106,6 +106,7 @@ import { committedLocalPlans, isLocalPlanPath, sessionLocalPlanPrefix } from "..
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
 import { readRetiredTests } from "../../vibe/scripts/retired-tests.mjs";
 import { sessionPlanEvidencePaths } from "../../vibe/scripts/session-plan.mjs";
+import { pathCitationAuthority } from "./path-citations.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
@@ -201,9 +202,10 @@ const result = withStableSource(worktree, (source) => {
   const baseCommit = proofCorpusBase(worktree, () => getComparison().operand);
   const { policy: pathPolicy, file: pathPolicyFile, problem: pathPolicyProblem,
     source: pathPolicySource } = readPathPolicy();
+  const authority = pathCitationAuthority(worktree, record, { primaryBody: inputs.tickets[0] });
   if (values.phase === "policy") {
     return { ok: !pathPolicyProblem, phase: "policy", worktree, branch, ownedPrototype: prototype, sessionSlug: record?.slug ?? null, baseCommit,
-      pathPolicyFile, ...(pathPolicySource ? { pathPolicySource } : {}), ...(pathPolicyProblem ? { pathPolicyProblem } : {}) };
+      pathCitations: authority.citations, pathPolicyFile, ...(pathPolicySource ? { pathPolicySource } : {}), ...(pathPolicyProblem ? { pathPolicyProblem } : {}) };
   }
   const localFixTickets = localFixPaths(record);
   const mainSync = record?.status === "active" && record?.operator ? readMainSyncProvenance(worktree) : undefined;
@@ -227,6 +229,7 @@ const result = withStableSource(worktree, (source) => {
   const shrinkOnlyAllowlists = changedFiles.filter((file) => isShrinkOnlyEdit(file));
   const shrinkOnlyPaths = new Set(shrinkOnlyAllowlists.map((file) => file.path));
   const classifications = new Map(changedFiles.map((file) => [file.path, classifyPath(file)]));
+  const pathCitations = [...classifications.values()].flatMap(result => result.citation ? [result.citation] : []);
   const testRepairs = changedFiles.filter((file) => classifications.get(file.path)?.reason === "test-repair");
   const lockfile = changedFiles.find((file) => file.path === "pnpm-lock.yaml");
   const unexplainedLockfile = lockfile
@@ -333,6 +336,8 @@ const result = withStableSource(worktree, (source) => {
     trackedLocalPlans,
     forbidden,
     outsideAllowed,
+    pathCitations,
+    ...(pathCitations.length ? { pathCitationEvidence: authority.evidence } : {}),
     unexplainedLockfileEntries: unexplainedLockfile,
     shrinkOnlyAllowlists,
     testRepairs,
@@ -382,7 +387,7 @@ const result = withStableSource(worktree, (source) => {
       record?.stack?.storybookUrl].map((value) => value ?? null);
     return {
       head: source.head,
-      diffHash: hashParts([baseCommit, source.diffSha256, recordInputs, changeLog, sessionInternalIds(worktree, changeLog), binding,
+      diffHash: hashParts([baseCommit, source.diffSha256, recordInputs, pathCitations, changeLog, sessionInternalIds(worktree, changeLog), binding,
         typeof binding.root === "string" ? read(path.join(binding.root, "provider.json")) : null]),
       rulesVersion: rulesVersion(),
       phase: values.phase,
@@ -401,6 +406,7 @@ const result = withStableSource(worktree, (source) => {
     }
     const facts = pullRequestFacts({
       worktree,
+      pathCitations,
       base: baseCommit,
       include: new Set(changedFiles.map((file) => file.path)),
       prs,
@@ -541,6 +547,7 @@ const result = withStableSource(worktree, (source) => {
       file,
       phase: values.phase,
       policy: pathPolicy,
+      pathCitations: authority.citations,
       repository,
       prototype: { owned: prototype, slug: record?.slug },
       portableSurfaceAllowed: portableSurfaceEditAllowed(file),

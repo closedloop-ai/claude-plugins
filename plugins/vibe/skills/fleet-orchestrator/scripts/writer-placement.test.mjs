@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+import { bindProviderInProcess, writeActiveTicketSnapshot } from "../../vibe/scripts/test-fixtures.mjs";
 
 // Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
@@ -19,6 +19,7 @@ const fixture = (t) => {
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const dir = path.join(home, 'programs', 'p1');
   mkdirSync(dir, { recursive: true });
+  writeActiveTicketSnapshot(dir, Array.from({ length: 9 }, (_, i) => 'ISS-' + (i + 1)));
   writeFileSync(path.join(home, 'current'), 'p1\n');
   const evidenceDir = mkdtempSync(path.join(os.tmpdir(), 'fleet-placement-evidence-'));
   t.after(() => rmSync(evidenceDir, { recursive: true, force: true }));
@@ -106,7 +107,8 @@ test('status lists each writer ticket with its placement and reason', (t) => {
   assert.equal(run('writer', 'w1', '--tickets', 'ISS-1,ISS-2').status, 0);
   assert.equal(run('placement', 'ISS-5', '--evidence', evidence('app5', NEEDS_APP)).status, 0);
   assert.equal(run('placement', 'ISS-6', '--evidence', evidence('app6', NEEDS_APP)).status, 0);
-  assert.equal(run('writer', 'w2', '--tickets', 'ISS-5').status, 0);
+  const candidates = evidence('candidates', { tickets: ['ISS-1', 'ISS-2', 'ISS-5', 'ISS-6'].map(slug => ({ slug, repo: 'o/r', files: [slug] })) });
+  assert.equal(run('writer', 'w2', '--tickets', 'ISS-5', '--candidates', candidates).status, 0);
   assert.equal(run('unit', 'ISS-5', '--tickets', 'ISS-5,ISS-6', '--writer', 'w2').status, 0, 'a fold after the start');
   const file = path.join(dir, 'board.json');
   const board = JSON.parse(readFileSync(file, 'utf8'));

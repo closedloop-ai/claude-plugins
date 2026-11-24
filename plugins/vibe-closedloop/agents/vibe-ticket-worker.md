@@ -543,3 +543,10 @@ the question and answer the code has not been checked against, or (plan,
 handoff) with the plan problems for the writer. Or
 `BLOCKED` with why. Add one line noting whether closedloop-graph was
 available.
+
+When the writer needs an outside-allowlist path, use the session's bound
+ticket read. Save the complete latest tracker response with its slug, version
+and content to `liveTicketDocument`, and its exact version content to
+`liveTicket`. Resolve both with `session-plan.mjs paths --worktree <wt>`.
+Refresh both after ticket updates and before the handoff inventory and PR gate.
+The writer cites a path on the locked Spec Card or session record.

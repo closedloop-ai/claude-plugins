@@ -1,5 +1,7 @@
 # Verify reviewer premises
 
+Read the original ticket criteria and the operator rulings in the brief before assessing a change. If a proposed finding contradicts either, report a QUESTION. Put it in `questions` with `kind: "QUESTION"`, the exact conflicting words in `contradicts`, and the decision needed in `question`. Keep it out of defect counts and fix requests.
+
 Before writing a finding, list every material premise it depends on: source
 behavior, tool and CLI behavior, runtime or platform capabilities, and version
 support. Verify each premise against its primary source now. Use a code
