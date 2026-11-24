@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.105
+
+#### Fixed
+- ISS-14631 corrects the agent names in the generic Claude Code and handoff instructions. The generic scan catches stale plugin IDs in Markdown, JavaScript prompt strings, and generic plugin manifest and marketplace instructions.
+- Across all plugin Markdown, including eval prompts and graders and plugin READMEs, the net word count is unchanged from v1.1.104 (about 0 words longer). The count excludes the generated ClosedLoop mirror.
+
 ### vibe v1.1.104
 
 #### Added
