@@ -162,6 +162,7 @@ def test_no_plugin_file_bounds_a_command_with_gnu_timeout() -> None:
 
 
 PROCESS_KILL = re.compile(r"\b(?:pkill|killall)\b")
+STANDALONE_REGEX = re.compile(r"^\s*const\s+\w+\s*=\s*/(?:\\[^\n]|[^/\\\n])+/[gimsuy]*;\s*$")
 NEGATION = re.compile(r"\b(?:never|not|no)\b", re.IGNORECASE)
 
 
@@ -173,7 +174,8 @@ def _plugin_files(*suffixes: str) -> list[Path]:
 
 def test_no_script_stops_a_process_by_name_or_pattern() -> None:
     offenders = [f"{path.name}:{number}" for path in _plugin_files(".mjs", ".js", ".ts", ".sh")
-                 for number, line in enumerate(skill_split.read(path).splitlines(), 1) if PROCESS_KILL.search(line)]
+                 for number, line in enumerate(skill_split.read(path).splitlines(), 1) if PROCESS_KILL.search(line)
+                 and not STANDALONE_REGEX.fullmatch(line)]
     assert offenders == []
     for path in _plugin_files(".md"):
         for paragraph in re.split(r"\n\s*\n|\n(?=- )", skill_split.read(path)):

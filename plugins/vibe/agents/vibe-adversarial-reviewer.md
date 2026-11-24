@@ -180,7 +180,7 @@ For each finding give severity, `file:line`, breakage, trigger, evidence and the
 smallest fix. Name clean areas or say "No proven findings"; end with the Graph
 block. Set `data.findings` to current-source `{id, blocking, evidence, premises}`
 objects, or `[]` after a clean recheck. Anything required before PR is blocking,
-except a browser-observable claim resting on a code trace alone
+except a browser-observable claim resting on a code trace alone while an E2E case is available or queued. Set `browserCase: {name, status}` to that case and keep it advisory until `reproduced`, with a command premise naming the case
 (`../skills/vibe/references/review-premises.md`). For a parser or matcher change, a layout the writer's
 decision table rows miss is a finding that the table is incomplete. The
 launcher receipt and graph trace bind the list to source.

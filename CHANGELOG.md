@@ -4,6 +4,55 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.106
+
+#### Added
+
+- The fleet launches a fresh read-only Codex QA guide with the QA plan, stack facts and both control skills. The launcher checks numbered claims against running-product evidence before sending the brief.
+- The fleet board records operator-scoped work and refuses scope deliveries to locked writers. The refusal names the sole matching open lessons pull request when available.
+- Fleet can record an owned PR hold, verify its draft protection and promote a verified head when it enters the operator merge list.
+- Visual QA evidence records the tested head, runtime, PNG captures, covered paths and finding dispositions. The same ledger renders the Visual QA section for the PR body. It flags intended horizontal scrollers with a mostly blank far-end viewport.
+- `fleet.sh <orchDir> <local|remote> launch-check <pane-id>` reads one exact tmux pane, by its pane id, through the launch check's pane mode. Any other pane form is refused before the check runs.
+
+#### Fixed
+
+- Compose E2E runs share machine admission with the existing slot wrapper. A busy response identifies the holder, and the shared owner record names the run label, ticket and compose project.
+- An installed plugin update leaves recorded-PID stop available. A stale writer launch names migration, skill reload and relaunch, and provider setup names the required probes and connection keys before dispatch.
+- Build scope intake reads exact owned session provenance without requiring a hosted data mode. Claude launch reports a signal refusal without releasing the owned writer. Tracker grants match the exposed read tools, and unrelated cross-repository issues can be placed without reading the source program board.
+- Captured command groups keep the slot through cancellation cleanup. Frozen Storybook uses the fleet host's heavy-slot configuration and reports slot contention separately from a bounded build failure. Frozen comparisons preserve worker affinity and require repeated uncached exact pixel and play evidence on both captured refs to resolve a parallel block. Capture waits for three consecutive frames with identical pixels after the story’s final event.
+- The inventory reuses file-local findings on unchanged inputs and batches base reads for export checks. It recognizes byte-identical moves to a replacement path, checks untracked files at the writer gate and can reuse host and touch evidence across a verified unaffected follow-up.
+- Known main failures require matching test IDs and assertions from both sides. Review receipt checks distinguish advisory evidence from browser findings with an exact reproduced case.
+- Prototype links report verified access and progress while publishing. Cloud validation carries separate stdout and stderr tails, and starting an image build retires the previous image provenance before it can be reused.
+- Writer and PR checks recognize an intact test case moved to a newly added sibling.
+- The change worker freezes its final tested head: after its checks pass it changes nothing, an amend or recommit included, except a fix that reruns the checks it affects.
+- The managed cloud runner runs setup and the requested lanes as two calls, each under the cloud's limit for one background task, and records each lane's wall time as it ends.
+- Writer checks flag a hook-named module whose functions no longer call hooks, and refuse a parser layout proof that misses a decision-table row naming that parser.
+- On a shared fleet host, the Claude launcher refuses to start a worker whose user or project settings turn vibe's guards off.
+- Writer checks require a record for deleted tests and flag modules without a production caller, stale behavior comments, hook names without hook calls, duplicated SQL name expressions, and paging fixtures that never split equal keys across pages.
+- Story checks compare flag arms and current release history with the registered story states. Pull request checks compare stated Storybook versions, counts, commits, and test outcomes with the branch and its validation evidence.
+- Heavy non-E2E refusals include an exact-head Claude validation route. Fleet status and the watcher surface idle capacity. Mechanical work defaults to Codex, and keeping a cloud-placed ticket local requires a scoped operator ruling or a verified import.
+- Claude cloud checks the environment against the active account pin. Verified routine creation survives an agent turn limit, and routine rejection clears the intent. Validation retains full ordered per-lane reports and checks host capability for documented E2E and frozen-render lanes. It queues work at one active run per account, derives typed workspace and host prerequisites, and refuses lanes lacking current host proof. API unit lanes require an exact committed non-secret test fixture.
+- New issues use the saved personal backlog project. Starting work is the point when the tracker can move them to the current week.
+- The fleet board retains retired writer history after a bound pull request closes and the worktree and active session are gone. Retired rows no longer generate live readiness or watcher alerts.
+- Seed refresh can correct a route-specific walk contract when current main and verified product evidence establish the change. It keeps the original walk limits and records the source in its PR.
+- Agent definitions use one YAML frontmatter reader. Hook, worker and handoff callers validate captured JSON with explicit single-document or stream framing. The handoff binds review evidence to the helper, worktree and finalized report.
+- Local fleet turn, steer and reload resolve the installed Codex plugin root and pass it to the skill-freshness check and the session. When the root cannot be verified, the command stops with the owned-PID recovery steps. Hook approval names the exact target label from the installed hook entry.
+- The managed cloud validation runner starts the provider's declared root services as root and fetches the checkout's pinned pnpm (`packageManager`) into the actor's pnpm home, which lives inside the actor's home. Setup stops when the fetched version differs, so no actor command self-installs pnpm, and a failed fetch names its exit code and output, with credentials redacted, in every lane it stops. It then runs every prerequisite lane (the repository bootstrap and the workspace builds the lanes depend on) as root, trusting only that checkout for Git, and hands ownership back. Root setup commands keep the host's own CA and proxy settings. Every requested lane runs as the non-root user, which gets no CA, TLS-trust or proxy setting from the host. It prints its results, writes its own output and exit files, and runs the shipped outcome reporter itself, so the result branch is published without a later agent step. Its plan carries plain reporter fields, and the reporter's line prints before the lane pointer.
+- Containerized pnpm E2E lanes accept a Playwright project name and spec after the pnpm argument separator, and the wrapper writes its own exit file and summary. The capability probe reports a state cleanup failure on its own line instead of failing a complete report.
+- A settled single-writer fleet can close after it verifies publication and reconciles its watcher. Main-sync reports all unsupported inputs together and verifies the preparation result against the Root-issued purpose, transaction and captured main.
+- Worktree retirement treats the exact report files in the provider's main-sync recipe (`recipes.mainSync.reportOutputs`) as declared outputs, so a retained test report no longer blocks removal. Any other ignored file still blocks it.
+- The cloud validation runner's lane timeout now ends the lane's whole process group, sending SIGTERM and then SIGKILL after a grace period, so a hung grandchild can no longer hold the lane open after the timeout passes. The lane reports exit 124 with an `ETIMEDOUT` diagnosis.
+- The cloud runner's lane supervisor runs as the runner itself, and only the lane process takes the non-root actor's identity, so an actor that cannot execute the runner's node binary no longer fails every lane with EACCES.
+- Ticket and project-list tracker replies that carry no `organizationId` are kept and read as the recorded current user's organization, so exact-name backlog answers resolve and the work-start move is allowed. A record naming another organization is still refused.
+- Only reviewer launches require the plugin scripts their brief names to exist in the review worktree. A writer's brief may name a script its change adds, and the plugin-version hook and skill-freshness check no longer refuse it by default.
+- The ticket-project hooks never read session or provider state for a tool call that is not a tracker tool.
+- Compared with 1.1.105, all plugin Markdown, including eval prompts and graders and the generated plugin, is about 1109 words longer (`instruction-words.mjs --path plugins`). The generic Vibe plugin alone grew by 547 words.
+
+### vibe-closedloop-provider v1.0.7
+
+- Declares tracker project operations and repository-owned validation recipes used by the generic Vibe hooks and validation host, including the root services (`postgresql`, `redis-server`) the cloud validation host starts before its lanes.
+- Declares the Desktop Playwright `apps/desktop/test-results-e2e/.last-run.json` as a retained report. Desktop Playwright attachments (report `data/<sha1>.md|png` and per-test `*.md|*.png`) are declared as cleanup outputs, so they no longer block retirement. Leaked tool state under `apps/desktop/.local` still blocks retirement.
+
 ### vibe v1.1.105
 
 #### Fixed

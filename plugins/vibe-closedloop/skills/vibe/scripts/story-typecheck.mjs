@@ -19,6 +19,7 @@
 // always fail or, recorded main-preexisting, hide the new error. Exits 0 when
 // nothing needs it.
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -52,7 +53,7 @@ export function addedLines(worktree, base) {
     const start = Number(hunk[1]);
     for (let offset = 0; offset < Number(hunk[2] ?? 1); offset += 1) lines.get(file).add(start + offset);
   }
-  for (const untracked of run(["ls-files", "--others", "--exclude-standard"]).split("\n").filter(Boolean)) {
+  for (const untracked of readGitInventory(worktree, ["ls-files", "--others", "--exclude-standard"]).split("\n").filter(Boolean)) {
     let count = 0;
     try { count = readFileSync(path.join(worktree, untracked), "utf8").split("\n").length; } catch { /* A directory or unreadable entry adds no line. */ }
     lines.set(untracked, new Set(Array.from({ length: count }, (_, index) => index + 1)));

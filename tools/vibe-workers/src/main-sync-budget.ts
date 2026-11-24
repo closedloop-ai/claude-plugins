@@ -1,3 +1,4 @@
+import { capturedJson } from "../../../plugins/vibe/lib/vibe/scripts/captured-json.mjs";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -29,7 +30,7 @@ export function commandSelection(root: string, command: CheckCommand, timeoutMs 
   verifyReportExecution(root, root, ReportExecutionOwner.TurboSelection, ["pnpm", ...argv]);
   const run = spawnSync("pnpm", argv, { cwd: root, encoding: "utf8", timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 });
   if (run.error || run.status !== 0) throw new MainSyncError("Could not bind the actual canonical Turbo task selection");
-  return tasksSchema.parse(JSON.parse(run.stdout));
+  return tasksSchema.parse(capturedJson(run.stdout));
 }
 
 function affectedFilter(root: string) {

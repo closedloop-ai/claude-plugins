@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { hookApprovalWatch } from "./hook-approval.mjs";
+import { codexHookInventory, hookApprovalWatch } from "./hook-approval.mjs";
 import { APPROVE_HOOKS, HookApproval, hookApprovalFromClient } from "../../vibe/scripts/vibe-core-hooks.mjs";
-import { OWN_PLUGIN } from "../../vibe/scripts/plugin-cli.mjs";
+import { MARKETPLACE, OWN_PLUGIN } from "../../vibe/scripts/plugin-cli.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./hook-approval.mjs", import.meta.url));
 const OTHER_VIBE = OWN_PLUGIN === "vibe" ? "vibe-generic" : "vibe";
@@ -129,4 +129,40 @@ test("only a missing hooks/list method is final; a timeout or a closed connectio
   for (const message of ["Codex hook listing timed out", "Codex hook listing closed before answering"]) {
     assert.deepEqual(await hookApprovalFromClient(failing(message), "/x"), { state: HookApproval.Unchecked, reason: message });
   }
+});
+
+test("the approval line names the target host's installed vibe-core entry by its display name in the setup instructions", async (t) => {
+  const { UNREAD_PLUGIN_NAME, approveHooksStep } = await import("../../vibe/scripts/vibe-core-hooks.mjs");
+  const dir = stateDir(t);
+  const modified = approvals({ state: HookApproval.Needed, blocked: [`${KEY} is modified`] });
+  const alert = await hookApprovalWatch("remote", dir, { versions: { vibe: "1.1.71", "vibe-core": "1.0.1" }, approval: modified.approval,
+    displayName: "Vibe Core (fixture market)", targetLabel: "Vibe Core (fixture market)" });
+  assert.ok(alert.line.endsWith(approveHooksStep("Vibe Core (fixture market)")), alert.line);
+  assert.ok(!alert.line.includes(UNREAD_PLUGIN_NAME), "no placeholder is left");
+});
+
+test("the target label comes from the target host's installed vibe-core manifest, and an unreadable listing leaves the approval unchecked", async (t) => {
+  const { approveHooksStep } = await import("../../vibe/scripts/vibe-core-hooks.mjs");
+  const dir = stateDir(t);
+  const core = join(dir, "installed-core");
+  mkdirSync(join(core, ".codex-plugin"), { recursive: true });
+  const manifest = (displayName) => writeFileSync(join(core, ".codex-plugin", "plugin.json"), JSON.stringify({ name: "vibe-core", interface: displayName ? { displayName } : {} }));
+  const listing = { installed: [
+    { name: OWN_PLUGIN, marketplaceName: MARKETPLACE, version: "1.1.106", pluginId: `${OWN_PLUGIN}@${MARKETPLACE}`, installed: true, enabled: true },
+    { name: "vibe-core", marketplaceName: MARKETPLACE, version: "1.0.15", pluginId: `vibe-core@${MARKETPLACE}`, installed: true, enabled: true, source: { path: core } },
+  ] };
+  const cli = join(dir, "codex");
+  writeFileSync(cli, `#!${process.execPath}\nconsole.log(${JSON.stringify(JSON.stringify(listing))});\n`);
+  chmodSync(cli, 0o755);
+  manifest("Vibe Core (fixture market)");
+  const inventory = codexHookInventory(cli);
+  assert.deepEqual(inventory, { versions: { vibe: "1.1.106", "vibe-core": "1.0.15" }, displayName: "Vibe Core (fixture market)", targetLabel: "Vibe Core (fixture market)" });
+  const modified = approvals({ state: HookApproval.Needed, blocked: [`${KEY} is modified`] });
+  const alert = await hookApprovalWatch("remote", dir, { ...inventory, approval: modified.approval });
+  assert.ok(alert.line.endsWith(approveHooksStep("Vibe Core (fixture market)")), alert.line);
+  manifest(null);
+  assert.deepEqual(codexHookInventory(cli), { versions: { vibe: "1.1.106", "vibe-core": "1.0.15" }, displayName: `vibe-core@${MARKETPLACE}`, targetLabel: null },
+    "a manifest without a display name gives no exact label");
+  writeFileSync(cli, "#!/bin/sh\nexit 1\n");
+  assert.equal(codexHookInventory(cli), null, "an unreadable target listing yields no inventory, so the approval stays unchecked");
 });
