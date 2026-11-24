@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### vibe v1.1.106
 
 #### Fixed
+- The committed `vibe-workers` dist bundles under `plugins/vibe` and `plugins/vibe-closedloop` are rebuilt from source, so CI's dist check passes.
 - Helpers fingerprint worktrees outside the shared ledger lock when starting, finalizing, accepting or stopping a review. They refresh the fingerprint after a lock wait, and a failed managed reviewer preserves any replacement registered under its name.
 - Across all plugin Markdown, including eval prompts and graders and each plugin’s README, the release is about 0 words longer than v1.1.105. The count excludes the generated `plugins/vibe-closedloop` mirror.
 
