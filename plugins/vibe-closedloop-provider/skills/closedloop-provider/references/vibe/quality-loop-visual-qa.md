@@ -34,3 +34,7 @@ needs a product choice goes through the research and necessity gate above.
 That fix deploys like any other request, and the ready message names what
 the check found and changed, in the person's terms. Owned prototype sessions
 <!-- end: what-it-checks -->
+
+<!-- block: overflow-source -->
+An absolute or sr-only descendant that widens a static cell or row is the class ISS-8422 recorded: cite ISS-8422 as the source in that finding.
+<!-- end: overflow-source -->

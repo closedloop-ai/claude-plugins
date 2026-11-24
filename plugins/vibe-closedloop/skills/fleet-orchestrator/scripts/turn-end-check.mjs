@@ -86,6 +86,13 @@ function readParent(pid) {
   return Number.isSafeInteger(parent) ? parent : 0;
 }
 
+/** Verify the exact worktree's live slot ownership before a fleet completion or archive. */
+export function fleetTurnEnd(orchDir, writer, worktree) {
+  const dir = resolveWorkDir(orchDir).dir;
+  return turnEndProblems({ writer, worktree, holders: slotHolders(),
+    jobs: recordedJobs(readLedger(dir)), watcher: watcherState(dir) });
+}
+
 function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: { worktree: { type: 'string' } } });
   const [orchDir, writer] = positionals;
@@ -93,9 +100,7 @@ function main(argv) {
     process.stderr.write('Usage: turn-end-check.mjs <orchDir> <writer> --worktree <path>\n');
     return 2;
   }
-  const dir = resolveWorkDir(orchDir).dir;
-  const { lines, ok } = turnEndProblems({ writer, worktree: values.worktree, holders: slotHolders(),
-    jobs: recordedJobs(readLedger(dir)), watcher: watcherState(dir) });
+  const { lines, ok } = fleetTurnEnd(orchDir, writer, values.worktree);
   process.stdout.write(`${lines.join('\n')}\n`);
   return ok ? 0 : 1;
 }

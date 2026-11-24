@@ -17,10 +17,15 @@ const CHANNELS = Object.freeze({ 2: 3, 6: 4 });
 const HIGHLIGHT = Object.freeze([255, 0, 64, 255]);
 const WHITE = Object.freeze([255, 255, 255, 255]);
 
+/** Whether bytes start with the PNG signature. */
+export function hasPngSignature(bytes) {
+  return Buffer.isBuffer(bytes) && bytes.subarray(0, SIGNATURE.length).equals(SIGNATURE);
+}
+
 /** `{width, height, data}` with `data` as row-major RGBA bytes. */
 export function decodePng(file) {
   const bytes = Buffer.from(file);
-  if (!bytes.subarray(0, SIGNATURE.length).equals(SIGNATURE)) {
+  if (!hasPngSignature(bytes)) {
     throw new Error("not a PNG file");
   }
   let header = null;

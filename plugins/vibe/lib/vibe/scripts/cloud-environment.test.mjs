@@ -130,8 +130,8 @@ test('the setup check reports each environment and API result with its fix, and 
   const recorded = { get: () => ({ trigger: used.data[0] }) };
   const gone = { get: () => { throw httpError(404); }, list: () => used };
   const ok = checkCloudSetup({ claudeEnvironment: REQUEST_ENV }, { remote: fakeRemote(recorded).remote, standing, env: { FLEET_HOME: fleetHome(t) } });
-  assert.equal(ok.ok, true);
-  assert.deepEqual(ok.checks.map(({ check, ok: passed }) => [check, passed]), [['environment', true], ['api', true], ['environment-setup', null], ['environment-use', true], ['github', null]]);
+  assert.equal(ok.ok, false, "an account-free routine read cannot prove the lane tools");
+  assert.deepEqual(ok.checks.map(({ check, ok: passed }) => [check, passed]), [['environment', true], ['api', true], ['environment-setup', null], ['environment-use', true], ['github', null], ['lane-tools', false]]);
   assert.match(ok.checks[2].detail, /not exercised.*did not run the environment setup script/);
   assert.match(ok.checks[3].detail, /routine trig_a on this account runs in env_01FromRequest/);
   assert.match(ok.checks[4].detail, /No GitHub connection refusal is recorded.*read-only check/);
@@ -144,7 +144,7 @@ test('the setup check reports each environment and API result with its fix, and 
   assert.match(setupFailed.checks[2].detail, /setup script exited 100.*Fix the environment setup script/);
 
   const unseen = checkCloudSetup({ claudeEnvironment: 'env_01Unseen' }, { remote: fakeRemote(gone).remote, standing, env: { FLEET_HOME: fleetHome(t) } });
-  assert.equal(unseen.ok, true, 'an unverified environment is not a failure');
+  assert.equal(unseen.ok, false, 'an unverified environment cannot pass setup');
   assert.equal(unseen.checks[2].ok, null);
   assert.match(unseen.checks[2].detail, /no routine on this account uses env_01Unseen yet.*this account's routines use env_01FromRequest, env_01Other/);
 
@@ -164,7 +164,7 @@ test('the setup check reports each environment and API result with its fix, and 
 
   const none = fakeRemote();
   const fresh = checkCloudSetup({ claudeEnvironment: REQUEST_ENV }, { remote: none.remote, env: { FLEET_HOME: fleetHome(t) } });
-  assert.equal(fresh.ok, true, 'nothing recorded yet is not a failure');
+  assert.equal(fresh.ok, false, 'nothing recorded cannot establish lane readiness');
   assert.deepEqual(fresh.checks[1], { check: 'api', ok: null, detail: 'no vibe cloud worker routine is recorded on this machine yet; the first cloud run creates it' });
   assert.deepEqual(none.calls, [], 'no list page is read when nothing is recorded');
 });
@@ -181,6 +181,9 @@ test('remoteTrigger carries the HTTP status of a refused call', (t) => {
   writeFileSync(path.join(home, '.codex', 'vibe', 'cloud', 'routines.json'), JSON.stringify({ schema: 'vibe.cloud-routines/1', intents: [{ token: 'intent_1' }] }));
   const recorded = { home, intent: 'intent_1' };
   assert.throws(() => remoteTrigger('create', {}, { ...recorded, run: run('HTTP 401\n{"error":"unauthorized"}') }), (error) => error.httpStatus === 401 && /create failed: HTTP 401/.test(error.message));
+  assert.throws(() => remoteTrigger('create', {}, { ...recorded, run: () => ({
+    status: 0, stdout: stream('HTTP 200\n{"trigger":{"id":"t"}}') + '\n{"type":', stderr: '',
+  }) }), /JSON|frame/i);
   assert.deepEqual(remoteTrigger('create', {}, { ...recorded, run: run('HTTP 200\n{"trigger":{"id":"t"}}') }), { trigger: { id: 't' } });
   const mismatched = () => ({ status: 0, stderr: '', stdout: [
     JSON.stringify({ message: { content: [{ type: 'tool_use', name: 'RemoteTrigger', id: 'tool_1', input: { action: 'create', body: { echoed: 'differently' } } }] } }),
@@ -262,7 +265,7 @@ test('AC-7 (ISS-14140): the check reads this machine\'s recorded routine with ge
     list: () => { throw tooLargeError(); },
   });
   const result = checkCloudSetup({ claudeEnvironment: REQUEST_ENV }, { remote, standing, env: { FLEET_HOME: fleetHome(t) } });
-  assert.equal(result.ok, true);
+  assert.equal(result.ok, false, 'a routine alone cannot prove the lane tools');
   assert.deepEqual(calls.map((call) => call.action), ['get']);
   assert.match(result.checks[1].detail, /answers for this account \(routine trig_standing\)/);
   assert.match(result.checks[2].detail, /not exercised.*setup script/);
@@ -287,7 +290,7 @@ test('AC-8 (ISS-14140): a reply too large to read is named as such in the check,
 test('the check lists the routine-removal line when routines vibe created are still recorded for removal', (t) => {
   const line = 'CLOUD_ROUTINE_REMOVAL_PENDING: 2 routine(s) vibe created are still recorded for removal; vibe retries on the next cloud run';
   const result = checkCloudSetup({ claudeEnvironment: REQUEST_ENV }, { remote: fakeRemote().remote, pending: line, env: { FLEET_HOME: fleetHome(t) } });
-  assert.equal(result.ok, true, 'a pending removal never fails the check');
+  assert.deepEqual(result.checks.filter((row) => row.ok === false).map((row) => row.check), ['lane-tools'], 'a pending removal never fails the check');
   assert.deepEqual(result.checks.at(-1), { check: 'routine-removal', ok: null, detail: line });
 });
 

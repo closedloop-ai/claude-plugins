@@ -14,6 +14,7 @@
 // script as a needle too). The tier comes from `.github/pr-test-event-tiers.md`, else
 // "unlisted". Exits 2 on bad usage. Changes nothing.
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { existsSync, readdirSync, readFileSync, lstatSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -135,7 +136,7 @@ export function laneSourceBootstrap(worktree, base, mergeTarget) {
     const bytes = readFileSync(absolute);
     const { laneSource, ...permissions } = JSON.parse(bytes);
     if (!isDeepStrictEqual(permissions, before) || laneSourceShapeProblems(laneSource).length || laneSource.kind !== "github-workflow") return null;
-    const workflowsAt = commit => run(["ls-tree", "-rz", "--full-tree", commit, "--", ".github/workflows"]).split("\0").filter(Boolean)
+    const workflowsAt = commit => readGitInventory(worktree, ["ls-tree", "-rz", "--full-tree", commit, "--", ".github/workflows"]).split("\0").filter(Boolean)
       .map(line => { const tab = line.indexOf("\t"); return { path: line.slice(tab + 1), mode: line.slice(0, tab).split(" ")[0] }; })
       .filter(entry => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(entry.path));
     const original = workflowsAt(base); const fetched = workflowsAt(mergeTarget);

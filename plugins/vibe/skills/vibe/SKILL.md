@@ -219,6 +219,10 @@ explicitly installed and enabled.
   blocks a change.
 <!-- end generic: graph-required -->
 > Provider `graph` (block `graph-required` of `vibe-skill.md`)
+Before creating an issue, read the tracker’s current-user record. Run `scripts/ticket-project.mjs ask --session <conversation>` for the saved backlog or existing question. For a new answer, read the project by URL, ID or slug, or read every project page for an exact name, then run `ask --answer <words>` with the same session. Use its exact project ID. Preferences live in `~/.codex/vibe/config.json` under the authenticated person's `ticketProjects` entry.
+
+At work start, read the ticket and all project pages. `ticket-project.mjs start --session <conversation> --ticket <slug>` supplies the single In Progress update with the current-week project and expected old status. Other edits do not move projects.
+
 > Provider `tickets` (block `live-ticket-template` of `vibe-skill.md`)
 - Images: a worker never sees what the person attached in chat. Save every
   attached image with `scripts/reference-images.mjs` and pass its path; the
@@ -537,7 +541,7 @@ record turn (section 5, step 6). Then follow "Resuming" below.
    Only when they have not supplied it, ask what they want to work on, in
    their own words; a link or reference they give is kept as text. If they
    clearly want a mockup or an exploration with made-up data, start the
-   prototype session below yourself. The person only types `$vibe` and
+   repository's mockup path below yourself. The person only types `$vibe` and
    `$handoff`; do not ask them to invoke `$prototype`. Dispatch
    `vibe-requirements-worker` with their words and any reference. Before
    creating the session, use the validated `<repo>` with

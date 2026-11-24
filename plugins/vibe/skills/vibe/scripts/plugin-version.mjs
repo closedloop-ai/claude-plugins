@@ -79,6 +79,7 @@
 // conversation's record is outdated with no choice, and the vibe hooks refuse
 // worker launches in Claude Code while it is (hooks/plugin-version-guard.mjs).
 
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
@@ -100,7 +101,7 @@ if (missingCore && isEntryPoint(import.meta.url)) {
 const { Harness, harnessActor } = await vibeCore("lib/vibe/scripts/harness-identity.mjs");
 const { readSessionRecord, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const startupRecord = await vibeCore("lib/vibe/scripts/startup-record.mjs");
-const { bindForRepository, probeProvider, providerCandidate, ProviderState, scriptExitCode, UNPROBED_REFUSAL, unprobedBinding } =
+const { bindForRepository, probeProvider, providerCandidate, providerConnectionArguments, ProviderState, scriptExitCode, UNPROBED_REFUSAL, unprobedBinding } =
   await vibeCore("lib/vibe/scripts/provider.mjs");
 const { RELEASE_VERSION: VERSION, readJson, startupDir, writeJson } = startupRecord;
 export const { VersionStatus, blockingProblem, compareVersions, installedVibeVersion, loadedSkillProblem, markPending,
@@ -378,6 +379,10 @@ export function statusBlock(record, connections, labels = {}) {
   const unprobed = record?.provider?.state === ProviderState.Unprobed;
   for (const [name, spec] of Object.entries(labels)) {
     lines.push(unprobed ? `- ${spec.label} connection: not checked yet (${spec.check})` : `- ${spec.label} connection: ${word(connections[name])}`);
+  }
+  const expected = providerConnectionArguments(labels);
+  if (expected && (unprobed || record?.provider?.state === ProviderState.Disconnected)) {
+    lines.push(`- Report the connection checks with ${expected}.`);
   }
   return lines.join("\n");
 }
@@ -658,6 +663,10 @@ async function main(argv, env, home) {
     return { code: 0, output: { ok: true, loadedSkill, enforced: true, state: store.where } };
   }
   if (command === "check") {
+    const unknown = Object.keys(connections).filter((name) => !Object.hasOwn(labels, name));
+    if (candidate.state === "candidate" && unknown.length > 0) {
+      throw new Error(`unrecognized provider connection name(s): ${unknown.join(", ")}. Expected ${providerConnectionArguments(labels) || "no connection arguments"}.`);
+    }
     const timeoutMs = Number(values["timeout-ms"]);
     const result = await checkVersions({
       clis,
@@ -859,7 +868,7 @@ export function migrateStrandedWriters(sessions, afterVersion) {
           previousWorkerId: session.workerId, previousDigest: session.digest }),
         encoding: "utf8", timeout: CLI_TIMEOUT_MS, stdio: ["pipe", "pipe", "pipe"],
       });
-      return { ...named, migration: StrandedMigration.Migrated, workerId: JSON.parse(output).workerId };
+      return { ...named, migration: StrandedMigration.Migrated, workerId: capturedJson(output).workerId };
     } catch (error) {
       const reason = firstLine(error.stderr) || error.message;
       // The recorded release is still installed, so its writer still runs until it is removed.

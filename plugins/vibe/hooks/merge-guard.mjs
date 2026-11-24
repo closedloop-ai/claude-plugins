@@ -21,6 +21,7 @@
 //
 // Runs from pre-tool-use.mjs. MERGE_GUARD_GH overrides the gh binary.
 
+import { capturedJson } from "../lib/vibe/scripts/captured-json.mjs";
 import { execFileSync } from "node:child_process";
 import { statSync } from "node:fs";
 import path from "node:path";
@@ -83,7 +84,7 @@ export function mergeProblem(command, gh, { cwd, environment = process.env, bind
   const me = gh(["api", "user", "--jq", ".login"], { cwd }).trim();
   for (const call of calls) {
     const args = ["pr", "view", ...(call.target ? [call.target] : []), ...(call.repo ? ["-R", call.repo] : []), "--json", "author,headRefName"];
-    const { author, headRefName } = JSON.parse(gh(args, { cwd: call.cwd }));
+    const { author, headRefName } = capturedJson(gh(args, { cwd: call.cwd }));
     if (author?.login && author.login !== me && call.allowed !== author.login) {
       return `pull request ${call.target ?? "for this branch"} is ${author.login}'s (branch ${headRefName}), not ${me}'s: never merge, enqueue or arm auto-merge on another author's pull request without asking the operator; once they approve, rerun as MERGE_AUTHOR_OK=${author.login} gh pr merge ...`;
     }
@@ -100,13 +101,13 @@ export function mergeProblem(command, gh, { cwd, environment = process.env, bind
  */
 function mergeVisualQaProblem(call, gh, binding) {
   if (!declaresUiPaths(binding)) return null;
-  const args = ["pr", "view", ...(call.target ? [call.target] : []), ...(call.repo ? ["-R", call.repo] : []), "--json", "files,changedFiles,headRefOid"];
+  const args = ["pr", "view", ...(call.target ? [call.target] : []), ...(call.repo ? ["-R", call.repo] : []), "--json", "files,changedFiles,headRefOid,body"];
   const name = `gh pr merge ${call.target ?? "for this branch"}`;
   let view;
   // Unlike the author check, a lookup failure refuses: a UI pull request must never merge unseen.
-  try { view = JSON.parse(gh(args, { cwd: call.cwd })); }
+  try { view = capturedJson(gh(args, { cwd: call.cwd })); }
   catch (error) { return `${name} refused: visual QA cannot be checked because gh could not list the pull request's files (${String(error?.message ?? error).split("\n")[0]}); rerun when gh can answer`; }
-  const { files, changedFiles, headRefOid } = view ?? {};
+  const { files, changedFiles, headRefOid, body } = view ?? {};
   const paths = Array.isArray(files) ? files.map((file) => file?.path).filter((file) => typeof file === "string") : [];
   const verdict = Number.isInteger(changedFiles) && paths.length >= changedFiles ? visualQaRequired(binding, paths)
     : { required: true, reason: "GitHub listed only part of its changed files, so it is treated as changing UI" };
@@ -114,7 +115,8 @@ function mergeVisualQaProblem(call, gh, binding) {
   if (!call.findings) {
     return `${name} refused: visual QA is required (${verdict.reason}); ${VISUAL_QA_STEP}, then rerun as VISUAL_QA_FINDINGS=<findings.json> gh pr merge ... with findings for head ${headRefOid}`;
   }
-  const problems = visualQaFindingsProblems(path.resolve(call.cwd, call.findings), String(headRefOid ?? ""), null, binding);
+  const problems = visualQaFindingsProblems(path.resolve(call.cwd, call.findings), String(headRefOid ?? ""), null, binding,
+    { paths: verdict.paths, body: body ?? "" });
   return problems.length ? `${name} refused: visual QA is required (${verdict.reason}): ${problems.join("; ")}` : null;
 }
 
