@@ -23,7 +23,7 @@ function launch(value: ReturnType<typeof syncFixture>, input: Record<string, unk
 
 function prepared(value: ReturnType<typeof syncFixture>) {
   expect(launch(value, { requestId: "source-inputs", input: "MAIN_SYNC_INPUTS" }).status).toBe(0);
-  const first = launch(value, { agentName: "vibe-environment-worker", recordAction: "redeploy", requestId: "publisher-prepare", input: "MAIN_SYNC_PREPARE" });
+  const first = launch(value, { agentName: "vibe-environment-worker", recordAction: "redeploy", publicationStep: "prepare", requestId: "publisher-prepare", input: "MAIN_SYNC_PREPARE" });
   expect(first.status, first.stdout).toBe(0);
   const transactionId = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8")).transactionId;
   const ready = launch(value, { requestId: "post-merge-inputs", input: "MAIN_SYNC_INPUTS", mainSyncTransactionId: transactionId });
@@ -32,6 +32,13 @@ function prepared(value: ReturnType<typeof syncFixture>) {
 }
 
 describe("production derived Claude validation envelope", () => {
+  it("AC-092 refuses DONE without a preparation transaction on the publisher launcher", () => {
+    const value = setup();
+    const result = launch(value, { agentName: "vibe-environment-worker", recordAction: "redeploy",
+      publicationStep: "prepare", requestId: "prepare-without-result", input: "REPORT_DONE" });
+    expect(result.json.data?.launcher?.code ?? result.json.code).toBe("MAIN_SYNC_RESULT_INVALID");
+  });
+
   it("derives only an authenticated existing source recipe and resumes the same registered writer", () => {
     const value = setup();
     const { transactionId, witness } = prepared(value);

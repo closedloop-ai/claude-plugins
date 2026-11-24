@@ -130,3 +130,13 @@ test("only a missing hooks/list method is final; a timeout or a closed connectio
     assert.deepEqual(await hookApprovalFromClient(failing(message), "/x"), { state: HookApproval.Unchecked, reason: message });
   }
 });
+
+test("the approval line names the target host's installed vibe-core entry by its display name in the setup instructions", async (t) => {
+  const { UNREAD_PLUGIN_NAME, approveHooksStep } = await import("../../vibe/scripts/vibe-core-hooks.mjs");
+  const dir = stateDir(t);
+  const modified = approvals({ state: HookApproval.Needed, blocked: [`${KEY} is modified`] });
+  const alert = await hookApprovalWatch("remote", dir, { versions: { vibe: "1.1.71", "vibe-core": "1.0.1" }, approval: modified.approval,
+    displayName: "Vibe Core (fixture market)", targetLabel: "Vibe Core (fixture market)" });
+  assert.ok(alert.line.endsWith(approveHooksStep("Vibe Core (fixture market)")), alert.line);
+  assert.ok(!alert.line.includes(UNREAD_PLUGIN_NAME), "no placeholder is left");
+});

@@ -83,3 +83,19 @@ test('the CLI refuses while a real slot holder runs, and passes once its launche
   assert.equal(ok.status, 0, ok.stdout + ok.stderr);
   assert.equal(ok.stdout, 'turn-end ok; handed light-1.lock to inventory\n');
 });
+
+test("every writer brief makes the turn end wait for the turn-end check, and a running step keeps it pending", async () => {
+  const { readFileSync } = await import("node:fs");
+  const template = readFileSync(new URL("../references/templates.md", import.meta.url), "utf8");
+  assert.match(template, /^Turn end: only when `node <turn-end-check\.mjs on this machine> <orchDir> <you> --worktree <path>` prints `turn-end ok`/m);
+  const { turnEndProblems } = await import("./turn-end-check.mjs");
+  const holder = { lock: "heavy-1", owner: "writer-a inventory", pid: 4242, cwd: "/wt/a" };
+  const running = turnEndProblems({ writer: "writer-a", worktree: "/wt/a", holders: [holder], jobs: [], watcher: { ok: true, line: "watcher ok" },
+    startOf: () => "Mon 1", parentOf: () => 1 });
+  assert.equal(running.ok, false);
+  assert.match(running.lines.at(-1), /turn-end REFUSED: wait for each running step/);
+  const handed = turnEndProblems({ writer: "writer-a", worktree: "/wt/a", holders: [holder], jobs: [{ name: "inventory", pid: 4242, identity: "Mon 1 node" }],
+    watcher: { ok: true, line: "watcher ok" }, startOf: () => "Mon 1", parentOf: () => 1 });
+  assert.equal(handed.ok, true);
+  assert.match(handed.lines[0], /handed heavy-1 to inventory/);
+});

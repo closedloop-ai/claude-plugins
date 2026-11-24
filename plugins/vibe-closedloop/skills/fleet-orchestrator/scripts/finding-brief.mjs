@@ -27,7 +27,7 @@ import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 const { readConfig, resolveWorkDir } = await vibeCore("lib/codex-fleet-monitor/scripts/work-dir.mjs");
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 // The disposition rule lives with the visual QA gate that enforces it (lib/vibe/scripts/required-visual-qa.mjs).
-const { dispositionProblems } = await vibeCore("lib/vibe/scripts/required-visual-qa.mjs");
+const { dispositionProblems, visualQaBodySection, readVisualQaFindings } = await vibeCore("lib/vibe/scripts/required-visual-qa.mjs");
 export { dispositionProblems };
 
 /** What is missing from each finding, or an empty list when every finding can be acted on. */
@@ -77,10 +77,16 @@ function remoteDir(orchDir) {
 function main(argv) {
   const [orchDir, ...rest] = argv;
   const { values } = parseArgs({ args: rest, options: {
-    findings: { type: "string" }, prompt: { type: "string" }, where: { type: "string" }, "require-disposition": { type: "boolean" },
+    findings: { type: "string" }, prompt: { type: "string" }, where: { type: "string" }, "require-disposition": { type: "boolean" }, "pr-body-section": { type: "boolean" },
   } });
-  if (!orchDir || !values.findings || (!values.prompt && !values["require-disposition"])) {
-    throw new Error("Usage: finding-brief.mjs <orchDir> --findings <findings.json> (--prompt <prompt .md> [--where local|remote] | --require-disposition)");
+  if (!orchDir || !values.findings || (!values.prompt && !values["require-disposition"] && !values["pr-body-section"])) {
+    throw new Error("Usage: finding-brief.mjs <orchDir> --findings <findings.json> (--prompt <prompt .md> [--where local|remote] | --require-disposition | --pr-body-section)");
+  }
+  if (values["pr-body-section"]) {
+    const { problems, record } = readVisualQaFindings(values.findings, undefined, null, undefined, { paths: [], renderSection: true });
+    if (problems.length) throw new Error(problems.join("\n"));
+    process.stdout.write(`${visualQaBodySection(record)}\n`);
+    return 0;
   }
   const { head, findings } = JSON.parse(readFileSync(values.findings, "utf8"));
   if (values["require-disposition"]) {

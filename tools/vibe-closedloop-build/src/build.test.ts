@@ -173,6 +173,21 @@ describe("assembly", () => {
       + " or `cache/<marketplace>/vibe/<version>/`; `my-vibe-generic@x`, `vibe-generic-x/`, `vibe-generic.md` and `/vibe-generic` stay.\n");
   });
 
+  it("keeps a replacement description inside its flow mapping", () => {
+    const paths = fixture({ "agents/a.md": "---\n{name: sample, description: Old}\n---\nBody.\n" }, {},
+      { descriptions: { "agents/a.md": "Build, then verify." } });
+    buildClosedLoopVibe(paths);
+    expect(readFileSync(join(paths.output, "agents/a.md"), "utf8")).toContain('{name: sample, description: "Build, then verify."}');
+  });
+
+  it("AC-082 replaces the YAML description scalar and preserves the rest of the skill", () => {
+    const before = "\uFEFF---\r\n'description': 'old' # retained\r\nname: a\r\n---\r\ndescription: body\r\n";
+    const paths = fixture({ "agents/a.md": before }, {}, { descriptions: { "agents/a.md": "value: with punctuation" } });
+    buildClosedLoopVibe(paths);
+    const built = readFileSync(join(paths.output, "agents/a.md"), "utf8");
+    expect(built).toBe(before.replace("'old'", '"value: with punctuation"'));
+  });
+
   it("writes the provider's manifest and frontmatter descriptions, its contract with the placement, and each placed file over the source's", () => {
     const paths = fixture({ "agents/a.md": "---\nname: a\ndescription: generic words\nmodel: x\n---\nBody.\n", "bin/run.sh": "#!/bin/sh\n",
       "skills/vibe/references/graph.md": "Generic graph text.\n" },
@@ -313,5 +328,18 @@ describe("the ClosedLoop vibe from this repository", () => {
     for (const file of ["skills/vibe/SKILL.md", "skills/vibe/references/closedloop-environment.md", ".codex-plugin/plugin.json", "provider/provider.json"]) {
       expect(builtText(file), file).toBe(readFileSync(join(dir, file), "utf8"));
     }
+  });
+});
+
+describe("AC-45 visual QA overflow source", () => {
+  it("AC-45 the built visual QA text cites ISS-8422 beside the absolute and sr-only descendant rule, and the generic text does not", () => {
+    const built = builtText("skills/vibe/references/quality-loop-visual-qa.md");
+    const rule = built.indexOf("trace absolute and sr-only descendants to their");
+    expect(rule).toBeGreaterThan(-1);
+    const cited = built.indexOf("cite ISS-8422 as the source in that finding.");
+    expect(cited).toBeGreaterThan(rule);
+    expect(built.slice(rule, cited)).not.toContain("\n## ");
+    const generic = readFileSync(join(REPO, "plugins/vibe/skills/vibe/references/quality-loop-visual-qa.md"), "utf8");
+    expect(generic).not.toContain("ISS-8422");
   });
 });

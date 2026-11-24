@@ -301,7 +301,7 @@ hardcode a personal name for the engineering attention contact.
    approval for the current plan, stop at the matching planning/blocker result.
 10. Only after the gate returns `GO`, or `GO_WITH_UI_PLAN_APPROVAL` and planning
    proceeds, mark each included non-terminal, non-currently-blocked feature
-   `IN_PROGRESS`. This status does not authorize branch creation, source
+   `IN_PROGRESS` via the [work-start project transition](../vibe/SKILL.md). This status does not authorize branch creation, source
    edits, PR work, or merge work. Confirm every included feature is
    `IN_PROGRESS` before returning a planning wait or starting execution.
 11. Check repo memory before choosing the approach. Re-check memory before
