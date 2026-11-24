@@ -17,6 +17,7 @@
 // no merge is in progress, a conflict lies outside the release files, or the
 // session did not bump its version (nothing it can settle mechanically).
 
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -82,7 +83,7 @@ function main(argv) {
   const outside = conflicted.filter((file) => file !== release.versionFile && !history.some((matches) => matches(file)));
   if (conflicted.length === 0 || outside.length) return refuse(`conflicts outside the Storybook release files: ${outside.join(", ") || "none"}`);
   const field = release.versionField ?? "version";
-  const stage = (number) => JSON.parse(git(worktree, ["show", `:${number}:${release.versionFile}`]))[field];
+  const stage = (number) => capturedJson(git(worktree, ["show", `:${number}:${release.versionFile}`]))[field];
   const [base, session, mainVersion] = [1, 2, 3].map(stage);
   const level = bumpLevel(base, session);
   if (!["major", "minor", "patch"].includes(level)) return refuse(`the session's version ${session} is not a bump of ${base}`);

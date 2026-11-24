@@ -1,3 +1,4 @@
+import { capturedJson } from "../../../plugins/vibe/lib/vibe/scripts/captured-json.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -157,7 +158,7 @@ export function loadPathPolicy(worktree: string, _phase: Phase, inventoryScript:
   if (result.error) throw result.error;
   output ||= String(result.stdout ?? "");
   let inventory: InventoryResult;
-  try { inventory = JSON.parse(output) as InventoryResult; }
+  try { inventory = capturedJson(output) as InventoryResult; }
   catch {
     const first = (value: string) => value.trim().split("\n").slice(0, 6).join(" | ") || "(empty)";
     const stdout = String(result.stdout ?? "");
@@ -177,7 +178,7 @@ export function loadPathPolicy(worktree: string, _phase: Phase, inventoryScript:
     throw new Error("handoff inventory did not return one validated root path policy and base commit");
   }
   const text = execFileSync("git", ["-C", worktree, "show", `${source.commit}:${file}`], { encoding: "utf8" });
-  return { inventory, policy: JSON.parse(text) as PathPolicy };
+  return { inventory, policy: capturedJson(text) as PathPolicy };
 }
 
 function plannedPath(value: string) {

@@ -69,11 +69,17 @@ it. Pick the route by `uname -s`:
   `pnpm vibe down` even when the walk fails. The evidence is the `--out`
   file (`ok`, `visited.web`, `visited.desktop`, `failures`).
 
-Either route keeps the walk's own timeouts and assertions: pass no flag or
-environment that changes them, and never edit the walk, its specs or its
-limits to make a run pass. A failing walk (`failures` listed) is a seed
-defect: fix the seed and run the walk again. Anything other than `"ok":true`
-with exit 0 is not a pass.
+Either route keeps the walk's own timeouts and assertions. Fix seed defects in the seed.
+When the walk contract disagrees with a retirement on current main, correct only
+its exact route entry or test. Write private Git metadata
+`vibe-seed-walk-proof.json` with `{main, route, source:{kind:"merged-pr",number}}`
+or `source:{kind:"feature-map"}`. Run
+`node ../skills/vibe-seed-refresh/scripts/seed-walk-guard.mjs --worktree <fix>`
+before rerunning. `CONTINUE` requires rerunning the full walk. Include its exact source
+URL, main SHA and route as `Walk source:` in the result. Return `NEEDS_PERSON`
+only when the guard lacks product authority. `BLOCKED` remains a refusal.
+Product files, FEATURE_MAP and wider contract changes are outside this work.
+Anything other than `"ok":true` with exit 0 is not a pass.
 
 A refused Mac run is `BLOCKED`, never a pass, and never worked around. When
 `pnpm vibe walk-linux` prints `{"ok":false,"error":...}` before walking
@@ -90,7 +96,7 @@ whose cleanup is not proven is also `BLOCKED`, with the summary's `down`,
 
 Read the failing check's log or the review thread, fix the cause in the
 worktree, and re-run the checks above that cover it, including the screen walk
-by the same route whenever the fix touches seed code. Never commit or push:
+by the same route whenever the fix touches seed code or the walk contract. Never commit or push:
 the orchestrator commits, then `vibe-seed-pr-worker` pushes and replies. For
 each human review comment you addressed, return its thread id and a one-line
 reply saying what changed.

@@ -12,12 +12,13 @@
 //
 // Usage: hook-approval.mjs <machine label> <state dir>
 
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { comparePluginVersions, isEntryPoint } from "../../../shared/plugin-roots.mjs";
 import { findCli, installedPlugins, OWN_PLUGIN } from "../../vibe/scripts/plugin-cli.mjs";
-import { codexHookApproval, FIRST_SPLIT_VIBE, HookApproval, hookApprovalLine } from "../../vibe/scripts/vibe-core-hooks.mjs";
+import { codexHookApproval, FIRST_SPLIT_VIBE, HookApproval, hookApprovalLine, UNREAD_PLUGIN_NAME } from "../../vibe/scripts/vibe-core-hooks.mjs";
 
 // Nothing here loads vibe-core, so a Codex host where it is missing still gets its line.
 const CODEX = "codex";
@@ -29,11 +30,22 @@ const NOT_SPLIT = "not-split";
 
 /** The installed Codex vibe and vibe-core versions from the Codex CLI `cli`, or null when it cannot list them. */
 export function codexVersions(cli) {
+  return codexHookInventory(cli)?.versions ?? null;
+}
+
+/** Resolve the hook entry from the target host's enabled installation, including staged watchers. */
+function codexHookInventory(cli) {
   try {
-    const plugins = installedPlugins(CODEX, execFileSync(cli, ["plugin", "list", "--json"],
+    const listing = capturedJson(execFileSync(cli, ["plugin", "list", "--json"],
       { encoding: "utf8", timeout: LIST_TIMEOUT_MS, stdio: ["ignore", "pipe", "ignore"] }));
+    const plugins = installedPlugins(CODEX, listing);
     const version = (name) => plugins.find((plugin) => plugin.name === name)?.version ?? null;
-    return { vibe: version(OWN_PLUGIN), "vibe-core": version("vibe-core") };
+    const core = plugins.find((plugin) => plugin.name === "vibe-core");
+    const root = listing.installed?.find((entry) => entry.pluginId === core?.id)?.source?.path;
+    const manifest = root ? readJson(path.join(root, ".codex-plugin", "plugin.json")) : null;
+    const displayName = manifest?.interface?.displayName;
+    return { versions: { vibe: version(OWN_PLUGIN), "vibe-core": version("vibe-core") },
+      displayName: typeof displayName === "string" && displayName.trim() ? displayName.trim() : core?.id };
   } catch {
     return null;
   }
@@ -46,7 +58,7 @@ export function codexVersions(cli) {
  * raises its alert). An App Server without hooks/list is final for that version: no App Server is started again.
  * Only a vibe whose hooks ship in vibe-core is asked about.
  */
-export async function hookApprovalWatch(machine, stateDir, { versions, approval }) {
+export async function hookApprovalWatch(machine, stateDir, { versions, approval, displayName }) {
   const file = path.join(stateDir, STATE_FILE);
   const saved = readJson(file);
   if (!versions) return { line: saved?.line ?? null, checked: false };
@@ -60,7 +72,7 @@ export async function hookApprovalWatch(machine, stateDir, { versions, approval 
     state = answer.state;
     final = answer.final === true;
     const text = hookApprovalLine(answer);
-    if (text) line = `HOOK-APPROVAL ${machine} vibe ${versions.vibe} vibe-core ${versions["vibe-core"] ?? "none"}: ${text}`;
+    if (text) line = `HOOK-APPROVAL ${machine} vibe ${versions.vibe} vibe-core ${versions["vibe-core"] ?? "none"}: ${displayName ? text.replace(UNREAD_PLUGIN_NAME, displayName) : text}`;
   }
   mkdirSync(stateDir, { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
@@ -80,8 +92,10 @@ function readJson(file) {
 async function main([machine, stateDir]) {
   if (!machine || !stateDir) throw new Error("Usage: hook-approval.mjs <machine label> <state dir>");
   const cli = findCli(CODEX);
+  const inventory = cli ? codexHookInventory(cli) : null;
   const { line } = await hookApprovalWatch(machine, stateDir, {
-    versions: cli ? codexVersions(cli) : null,
+    versions: inventory?.versions ?? null,
+    displayName: inventory?.displayName,
     approval: () => codexHookApproval(cli, process.cwd()),
   });
   if (line) process.stdout.write(`${line}\n`);
