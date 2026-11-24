@@ -16,6 +16,9 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { fileURLToPath } from "node:url";
+import { measuredSetupTools } from "./cloud-validation-environment.mjs";
 import { parseConfig } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { defaultHome } from "../../fleet-orchestrator/scripts/fleet-home.mjs";
 
@@ -32,6 +35,8 @@ export const CloudSetupError = Object.freeze({
   ApiError: "CLOUD_API_ERROR",
   ResultTooLarge: "CLOUD_RESULT_TOO_LARGE",
 });
+
+import { checkEnvironmentPin, REPIN_CLAUDE_ENV } from "./cloud-account-pin.mjs";
 
 const ENV_ID = /^env_[A-Za-z0-9]+$/;
 const REFUSED = new Set([401, 403]);
@@ -77,6 +82,9 @@ function statusOf(error) {
  */
 export function createRefusal(error, environment, remote) {
   if (error?.code === CloudSetupError.GitHubTokenMissing) return error;
+  if (error?.apiCode === "environment_not_found") {
+    return cloudSetupError(CloudSetupError.EnvUnknown, `The routine API refused this Claude environment (HTTP ${statusOf(error)} environment_not_found). ${REPIN_CLAUDE_ENV}`);
+  }
   const status = statusOf(error);
   if (status === 404 || (REFUSED.has(status) && accountAnswers(remote))) {
     return cloudSetupError(CloudSetupError.EnvUnknown, `RemoteTrigger create was refused (HTTP ${status}) for Claude environment ${environment.id} (${environment.source}) while this account's routine list answers, so the id is not one this account can use. Fix: ${SET_IT}.`);
@@ -160,7 +168,7 @@ function environmentSetupCheck(routine) {
  * (`standing`, from the routine ledger) runs in; `pending` is the routine-removal line when routines vibe
  * created are still recorded for removal.
  */
-export function checkCloudSetup(request, { remote, env = process.env, standing = null, pending = null, ledgerProblem = null, githubTokenMissingAt = null } = {}) {
+export function checkCloudSetup(request, { remote, env = process.env, home = os.homedir(), standing = null, pending = null, ledgerProblem = null, githubTokenMissingAt = null, account, environmentPin = null } = {}) {
   const checks = [];
   let environment = null;
   try {
@@ -169,6 +177,10 @@ export function checkCloudSetup(request, { remote, env = process.env, standing =
   } catch (error) {
     checks.push({ check: "environment", ok: false, code: error.code, detail: error.message });
   }
+  const accountProblem = account === undefined ? null
+    : account.error ?? (environment ? checkEnvironmentPin(environment, environmentPin, account.uuid) : null);
+  if (accountProblem) checks.push({ check: "account-pin", ok: false, code: accountProblem.code, detail: accountProblem.message });
+  else if (account !== undefined && environmentPin) checks.push({ check: "account-pin", ok: true, detail: "the exact environment and current account match the recorded pin" });
   let routines = null;
   const refusedAt = typeof githubTokenMissingAt === "string" && Number.isFinite(Date.parse(githubTokenMissingAt))
     ? new Date(githubTokenMissingAt).toISOString() : null;
@@ -176,15 +188,16 @@ export function checkCloudSetup(request, { remote, env = process.env, standing =
   try {
     // An unreadable ledger is its own failure, never "nothing recorded".
     if (ledgerProblem) checks.push({ check: "ledger", ok: false, detail: ledgerProblem });
-    const recorded = standing?.id ? standingRoutine(remote, standing) : null;
-    if (ledgerProblem) { /* the routine on record is unknown */ } else if (!standing?.id) {
+    const recorded = !accountProblem && standing?.id ? standingRoutine(remote, standing) : null;
+    if (ledgerProblem || accountProblem || (account !== undefined && !environment)) { /* keep the local refusal */ } else if (!standing?.id && account === undefined) {
       checks.push({ check: "api", ok: null, detail: NOTHING_RECORDED });
-    } else if (recorded) {
+    } else if (recorded && (account === undefined || recorded.job_config?.ccr?.environment_id === environment?.id)) {
       routines = [recorded];
       checks.push({ check: "api", ok: true, detail: `the routine API answers for this account (routine ${standing.id})` });
       checks.push(environmentSetupCheck(recorded));
     } else {
       routines = remote("list", {})?.data ?? [];
+      if (recorded && !routines.some((routine) => routine.id === recorded.id)) routines = [...routines, recorded];
       checks.push({ check: "api", ok: true, detail: `the routine API answers for this account (${routines.length} routines)` });
     }
   } catch (error) {
@@ -198,11 +211,22 @@ export function checkCloudSetup(request, { remote, env = process.env, standing =
     const owner = routines.find((routine) => routine?.job_config?.ccr?.environment_id === environment.id);
     checks.push(owner
       ? { check: "environment-use", ok: true, detail: `routine ${owner.id} on this account runs in ${environment.id}` }
-      : { check: "environment-use", ok: null, detail: `no routine on this account uses ${environment.id} yet, so it is unverified until the first dispatch, which names CLOUD_ENV_UNKNOWN if it is not this account's${used.length ? `; this account's routines use ${used.join(", ")}` : ""}` });
+      : account !== undefined && used.length > 0
+        ? { check: "environment-use", ok: false, code: CloudSetupError.EnvUnknown,
+          detail: `No routine on this account uses the pinned environment. Other environments are in use. ${REPIN_CLAUDE_ENV}` }
+        : { check: "environment-use", ok: null, detail: `no routine on this account uses ${environment.id} yet${used.length ? `; this account's routines use ${used.join(", ")}` : ""}` });
   }
   checks.push(githubRefused ? { check: "github", ok: false, code: CloudSetupError.GitHubTokenMissing,
     detail: `The routine API reported github_token_missing${refusedAt ? ` on ${refusedAt}` : ""}. ${CONNECT_GITHUB}` }
     : { check: "github", ok: null, detail: "No GitHub connection refusal is recorded. This read-only check does not create a task to test repository access." });
+  const ownsEnvironment = checks.some((row) => row.check === "environment-use" && row.ok === true);
+  const observed = ownsEnvironment && !accountProblem && account?.uuid && environment
+    ? measuredSetupTools(home, environmentPin, account.uuid, environment.id) : null;
+  const missing = ["zsh", "uv", "python313", "node24", "pnpm", "chromium1254"].filter((key) => observed?.[key] !== true);
+  const template = fileURLToPath(new URL("../../../skills/fleet-orchestrator/templates/cloud-env-setup.sh", import.meta.url));
+  checks.push(missing.length ? { check: "lane-tools", ok: false, code: "CLOUD_SETUP_UNVERIFIED",
+    detail: `Missing current account/environment measurements for ${missing.join(", ")}. At https://claude.ai/code open the environment selector, select the cloud environment's settings (or New environment), paste ${template} into Setup script and save. Set CLOUD_CLAUDE_ENV=<that environment ID> in ${path.join(defaultHome(env), "config.env")}. Re-pin with cloud-worker.mjs pin, run the cloud-capabilities lane on a pushed tooling head, then run check.` }
+    : { check: "lane-tools", ok: true, detail: "A current measured run on this account and environment verified zsh, uv, Python 3.13, Node 24, pnpm and Chromium headless shell 1254." });
   if (pending) checks.push({ check: "routine-removal", ok: null, detail: pending });
   return { ok: checks.every((entry) => entry.ok !== false), environment, checks };
 }

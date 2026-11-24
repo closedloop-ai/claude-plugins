@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 import { CloudRepoError, installInstruction, installScript, PROVENANCE_COMMAND, resolveRepository } from './cloud-repository.mjs';
+import {machineTestReport} from "./cloud-outcome-test-fixture.mjs";
 import { githubRepository } from './github-remote.mjs';
 import { LANE_DISCIPLINE, parseValidationResult, startCodex, validateCommit, validateRequest, validateValidationRequest, validationBrief } from './cloud-worker.mjs';
 import { git, makeHome } from '../../../../vibe/skills/vibe/scripts/test-fixtures.mjs';
@@ -29,15 +30,16 @@ function checkout(t, origin) {
 const validation = (worktree, fields = {}) => ({ worktree, provider: 'claude', model: 'claude-sonnet-5-5', branch: 'main', commit: COMMIT, lanes: [{ ...LANE }], pollMs: 1000, claudeEnvironment: 'env_01TestRequest', ...fields });
 
 /** A RemoteTrigger stand-in whose idle run reports one passing lane. */
-function fakeRemote() {
+function fakeRemote(request) {
   const calls = [];
   const report = `VIBE_VALIDATION_RESULT ${JSON.stringify({ commit: COMMIT, provenance: { host: 'vm', remote: 'true', origin: 'https://github.com/acme/LocalFork', commit: COMMIT }, lanes: [{ name: LANE.name, exitCode: 0 }], status: [] })}`;
+  const output = request ? machineTestReport(request,[0],"acme/LocalFork") : report;
   const remote = (action, payload) => {
     calls.push({ action, payload });
     if (action === 'create' || action === 'update') return { trigger: { id: 'routine_r', mcp_connections: [] } };
     if (action === 'run') return { run_id: 'run_r', session_id: 'session_r' };
     if (action === 'list_runs') return { data: [{ id: 'run_r', status: 'active', worker_status: 'idle', session_id: 'session_r' }] };
-    if (action === 'get_run_log') return { log: `[t] assistant: Done. ${report}` };
+    if (action === 'get_run_log') return { log: `[t] assistant: Done. ${output}` };
     throw new Error(`unexpected ${action}`);
   };
   return { calls, remote };
@@ -72,7 +74,7 @@ test('a repository outside ClosedLoop validates from an SSH or HTTPS origin, wit
     const request = validation(worktree);
     assert.equal(request.ticket, undefined);
     assert.doesNotThrow(() => validateValidationRequest(request));
-    const { calls, remote } = fakeRemote();
+    const { calls, remote } = fakeRemote(request);
     const result = await validateCommit(request, { remote, sleep: async () => {}, home: path.join(path.dirname(worktree), 'home') });
     assert.deepEqual(calls[0].payload.body.job_config.ccr.session_context.sources, [{ git_repository: { url: 'https://github.com/acme/LocalFork' } }], origin);
     // The standing routine receives each run's brief through its update (ISS-13998, operator ruling q1).

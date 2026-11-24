@@ -32,6 +32,10 @@ its last step (step 9) through `vibe-environment-worker` in `pull-request`
 mode, and the person gets its link, never a branch to merge.
 <!-- end: requested-pull-request -->
 
+Verified main failures carry `mainSha`, `failures` and `mainFailures`.
+Use the stable lane name in the PR body. A follow-up host or touch run can
+record `not-run` with the last proven published head and recomputed unaffected scope.
+
 <!-- block: step-9-pull-request -->
 For a requested pull request, after step 8 is `DONE`, capture the final
 launcher result for each mandatory read-only review role with
@@ -64,6 +68,9 @@ then records a private witness bound to the source. A later source change
 invalidates it; finish the affected handoff steps and rerun this gate. The
 PreToolUse guard refuses `gh pr create` without a current witness; its refusal
 names each way forward, including the gate-bug exception.
+
+Handoff's `prepare-main-sync` runs in the environment worker's exclusive
+`redeploy` record action.
 
 Then dispatch
 `vibe-environment-worker` in `pull-request` mode (its own `pull-request`

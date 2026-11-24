@@ -24,6 +24,7 @@
 // worktree's HEAD, or any entry in `checks_skipped` means those checks were
 // NOT checked, never that they were clean: the decision is `full-fleet`.
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { isLocalPlanPath, sessionLocalPlanPrefix } from "../../vibe/scripts/local-plans.mjs";
@@ -146,7 +147,7 @@ export function measureDiff(worktree, base, sharedPrefixes) {
 }
 
 function untracked(worktree) {
-  return git(worktree, ["ls-files", "--others", "--exclude-standard"]).split("\n").filter(Boolean).map((file) => `1\t0\t${file}`);
+  return readGitInventory(worktree, ["ls-files", "--others", "--exclude-standard"]).trim().split("\n").filter(Boolean).map((file) => `1\t0\t${file}`);
 }
 
 export const TriageStatus = { Absent: "absent", Invalid: "invalid", Valid: "valid" };

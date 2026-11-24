@@ -6,7 +6,8 @@ import type { Stats } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildLocalEvalReport, codexCaseId, collectClaudeEval, collectCodexEval,
-  finalizeLocalEval } from "./eval-collector.ts";
+  finalizeLocalEval, stableEvalFailureReason } from "./eval-collector.ts";
+import { isClaudeNativeFailure, retainedClaudeFailureEvidenceLine } from "./eval-nightly-diagnostics.ts";
 import type { EvalRuntimeRecord, EvalSuiteResult, ExpectedEvalPlugin,
   LocalEvalResult } from "./eval-collector.ts";
 import { EVAL_POLICY, requireDeveloperMachine } from "./eval-policy.ts";
@@ -56,6 +57,8 @@ export interface LocalEvalOptions {
   statefulTargetRef?: string;
   /** Told what became of the Claude process's kept sandboxes, also when the run then throws. */
   onClaudeKeptFolders?: (kept: ClaudeKeptFolders) => void;
+  /** Log the retained pair for a rejected native result before the nightly can fail. */
+  onClaudeFailureEvidence?: (line: string) => void;
 }
 
 /** Process boundary injected by tests so no model command is launched there. */
@@ -129,11 +132,6 @@ function nativeObject(value: unknown, reason: string): Record<string, unknown> {
 function nativeArray(value: unknown, reason: string): unknown[] {
   if (!Array.isArray(value)) throw new Error(reason);
   return value;
-}
-
-function stableReason(error: unknown, runtime: "claude" | "codex"): string {
-  const message = error instanceof Error ? error.message : "";
-  return /^eval-[a-z0-9:-]+$/.test(message) ? message : `eval-${runtime}-artifact-invalid`;
 }
 
 function manifestVersion(pluginDir: string): string {
@@ -613,7 +611,7 @@ function record(runtime: "claude" | "codex", exitCode: number,
     }
     return { runtime, exitCode, result, invalidReason: null };
   } catch (error) {
-    return { runtime, exitCode, result: null, invalidReason: stableReason(error, runtime) };
+    return { runtime, exitCode, result: null, invalidReason: stableEvalFailureReason(error, runtime) };
   }
 }
 
@@ -758,6 +756,8 @@ export async function runLocalEvals(options: LocalEvalOptions,
         return collectClaudeEval(claudeNative, partition.ordinary, expected);
       });
       if (nativeRecord.invalidReason || !nativeRecord.result) {
+        const line = isClaudeNativeFailure(nativeRecord.invalidReason ?? "") && retainedClaudeFailureEvidenceLine(options.runRoot);
+        if (line) options.onClaudeFailureEvidence?.(line);
         ordinaryRecords.push(nativeRecord);
       } else {
         try {
@@ -778,7 +778,7 @@ export async function runLocalEvals(options: LocalEvalOptions,
           }
         } catch (error) {
           ordinaryRecords.push({ runtime: "claude", exitCode: claudeProcess.status, result: null,
-            invalidReason: stableReason(error, "claude") });
+            invalidReason: stableEvalFailureReason(error, "claude") });
         }
       }
     }
@@ -1125,7 +1125,7 @@ writeOutput: (text: string) => unknown = (text) => process.stdout.write(text)): 
   const results: LocalEvalResult[] = [];
   // Each run reports its kept sandboxes here, so a run that throws is still counted.
   const keptByRun: ClaudeKeptFolders[] = [];
-  const runInput = { ...input,
+  const runInput = { ...input, onClaudeFailureEvidence: (line: string) => writeOutput(`${line}\n`),
     onClaudeKeptFolders: (kept: ClaudeKeptFolders) => { keptByRun.push(kept); } };
   let claudeKeptFolders: ClaudeKeptFolders = sumClaudeKeptFolders([]);
   try {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { alive, fixture, HAS_MAC_BASH32, pinMacBash, remoteConfig, startFleet, TIMEOUT, waitFor } from './fleet-test-support.mjs';
 import { bindProvider } from '../../vibe/scripts/test-fixtures.mjs';
@@ -9,7 +10,7 @@ import { bindProvider } from '../../vibe/scripts/test-fixtures.mjs';
 /** A fleet fixture whose node runs capture-guard.mjs for real, with a capture worktree cloned from a bare origin. */
 function captureFixture() {
   const f = fixture();
-  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs|*capture-guard.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *e2e-lock.mjs) [ "$2" = intent ] && exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
+  writeFileSync(join(f.root, 'bin', 'node'), `#!/usr/bin/env bash\ncase "$1" in *ship-plugins.mjs|*work-dir.mjs|*skill-freshness.mjs|*owned-state.mjs|*fleet-remote-evidence.mjs|*capture-guard.mjs|*capture-command.mjs) exec ${JSON.stringify(process.execPath)} "$@";; *e2e-lock.mjs) [[ "$2" == intent || "$2" == stack-intent ]] && exec ${JSON.stringify(process.execPath)} "$@"; if [ "$2" = run ]; then echo "fixture-stack-acquired $*"; while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done; [ "$#" -gt 1 ] || exit 64; shift; exec "$@"; fi;; esac\nprintf "arg:%s\\n" "$@"\n`);
   chmodSync(join(f.root, 'bin', 'node'), 0o755);
   const git = (cwd, ...args) => {
     const result = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
@@ -251,4 +252,60 @@ test('--capture and --containerized-e2e-build are accepted in either order', TIM
     assert.ok(f.argv(result).some((arg) => arg.endsWith('e2e-lock.mjs')), `${args.join(' ')}: the disk preflight ran`);
     assert.deepEqual(f.entries().map((entry) => [entry.status, entry.main]), [['ok', true]], `${args.join(' ')}: the guard admitted and recorded it`);
   }
+});
+
+test("capture preserves a single explicit machine lease around its actual payload", TIMEOUT, () => {
+  const f = captureFixture();
+  const lock = fileURLToPath(new URL("../../vibe/scripts/", import.meta.url)) + "./e2e-lock.mjs";
+  const ran = join(f.wt, "captured-once");
+  const result = f.run(["local", "slot", "heavy", "guide", f.wt, "--capture", f.spec({}), "--containerized-e2e-build",
+    "node", lock, "run", "--owner", "guide", "--", "touch", ran]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.match(/fixture-stack-acquired/g)?.length, 1);
+  assert.ok(existsSync(ran));
+});
+
+test("fleet routes the committed pnpm container entry through one shared lease", TIMEOUT, () => {
+  const f = captureFixture();
+  writeFileSync(join(f.wt,"package.json"), JSON.stringify({scripts:{"e2e:containerized":"bash e2e/run-containerized.sh"}}));
+  assert.equal(spawnSync("git", ["add","package.json"], {cwd:f.wt}).status,0);
+  assert.equal(spawnSync("git", ["-c","user.name=test","-c","user.email=fixture.invalid","commit","-qm","fixture"], {cwd:f.wt}).status,0);
+  const fake = join(f.root, "bin", "pnpm");
+  writeFileSync(fake, "#!/bin/sh\necho fixture-pnpm-payload\n", {mode:0o755});
+  const result = f.run(["local","slot","heavy","guide",f.wt,"--capture",f.spec({}),"pnpm","--workspace-root","run","e2e:containerized","--","--list"]);
+  assert.equal(result.status,0,result.stderr);
+  assert.equal(result.stdout.match(/fixture-stack-acquired/g)?.length,1,result.stdout);
+  assert.match(result.stdout,/--ticket ISS-1 --/);
+  assert.match(result.stdout,/fixture-pnpm-payload/);
+});
+
+test("ordinary fleet slot refuses a provider stack harness when the machine holder is active", TIMEOUT, async t=>{
+  const {mkdirSync,rmSync}=await import("node:fs");
+  const f=captureFixture();t.after(()=>rmSync(f.root,{recursive:true,force:true}));
+  const slot=join(f.root,"occupied"),marker=join(f.wt,"payload-ran");
+  mkdirSync(slot);writeFileSync(join(slot,"owner"),"fixture-machine-holder");
+  mkdirSync(join(f.wt,"e2e"));
+  const runner="e2e/run-desktop-sync-harness.sh";
+  writeFileSync(join(f.wt,runner),"#!/bin/sh\ntouch payload-ran\n",{mode:0o755});
+  const entry=new URL("../../../../vibe-closedloop/lib/vibe/scripts/e2e-lock.mjs",import.meta.url).href;
+  const adapter=join(f.root,"slot-fixture.mjs");
+  writeFileSync(adapter,`import {e2eLockCli} from ${JSON.stringify(entry)};const [action,...args]=process.argv.slice(2);await e2eLockCli(action==="run"?[action,"--wait-seconds","0",...args]:[action,...args],${JSON.stringify(slot)});`);
+  const node=join(f.root,"bin","node");
+  writeFileSync(node,readFileSync(node,"utf8").replace("case \"$1\" in",`if [[ "$1" == *e2e-lock.mjs ]]; then shift; exec ${JSON.stringify(process.execPath)} ${JSON.stringify(adapter)} "$@"; fi\ncase "$1" in`));
+  const result=f.run(["local","slot","heavy","guide",f.wt,"--stack-ticket","QA-42",runner]);
+  assert.notEqual(result.status,0);
+  assert.match(result.stdout+result.stderr,/fixture-machine-holder/);
+  assert.equal(existsSync(marker),false);
+  const pnpm=join(f.root,"bin","pnpm");
+  writeFileSync(pnpm,"#!/bin/sh\ntouch payload-ran\n",{mode:0o755});
+  const control=(mode,explicit=false)=>f.run(["local","slot","heavy","guide",f.wt,"--stack-ticket","QA-42","pnpm",...(explicit?["run"]:[]),"control","up","web","--stack",mode]);
+  const explicit=control("compose",true);
+  assert.notEqual(explicit.status,0);
+  assert.match(explicit.stdout+explicit.stderr,/fixture-machine-holder/);
+  const compose=control("compose");
+  assert.notEqual(compose.status,0);
+  assert.match(compose.stdout+compose.stderr,/fixture-machine-holder/);
+  assert.equal(existsSync(marker),false);
+  assert.equal(control("host").status,0);
+  assert.equal(existsSync(marker),true);
 });

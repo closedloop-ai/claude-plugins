@@ -18,6 +18,7 @@ function setup(t, files = {}) {
   t.after(fixture.cleanup);
   const checkout = path.join(fixture.home, "checkout with spaces");
   makeCheckout({ ...fixture, checkout, files: {
+    ".claude/skills/prototype/SKILL.md": "# Prototype fixture\n",
     "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY, ...files } });
   const created = runNode(SESSIONS, ["new-prototype", "--repo", checkout,
     "--slug", "board-mockup", "--summary", "Board mockup", ...OPERATOR], fixture.home);
@@ -44,7 +45,7 @@ function write(fixture, file) {
 
 test("owned mockups create and resume without app data, flags, or fabricated URLs", (t) => {
   const fixture = setup(t);
-  assert.equal(fixture.record.branch, "prototype/board-mockup");
+  assert.equal(fixture.record.branch, "vibe/board-mockup");
   assert.equal(fixture.record.mode, null);
   assert.equal(fixture.record.vercel, null);
   assert.equal(fixture.record.flagSnapshot, null);

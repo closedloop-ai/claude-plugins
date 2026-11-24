@@ -1,3 +1,4 @@
+import { capturedJson } from "../../../plugins/vibe/lib/vibe/scripts/captured-json.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
@@ -59,7 +60,7 @@ export function verifyGeneratedBiomeInput(root: string, headSha: string) {
       timeout: 10000, maxBuffer: 1024 * 1024,
     });
     if (result.error || result.status !== 0) throw new MainSyncError("Read-only canonical generated-input probe failed; no source check or publication permitted", "NEEDS_CHANGE");
-    const proof = probeSchema.parse(JSON.parse(result.stdout));
+    const proof = probeSchema.parse(capturedJson(result.stdout));
     if (proof.path !== join(root, GENERATED_BIOME_PATH) || proof.bytes !== artifact.length || proof.sha256 !== sha256(artifact)) {
       throw new MainSyncError("Generated Biome input differs from the exact committed-config derivative; preserve the artifact", "NEEDS_CHANGE");
     }

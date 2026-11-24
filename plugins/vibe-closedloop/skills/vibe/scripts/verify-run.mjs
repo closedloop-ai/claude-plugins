@@ -49,6 +49,7 @@
 // Exits 0 only when `ok`. Prints the evidence; with --out writes it too (by
 // default `<gitdir>/vibe-verify-evidence.json`).
 
+import { containerizedIntent } from "../../../lib/vibe/scripts/docker-disk-admission.mjs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -260,9 +261,9 @@ export function createVerifyRun({
     return { entries };
   }
 
-  function laneCommand(entry, { locked }) {
+  function laneCommand(entry) {
     const inner = [process.execPath, PRE_PR_LANES, "run", "--worktree", entry.worktree, "--head", entry.head, "--command", entry.lane, "--report", entry.reportFile];
-    return locked && entry.schedule.e2e ? [process.execPath, [E2E_LOCK, "run", "--head", entry.head, ...inner]] : [inner[0], inner.slice(1)];
+    return entry.schedule.e2e && !containerizedIntent("sh", ["-c", entry.lane]) ? [process.execPath, [E2E_LOCK, "run", "--head", entry.head, ...inner]] : [inner[0], inner.slice(1)];
   }
 
   /** The record for a lane that ran, and the cache entry for a pass. */
@@ -277,7 +278,7 @@ export function createVerifyRun({
     if (plan.done) return plan.done;
     return plan.entries.map((entry) => {
       if (entry.record) return entry.record;
-      const [command, args] = laneCommand(entry, { locked: false });
+      const [command, args] = laneCommand(entry);
       const record = laneRecord(entry, bounded(TIME_LIMITS.lane, command, args, entry.worktree), context.cache);
       onProgress({ stage: "lane", name: entry.name, status: record.status });
       return record;
@@ -296,7 +297,7 @@ export function createVerifyRun({
     const results = await runScheduled(toRun.map((entry) => ({ entry, serial: entry.schedule.kind === LaneKind.Serial })), {
       size,
       run: ({ entry }) => {
-        const [command, args] = laneCommand(entry, { locked: true });
+        const [command, args] = laneCommand(entry);
         return boundedAsync(TIME_LIMITS.lane, command, args, entry.worktree).then((result) => {
           onProgress({ stage: "lane", name: entry.name, exitCode: result.status });
           return result;

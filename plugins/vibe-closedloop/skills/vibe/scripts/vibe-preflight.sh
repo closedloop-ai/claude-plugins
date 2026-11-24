@@ -100,12 +100,13 @@ if [[ "$RUNTIME" == "codex" ]] && have node; then
     process.stdout.write(pluginMarketplace(pluginInstall(process.argv[1])));
   ' "$SCRIPT_DIR/../../../shared/plugin-roots.mjs")"
   for required in closedloop-core vibe-core; do
-    if printf '%s' "$plugins_json" | node -e '
+    if printf '%s' "$plugins_json" | node --input-type=module -e '
+        const { capturedJson } = await import(process.argv[3]);
         let input = "";
         process.stdin.on("data", chunk => { input += chunk; });
         process.stdin.on("end", () => {
           try {
-            const result = JSON.parse(input);
+            const result = capturedJson(input);
             const enabled = Array.isArray(result.installed) && result.installed.some(
               plugin => plugin.pluginId === `${process.argv[1]}@${process.argv[2]}` &&
                 plugin.installed === true && plugin.enabled === true
@@ -113,7 +114,7 @@ if [[ "$RUNTIME" == "codex" ]] && have node; then
             process.exit(enabled ? 0 : 1);
           } catch { process.exit(1); }
         });
-      ' "$required" "$marketplace"; then
+      ' "$required" "$marketplace" "$SCRIPT_DIR/../../../lib/vibe/scripts/captured-json.mjs"; then
       emit "$required" true "$required is installed and enabled" ''
     else
       emit "$required" false "$required is not installed and enabled" "$(printf '%q plugin add %s@%s' "$codex_executable" "$required" "$marketplace")"
@@ -201,16 +202,17 @@ REPO_FLAG_REMOTES=()
 if have node; then
   provider_data memory repository
   if [[ -n "$REPLY" ]]; then
-    repository_lines="$(printf '%s' "$REPLY" | node -e '
+    repository_lines="$(printf '%s' "$REPLY" | node --input-type=module -e '
+      const { capturedJson } = await import(process.argv[1]);
       let s = "";
       process.stdin.on("data", c => s += c).on("end", () => {
         try {
-          const r = JSON.parse(s);
+          const r = capturedJson(s);
           const text = (value) => typeof value === "string" && !value.includes("\n") ? value : "";
           const remotes = Array.isArray(r.repoFlagRemotes) ? r.repoFlagRemotes.map(text).filter(Boolean) : [];
           process.stdout.write([text(r.remote), text(r.repoFlagRefusal), ...remotes].join("\n") + "\n");
         } catch {}
-      });' 2>/dev/null)"
+      });' "$SCRIPT_DIR/../../../lib/vibe/scripts/captured-json.mjs" 2>/dev/null)"
     line_number=0
     while IFS= read -r line; do
       line_number=$((line_number + 1))
@@ -247,9 +249,7 @@ main_checkout_of() {
 # refuses writes under ~/.codex, and the line asks for an escalated rerun.
 remember_repo() {
   local error
-  if error="$({ mkdir -p "$CONFIG_DIR" &&
-    printf '{\n  "repo": "%s"\n}\n' "$(json_escape "$1")" >"$CONFIG_FILE.tmp" &&
-    mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"; } 2>&1)"; then
+  if error="$(node "$SCRIPT_DIR/ticket-project.mjs" remember-repo --repo "$1" 2>&1)"; then
     return 0
   fi
   if [[ "${CODEX_SANDBOX_NETWORK_DISABLED:-}" == "1" ]]; then
@@ -545,13 +545,14 @@ fi
 # load. The worker launcher also catches a sign-in that expired since.
 if [[ "$RUNTIME" == "claude" ]] && have claude; then
   claude_status="$(cd "$HOME" && claude auth status --json 2>/dev/null </dev/null)"
-  if printf '%s' "$claude_status" | node -e '
+  if printf '%s' "$claude_status" | node --input-type=module -e '
+      const { capturedJson } = await import(process.argv[1]);
       let input = "";
       process.stdin.on("data", chunk => { input += chunk; });
       process.stdin.on("end", () => {
-        try { process.exit(JSON.parse(input).loggedIn === false ? 1 : 0); } catch { process.exit(0); }
+        try { process.exit(capturedJson(input).loggedIn === true ? 0 : 1); } catch { process.exit(1); }
       });
-    ' 2>/dev/null; then
+    ' "$SCRIPT_DIR/../../../lib/vibe/scripts/captured-json.mjs" 2>/dev/null; then
     emit claude-login true "signed in" ""
   else
     emit claude-login false "the claude command on this Mac is signed out" "claude-auth-login"
@@ -568,7 +569,7 @@ elif [[ -n "$repo" ]]; then
     if [[ -d "$repo/node_modules" ]]; then
       emit repo-bootstrap true "node_modules present" ""
     else
-      bootstrap_fix="$(printf '%s' "$bootstrap" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).fix??"")}catch{}})' 2>/dev/null)"
+      bootstrap_fix="$(printf '%s' "$bootstrap" | node --input-type=module -e 'const { capturedJson }=await import(process.argv[1]);let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(capturedJson(s).fix??"")}catch{}})' "$SCRIPT_DIR/../../../lib/vibe/scripts/captured-json.mjs" 2>/dev/null)"
       emit repo-bootstrap false "dependencies not installed" "${bootstrap_fix:-install-dependencies}"
     fi
   fi

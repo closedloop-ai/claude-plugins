@@ -17,9 +17,10 @@
 // the build only when the command built (no `--no-build`). Both exit 0
 // otherwise. A record is `<records dir>/<project>.json`.
 
+import { certifiesComposeImages, changesComposeImages, explicitComposeProject } from "./docker-disk-admission.mjs";
 import { withStableSource } from "./tested-head.mjs";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { escalation, isSandboxRefusal } from "./sandbox-refusal.mjs";
 import os from "node:os";
 import path from "node:path";
@@ -49,7 +50,7 @@ export function imageProblem({ project, worktree, head, source, command, records
   let built;
   try { built = JSON.parse(readFileSync(imageRecordFile(project, records), "utf8")); }
   catch { built = null; }
-  if (!built?.head) return `STALE-IMAGES no recorded build for compose project ${project}: drop --no-build so this run builds from ${head.slice(0, 12)}`;
+  if (!built?.head || built.schema !== "vibe.e2e-image-witness/4") return `STALE-IMAGES no recorded build for compose project ${project}: drop --no-build so this run builds from ${head.slice(0, 12)}`;
   if (!built.head.startsWith(head.toLowerCase())) {
     return `STALE-IMAGES ${project}'s images were built from ${built.head.slice(0, 12)}, not ${head.slice(0, 12)}: drop --no-build and build fresh`;
   }
@@ -58,12 +59,21 @@ export function imageProblem({ project, worktree, head, source, command, records
   return null;
 }
 
+/** Retire the previous witness before a build can overwrite its project's image tags. */
+export function invalidateImages({ project, command, argv, records }) {
+  if (!(argv ? changesComposeImages(argv[0], argv.slice(1)) : changesComposeImages("sh", ["-c",command]))) return;
+  try { unlinkSync(imageRecordFile(project, records)); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+}
+
 /** Records that `command` built `project`'s images from `head` in `worktree`; a reusing command records nothing. */
-export function recordImages({ project, worktree, head, source, command, records }) {
-  if (reusesImages(command)) return false;
+export function recordImages({ project, worktree, cwd = worktree, head, source, command, argv, records }) {
+  const [binary,...args] = argv ?? ["sh","-c",command];
+  const explicitProject = explicitComposeProject(binary,args,project);
+  if ((explicitProject && explicitProject !== project) || !certifiesComposeImages(binary,args,worktree,cwd)) return false;
   const file = imageRecordFile(project, records);
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(`${file}.tmp`, `${JSON.stringify({ head, source, worktree, builtAt: new Date().toISOString() })}\n`, { mode: 0o600 });
+  writeFileSync(`${file}.tmp`, `${JSON.stringify({ schema:"vibe.e2e-image-witness/4", head, source, worktree, builtAt: new Date().toISOString() })}\n`, { mode: 0o600 });
   renameSync(`${file}.tmp`, file);
   return true;
 }
@@ -77,17 +87,17 @@ function parse(argv) {
     index += 2;
   }
   if (rest[index] === "--") index += 1;
-  return { action, values, command: rest.slice(index).join(" ") };
+  return { action, values, argv:rest.slice(index), command: rest.slice(index).join(" ") };
 }
 
 function main(argv) {
-  const { action, values, command } = parse(argv);
+  const { action, values, command, argv:commandArgs } = parse(argv);
   if (!["check", "record"].includes(action) || !values.project || !values.worktree || !SHA.test(values.head ?? "") || !command) {
     process.stderr.write("Usage: image-head.mjs check|record --project <p> --worktree <path> --head <sha> -- <command...>\n");
     return 2;
   }
   const operation = source => {
-    const input = { project: values.project, worktree: values.worktree, head: values.head, source, command, records: values.records };
+    const input = { project: values.project, worktree: values.worktree, head: values.head, source, command, argv:commandArgs, records: values.records };
     if (action === "record") {
       try { recordImages(input); }
       catch (error) {

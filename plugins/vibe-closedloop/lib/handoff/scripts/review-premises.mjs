@@ -20,10 +20,10 @@ export function premiseProblems(finding, worktree) {
       if (!text(evidence.file) || !Number.isSafeInteger(evidence.line) || evidence.line < 1 || !text(evidence.fact)) return [`${label}: code evidence needs file, line and fact`];
       const root = realpathSync(worktree);
       const named = path.resolve(root, evidence.file);
-      if (named !== root && !named.startsWith(`${root}${path.sep}`)) return [`${label}: code path escapes the reviewed worktree`];
+      if (named !== root && !named.startsWith(`${root}${path.sep}`)) return [`${label}: code path escapes the reviewed worktree; cite the ticket slug and quoted words from the ruling in command evidence`];
       if (!existsSync(named)) return [`${label}: code file or line cannot be read`];
       const file = realpathSync(named);
-      if (file === root || !file.startsWith(`${root}${path.sep}`)) return [`${label}: code path escapes the reviewed worktree`];
+      if (file === root || !file.startsWith(`${root}${path.sep}`)) return [`${label}: code path escapes the reviewed worktree; cite the ticket slug and quoted words from the ruling in command evidence`];
       if (!statSync(file).isFile() || readFileSync(file, "utf8").split("\n").length < evidence.line) return [`${label}: code file or line cannot be read`];
       return [];
     }
