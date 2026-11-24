@@ -261,7 +261,9 @@ and active source lease, preserving the same registered native writer.
 
 After observing that exact native turn completed, failed or was canceled and
 stopped, run `writer-state.mjs release-record` with the identical grant, returned
-lease and `stoppedTurn: {runtime: "codex", workerId, requestId, lease, state}`.
+lease and `stoppedTurn: {runtime: "codex", workerId, requestId, lease, state, result}`.
+For completed publication preparation, copy the observed helper result with its
+`status` and `data.mainSyncResult` intact. A missing result retains the lease.
 The short-lived coordinator CLI exiting is never completion evidence. If the
 helper is still running or its termination is unproven, retain the lock and
 resolve the owned turn; never auto-release it or start another record author.

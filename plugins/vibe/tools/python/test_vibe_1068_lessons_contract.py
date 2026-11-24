@@ -30,10 +30,10 @@ def test_fix_claims_are_measured_and_tests_do_not_pin_the_opposite() -> None:
 
 def test_one_actor_files_qa_tickets_after_a_duplicate_search() -> None:
     skill = flat(skill_split.read(FLEET / "SKILL.md"))
-    templates = flat(skill_split.read(FLEET / "references" / "templates.md"))
+    guide = flat(skill_split.read(FLEET / "references" / "qa-guide-prompt.md"))
     assert "You alone file a ticket for a QA finding" in skill
     assert "searching open tickets created in the last day for the same subject" in skill
-    assert "Never file a ticket; the orchestrator files them." in templates
+    assert "Never file a ticket; the orchestrator files them." in guide
 
 
 def test_upgrade_needs_no_restored_cache() -> None:

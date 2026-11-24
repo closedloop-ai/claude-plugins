@@ -17,6 +17,7 @@
 // Prints the pack JSON (`vibe.graph-pack/1`); with --out writes it too. Reads
 // only: `git ls-files`, `git grep`, the CODEOWNERS and feature map files.
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -86,7 +87,8 @@ export function createGraphPack({ run = execCommand, read = (file) => readFileSy
   const git = (worktree, args) => run("git", ["-C", worktree, ...args]);
 
   function trackedFiles(worktree) {
-    return new Set(git(worktree, ["ls-files"]).stdout.split("\n").filter(Boolean));
+    const result = readGitInventory(worktree, ["ls-files"], { run });
+    return new Set(result.status === 0 ? result.stdout.split("\n").filter(Boolean) : []);
   }
 
   /** The nearest tracked AGENTS.md at or above `file`'s folder, and the nearest package.json name. */
