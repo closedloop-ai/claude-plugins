@@ -23,6 +23,7 @@ import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/tes
 import { boundProbeCommit, requiredContainerIdentity, specExecutionLimitation, tierEvidenceProblems } from "./e2e-tier.mjs";
 import { probeE2eCapability, remoteCapabilityProbe } from "./e2e-capability-probe.mjs";
 import { prBodyClaimProblems } from "./pr-body-claims.mjs";
+import { settlementProblems } from "./rulings-check.mjs";
 import { GRAPH_CHANGE_SELECTOR, GRAPH_SELECTOR, prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS, treeEquivalentCarryShapeProblems, laneReportShapeProblems } from "./pr-evidence-schema.mjs";
 import { qaImpactRequest, qaImpactRequestAtCommit, qaImpactDirectCommitScope } from "./qa-impact.mjs";
 import { proofSourceAt, testIntegrityProblems } from "./test-integrity.mjs";
@@ -448,6 +449,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
       ...facts,
       ...(body === undefined ? {} : { prBodyProblems: [
         ...bodyProblems(body, facts, files, prBase, template ?? readTemplate(worktree, base), runs, sessionLocalPlanPrefix(worktree)),
+        ...settlementProblems(body, [body, ticketText, rulingsText]),
         ...(runs === undefined ? [] : knownMainFailureProblems(body, runs)),
       ] }),
       ...(runs === undefined ? {} : { prEvidenceProblems: [

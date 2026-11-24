@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.106
+
+#### Added
+- ISS-14679: `rulings-check.mjs` `unratifiedSettlements` finds ticket and pull request body entries that settle a product question with no human behind them: a `Decision ...:` entry that reads an acceptance criterion (`AC-<n>`), an `accepted cost` or trade-off label, or a known gap on a named criterion. Each passes only when it quotes the words of a dated `Ruling` line attributed to a person, on the ticket or in the session's rulings record; a trade quotes them after its own label. `live-ticket-check.mjs` and the pull-request body facts refuse the rest with a `NEEDS_PERSON` (behavior) question.
+- The `pm-orchestrator-ac-reading-asks-person` eval checks that an acceptance-criterion reading or an accepted cost goes to the person as a question, never into an orchestrator decision.
+- Across all plugin Markdown, including eval prompts and graders and plugin READMEs, the change is about 237 words longer than v1.1.105, all of it the new eval case. The count excludes the generated ClosedLoop mirror.
+
 ### vibe v1.1.105
 
 #### Fixed

@@ -38,6 +38,17 @@
 // A ruling cited to close, narrow or skip a ticket covers it only when the
 // ruling names that ticket or its PRD (`--ruling` with `--scope`): rollout
 // tickets were once closed DONE on a ruling about a different surface.
+//
+// `unratifiedSettlements` finds ticket or pull request body entries that settle
+// a product question with no human behind them: a `Decision ...:` entry that
+// reads an acceptance criterion (`AC-<n>`), an `accepted cost` (or trade-off,
+// or `deliberately not fixed`) label, or a known gap on a named criterion. Each
+// passes only when it quotes the words of a dated human `Ruling` line; a trade
+// quotes them after its own label. Live-ticket-check and the pull-request body
+// facts refuse the rest. An orchestrator once recorded "Decision
+// (orchestrator): AC-3 ... is met on the existing save-as-new-view action" and
+// an "Accepted cost" against AC-3 instead of asking, and both reached a pull
+// request as settled.
 
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
@@ -65,6 +76,17 @@ const EXCLUSION_PHRASE = /\b(?:out[- ]of[- ]scope|outside (?:of )?(?:this|the) (
 const humanSource = () => new RegExp(String.raw`\b${requirementsKey()}\b|\b${trackerKey()}\s+AC-?\d+\b|\bacceptance criteri(?:on|a)\b|\boperator\b|\brulings?\b|\bruled\b|\bapproved by\b`, "i");
 const SELF_APPROVED = /^>\s*Self-approved:/m;
 const NOTHING = /^(?:none|nothing|n\/a|-)\.?$/i;
+const ENTRY_START = /^\s*(?:[-*+]|\d+[.)]|#{1,6})\s/;
+const DECISION_ENTRY = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?\**Decision\b[^:\n]*:/;
+const RULING_ENTRY = /^\s*(?:[-*+]\s+)?Ruling\b/;
+const CRITERION_ID = /\bAC-\d+\b/;
+const TRADE_LABEL = /(?:^|[\s(;,])(?:accepted\s+(?:costs?|trade-?offs?|gaps?|risks?)|deliberately\s+not\s+(?:fixed|built))(?=\s*[:)])/i;
+const KNOWN_GAP_ON_CRITERION = /\bAC-\d+\b[^\n]*\bknown\s+gaps?\b|\bknown\s+gaps?\b[^\n]*\bAC-\d+\b/i;
+const QUOTED = /"([^"\n]+)"|“([^”\n]+)”/g;
+const INLINE_CODE_SPAN = /`[^`\n]*`/g;
+const SOURCED_RULING = /^\s*[-*]?\s*Ruling\b((?:[^:\n]*\([^\n)]*\))?[^:\n]*):\s*(\S.*?)\s*$/gm;
+const DATE = /\b\d{4}-\d{2}-\d{2}\b/;
+const MIN_PARTIAL_QUOTE_WORDS = 3;
 
 /** The exclusions in a plan body that cite no human source. */
 export function uncitedExclusions(body) {
@@ -166,6 +188,79 @@ export function criteriaChangeProblems(before, ticket) {
 /** Whether a ruling's words name one of the slugs it is applied to. */
 export function rulingNamesScope(text, slugs) {
   return slugs.filter(Boolean).some((slug) => new RegExp(`(?:^|[^A-Za-z0-9-])${slug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![0-9])`, "i").test(text));
+}
+
+/** Whether a ruling's attribution names an agent rather than a person. */
+export function isAgentAttribution(text) {
+  return /\b(?:orchestrator|reviewer|agent|worker|model|system)\b/i.test(text);
+}
+
+/** The words of every dated `Ruling` line attributed to a person, across ticket bodies and ruling records. */
+export function humanRulingWords(texts) {
+  const rulings = [];
+  for (const text of texts.filter((value) => typeof value === "string")) {
+    for (const match of text.matchAll(SOURCED_RULING)) {
+      if (!DATE.test(match[0]) || isAgentAttribution(match[1])) continue;
+      const decision = match[2].replace(AMENDS, "");
+      rulings.push({ decision: normalize(decision), quotes: quotedWords(decision) });
+    }
+  }
+  return rulings;
+}
+
+/**
+ * Body entries that settle an acceptance-criterion reading or record a trade
+ * with no quoted human ruling: `{ entry, kind }`, kind `decision`, `trade` or
+ * `known-gap`. `sources` are the texts whose dated human `Ruling` lines count
+ * (the ticket body and the session's rulings record).
+ */
+export function unratifiedSettlements(body, sources = [body]) {
+  const rulings = humanRulingWords(sources);
+  const cites = (text) => quotedWords(text).some((quote) => rulings.some((ruling) => ruling.quotes.includes(quote)
+    || (quote.split(" ").length >= MIN_PARTIAL_QUOTE_WORDS && ruling.decision.includes(quote))));
+  const unratified = [];
+  for (const entry of bodyEntries(body)) {
+    if (RULING_ENTRY.test(entry)) continue;
+    const prose = entry.replace(INLINE_CODE_SPAN, "");
+    const trade = TRADE_LABEL.exec(prose);
+    if (trade && !cites(prose.slice(trade.index))) unratified.push({ entry, kind: "trade" });
+    else if (DECISION_ENTRY.test(prose) && CRITERION_ID.test(prose) && !cites(prose)) unratified.push({ entry, kind: "decision" });
+    else if (KNOWN_GAP_ON_CRITERION.test(prose) && !cites(prose)) unratified.push({ entry, kind: "known-gap" });
+  }
+  return unratified;
+}
+
+/** One refusal per unratified settlement, phrased as the question only the person can answer. */
+export function settlementProblems(body, sources = [body]) {
+  const what = { decision: "reads an acceptance criterion", trade: "records an accepted cost or trade", "known-gap": "records a known gap against an acceptance criterion" };
+  return unratifiedSettlements(body, sources).map(({ entry, kind }) =>
+    `"${entry.trim().slice(0, 200)}" ${what[kind]} with no cited human ruling; an agent cannot settle it. Return NEEDS_PERSON (behavior) with this question, record the answer as - Ruling <date> (<who>): "<their words>"; amends: <criteria>, and quote those words in the entry, or remove the entry and leave the criterion open`);
+}
+
+function quotedWords(text) {
+  return [...text.matchAll(QUOTED)].map((match) => normalize(match[1] ?? match[2])).filter(Boolean);
+}
+
+/** List items, headings and paragraph lines of a markdown body outside fenced code; continuation lines join their item. */
+function bodyEntries(body) {
+  const entries = [];
+  let fenced = false;
+  let open = false;
+  for (const line of body.split("\n")) {
+    if (/^\s*(?:```|~~~)/.test(line)) {
+      fenced = !fenced;
+      open = false;
+      continue;
+    }
+    if (fenced || line.trim() === "") {
+      open = false;
+      continue;
+    }
+    if (open && !ENTRY_START.test(line) && /^\s/.test(line)) entries[entries.length - 1] += ` ${line.trim()}`;
+    else entries.push(line);
+    open = true;
+  }
+  return entries;
 }
 
 /** Problems with the program-wide ruling index and the records it reconciles. */
