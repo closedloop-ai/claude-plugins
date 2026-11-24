@@ -355,6 +355,35 @@ test("acceptance rechecks the worktree when its fingerprint predates a ledger wa
   assert.equal(readHelper().acceptedAt, undefined);
 });
 
+for (const action of ["final", "accepted", "start", "stopped"]) {
+  test(`DT-03: ${action} preserves the ledger when the locked HEAD check sees a new revision`, async t => {
+    const fixture = reviewFixture(t);
+    const { input } = fixture;
+    const args = await competingCommand(fixture, action);
+    const before = readLedger(input.orchDir);
+    const git = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+    const next = execFileSync(git, ["-C", input.worktree, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.org",
+      "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "next revision"], { encoding: "utf8" }).trim();
+    // Advance the fixture at its locked revision read. Both fingerprints and the revision check run real Git.
+    const bin = path.join(input.orchDir, "bin");
+    mkdirSync(bin);
+    writeFileSync(path.join(bin, "git"), `#!/bin/sh
+if [ "$*" = "rev-parse HEAD" ] && [ -f "${input.orchDir}/helpers.lock/owner.json" ]; then
+  "${git}" -C "${input.worktree}" update-ref HEAD "${next}" || exit 1
+fi
+exec "${git}" "$@"
+`, { mode: 0o700 });
+    const result = spawnSync(process.execPath, [helperCli, input.orchDir, ...args], {
+      encoding: "utf8", env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH },
+    });
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /helper HEAD changed during verification/);
+    assert.equal(execFileSync(git, ["-C", input.worktree, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), next);
+    assert.deepEqual(readLedger(input.orchDir), before);
+    if (action === "final") assert.equal(existsSync(args.at(-1)), false);
+  });
+}
+
 test("finalization retains a PID recorded for the same helper during source verification", async t => {
   const fixture = reviewFixture(t);
   const { input, readHelper } = fixture;

@@ -61,7 +61,7 @@ import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { captureOwnedDockerResources, defaultLockDir, readHolder, removeOwnedDockerResources, sameWorktreeEntry } from "../../vibe/scripts/e2e-lock.mjs";
 import { readProcessIdentity } from "../../../shared/process-identity.mjs";
 import { sameSource, sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
-import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
+import { git, readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { agentFrontmatterName } from "../../vibe/scripts/agent-frontmatter.mjs";
 import { evidenceFingerprint } from "../../handoff/scripts/handoff-evidence.mjs";
 import { graphAliases } from "../../handoff/scripts/mcp-tool-names.mjs";
@@ -458,6 +458,12 @@ function prepareTransition(action, entry, values, orchDir) {
     }
     return inputs.get(file);
   }
+  let revision;
+  function readSource(worktree) {
+    const source = sourceIdentity(worktree);
+    revision = { worktree, head: source.head };
+    return source;
+  }
   let result;
   try {
     if (action === "final") {
@@ -471,7 +477,7 @@ function prepareTransition(action, entry, values, orchDir) {
       }
       const deliverable = readInput(values.deliverable);
       if (!deliverable.text.trimEnd().endsWith(finalMarker(entry, completion))) throw new Error("helper deliverable lacks its FINAL marker");
-      const source = sourceIdentity(entry.worktree);
+      const source = readSource(entry.worktree);
       if (!sameSource(entry.source ?? {}, source)) throw new Error("helper source changed since start");
       result = { helper: entry.name, token: entry.finalToken, status: "FINAL", workerId: entry.workerId, source,
         completion, ...(event ? { completionEvidence: event.fingerprint } : {}), deliverable: deliverable.fingerprint };
@@ -481,12 +487,12 @@ function prepareTransition(action, entry, values, orchDir) {
       if (action === "stopped" && (!reportFile || !isDeepStrictEqual(readInput(reportFile).fingerprint, entry.report))) {
         throw new Error("helper final report changed after acceptance");
       }
-      const problem = verifyFinalReport(entry, reportFile, readInput, sourceIdentity);
+      const problem = verifyFinalReport(entry, reportFile, readInput, readSource);
       if (problem) throw new Error(problem);
       result = readInput(reportFile).fingerprint;
     } else if (action === "start") {
       const reviewer = FINAL_KINDS.has(values.kind) ? prepareReviewerStart(orchDir, values, readInput, rememberVersion) : {};
-      result = { ...reviewer, ...(values.worktree ? { worktree: path.resolve(values.worktree), source: sourceIdentity(values.worktree) } : {}) };
+      result = { ...reviewer, ...(values.worktree ? { worktree: path.resolve(values.worktree), source: readSource(values.worktree) } : {}) };
     }
   } catch (error) {
     return () => { throw error; };
@@ -494,6 +500,10 @@ function prepareTransition(action, entry, values, orchDir) {
   return () => {
     for (const [file, version] of versions) {
       if (!isDeepStrictEqual(version, evidenceVersion(file))) throw new Error("helper evidence changed during verification");
+    }
+    // Recheck only the ref while holding the ledger lock. A full source scan belongs to preparation.
+    if (revision && git(revision.worktree, ["rev-parse", "HEAD"], { timeout: 1000 }) !== revision.head) {
+      throw new Error("helper HEAD changed during verification");
     }
     return result;
   };
