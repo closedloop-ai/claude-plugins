@@ -87,6 +87,12 @@ since); then the request goes to the writer as an ordinary request under
 
 Screenshots were never a standing requirement, and nothing here adds one.
 
+At each captured width, use `captureVisualQaViewport(page, options)` from
+`lib/vibe/scripts/viewport-overflow.mjs` with the active web or Electron Page.
+Keep each far-end PNG and its foreground coverage in the ledger. In static cells and rows, trace absolute and sr-only descendants to their
+containing block.
+An absolute or sr-only descendant that widens a static cell or row is the class ISS-8422 recorded: cite ISS-8422 as the source in that finding.
+
 - Default: one visual-qa reviewer reads the diff, plus the Storybook stories
   where they exist. That covers most UI changes: a new control, copy reuse,
   styling, a single page or component.

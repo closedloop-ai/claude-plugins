@@ -402,9 +402,9 @@ test('beside an older vibe the launch check judges the vibe hooks that will run,
     "vibe-core's hooks stand down beside an older vibe, so they do not decide");
 });
 
-test('an App Server without hooks/list keeps launching; other listing failures refuse', async () => {
+test('an App Server without hooks/list refuses with the upgrade step; other listing failures retain their cause', async () => {
   const old = { request: async () => { throw new Error('unknown variant `hooks/list`'); } };
-  assert.equal(await vibeHookTrustProblem(old, '/x'), null);
+  assert.match(await vibeHookTrustProblem(old, '/x'), /cannot prove hook trust; update it/);
   const broken = { request: async () => { throw new Error('socket closed'); } };
   assert.match(await vibeHookTrustProblem(broken, '/x'), /could not list Codex hooks: socket closed/);
   const disabled = { request: async () => ({ data: [{ hooks: [{ key: 'vibe-core@fixture-market:k', pluginId: 'vibe-core@fixture-market', trustStatus: 'trusted', enabled: false }] }] }) };

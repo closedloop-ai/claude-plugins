@@ -231,7 +231,7 @@ question; never jump straight to asking for a name.
 
 ### Owned prototype sessions
 
-Use the same recorded persistent writer, owned `prototype/<slug>` worktree,
+Use the same recorded persistent writer and owned prototype worktree,
 branch and live ticket. Never create a prototype/handoff/test source writer.
 Give the writer the canonical absolute
 `<repo-root>/.claude/skills/prototype/SKILL.md` guidance, current inventory and
@@ -282,13 +282,13 @@ The checklist stops immediately when `blocking.forbiddenPaths` is false
 false: each `diffRules` finding goes to the SAME writer, which fixes it or
 records the change log line it names. A `frozen-render` finding is settled
 only by one shell step that launches no agent:
-`node scripts/frozen-render-gate.mjs --repo <worktree> --base <base>`. Run it
+`node scripts/frozen-render-gate.mjs --repo <worktree>` fetches GitHub main. Run it
 as its own step, never inside `fleet.sh … slot heavy`: its builds take the
 heavy lock themselves. `FROZEN PASS` has already recorded the `Frozen render
 unchanged` line; on `FROZEN BLOCK`, read only the cropped diffs that
 results.json's blocking entries name (a blocking story's changed render held
 over the base confirmation renders, or its branch play failure reproduced);
-`FROZEN ERROR` is a setup problem to fix before rerunning. Nobody captures
+`FROZEN BUSY` waits for available capacity on retry. `FROZEN ERROR` needs a setup fix. Nobody captures
 frozen stories any other way. The line names the session files it rendered
 and counts only while their story states and dependency inputs are
 unchanged. A later commit or main merge reruns it only when `qa-impact.mjs`
@@ -588,6 +588,10 @@ Design Review evidence in step 8. Owned prototype sessions keep their
 canonical single design review instead.
 <!-- end generic: qa-passes -->
 > Provider `recipes` (block `qa-passes` of `handoff-skill.md`)
+
+Record visual QA rounds with their tested head, runtime and captures. Each capture names
+the surface, story or route, viewport, theme, changed paths and relative PNG. Use
+`finding-brief.mjs --pr-body-section` to insert the complete ledger in the PR body.
 
 Storybook plays run in a real browser, and card or narrow-layout
 interactions with real touch on WebKit iPhone and Chromium Pixel, as the verify

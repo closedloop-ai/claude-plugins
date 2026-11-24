@@ -5,17 +5,17 @@
   "reason": "Compatibility alias: provider text and older chats still pass the option under its earlier name."
  },
  {
-  "path": "plugins/vibe/skills/vibe/scripts/vibe-sessions.mjs",
+  "path": "plugins/vibe/skills/vibe/scripts/vibe-session-worktrees.mjs",
   "text": "* `handoffTicket` as `liveTicket` and its `clerkOrgId` as `environmentOrgId`,",
   "reason": "Compatibility read of a record field written by older vibe versions."
  },
  {
-  "path": "plugins/vibe/skills/vibe/scripts/vibe-sessions.mjs",
+  "path": "plugins/vibe/skills/vibe/scripts/vibe-session-worktrees.mjs",
   "text": "const { handoffTicket, clerkOrgId: legacyOrgId, scope: _retiredScope, ...rest } = record;",
   "reason": "Compatibility read of a record field written by older vibe versions."
  },
  {
-  "path": "plugins/vibe/skills/vibe/scripts/vibe-sessions.mjs",
+  "path": "plugins/vibe/skills/vibe/scripts/vibe-session-worktrees.mjs",
   "text": "const orgId = values[\"environment-org\"] ?? values[\"clerk-org-id\"];",
   "reason": "Compatibility alias: provider text and older chats still pass the option under its earlier name."
  },
@@ -180,12 +180,7 @@
   "reason": "Compatibility read of record fields written by older vibe versions, so a legacy provider session is never written generic."
  },
  {
-  "path": "plugins/vibe/skills/vibe/scripts/vibe-sessions.mjs",
-  "text": "// An older vibe (another harness on this machine, or a rollback) reads the environment org as `clerkOrgId`, so a",
-  "reason": "Compatibility alias: an older vibe reading the same session record finds the environment org under its earlier field."
- },
- {
-  "path": "plugins/vibe/skills/vibe/scripts/vibe-sessions.mjs",
+  "path": "plugins/vibe/skills/vibe/scripts/vibe-session-worktrees.mjs",
   "text": "record.environmentOrgId ? { ...record, clerkOrgId: record.environmentOrgId } : record);",
   "reason": "Compatibility alias: an older vibe reading the same session record finds the environment org under its earlier field."
  },

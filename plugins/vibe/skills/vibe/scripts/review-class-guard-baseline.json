@@ -25,7 +25,9 @@
     "VIBE_VERIFY_POOLABLE",
     "VIBE_VERIFY_POOL_SIZE"
   ],
-  "reviewedDefaultOnSwitches": [],
+  "reviewedDefaultOnSwitches": [
+    "FLEET_CLASS_ROUTING"
+  ],
   "bareWordClassifiers": {
     "plugins/vibe/skills/handoff/scripts/comment-rules.mjs:ONE_READER_CLAIM": "operator ruling 2026-11-18: the acceptance criteria of the ticket that added these rules specify their trigger words (agent-decision-citation; claim-vs-readers)",
     "plugins/vibe/skills/handoff/scripts/comment-rules.mjs:PRODUCT_DECISION": "operator ruling 2026-11-18: the acceptance criteria of the ticket that added these rules specify their trigger words (agent-decision-citation; claim-vs-readers)",
@@ -41,11 +43,15 @@
     "plugins/vibe/skills/handoff/scripts/diff-rules.mjs:SYNC_TABLE": "classifies a table as a sync lane by a word; reported as a gate misfire by the fleet orchestrator, 2026-11-13, and a ruling is pending",
     "plugins/vibe/skills/handoff/scripts/inventory-bundle.mjs:FLAG_NAME": "fixed grammar: matches exact strings a tool, protocol or code identifier emits, not prose",
     "plugins/vibe/skills/handoff/scripts/live-ticket-check.mjs:UNFINISHED": "classifies prose by bare words; listed, with no ruling on it yet, when the bare-word guard was added (orchestrator answer, 2026-11-14)",
+    "plugins/vibe/skills/handoff/scripts/pr-body-claims.mjs:ALL_TESTS_PASSED": "matches explicit all-tests-passed claims for comparison with recorded failed runs",
     "plugins/vibe/skills/handoff/scripts/pr-body-claims.mjs:CI_CLAIM": "classifies prose by bare words; listed, with no ruling on it yet, when the bare-word guard was added (orchestrator answer, 2026-11-14)",
+    "plugins/vibe/skills/handoff/scripts/pr-body-claims.mjs:HISTORICAL": "keeps cited historical versions and counters outside current-branch assertions",
     "plugins/vibe/skills/handoff/scripts/pr-body-claims.mjs:OTHER_TEST_FAMILY": "classifies prose by bare words; listed, with no ruling on it yet, when the bare-word guard was added (orchestrator answer, 2026-11-14)",
     "plugins/vibe/skills/handoff/scripts/pr-body-claims.mjs:PENDING_HOST": "classifies prose by bare words; listed, with no ruling on it yet, when the bare-word guard was added (orchestrator answer, 2026-11-14)",
     "plugins/vibe/skills/handoff/scripts/pr-body-claims.mjs:UNIVERSAL": "classifies prose by bare words; listed, with no ruling on it yet, when the bare-word guard was added (orchestrator answer, 2026-11-14)",
     "plugins/vibe/skills/handoff/scripts/pr-body-claims.mjs:UNRESOLVED_PRONOUN": "classifies prose by bare words; listed, with no ruling on it yet, when the bare-word guard was added (orchestrator answer, 2026-11-14)",
+    "plugins/vibe/skills/handoff/scripts/removal-review-rules.mjs:ACTIVE_CONTRACT": "selects retained behavioral comments only when their previously referenced production value lost its reader",
+    "plugins/vibe/skills/handoff/scripts/removal-review-rules.mjs:HISTORICAL": "excludes comments describing removed behavior from the active contract check",
     "plugins/vibe/skills/handoff/scripts/rollout-gate.mjs:FLAG": "classifies prose by bare words; listed, with no ruling on it yet, when the bare-word guard was added (orchestrator answer, 2026-11-14)",
     "plugins/vibe/skills/handoff/scripts/rollout-gate.mjs:FLAG_READ": "classifies prose by bare words; listed, with no ruling on it yet, when the bare-word guard was added (orchestrator answer, 2026-11-14)",
     "plugins/vibe/skills/handoff/scripts/rollout-gate.mjs:ROLLOUT": "classifies prose by bare words; listed, with no ruling on it yet, when the bare-word guard was added (orchestrator answer, 2026-11-14)",

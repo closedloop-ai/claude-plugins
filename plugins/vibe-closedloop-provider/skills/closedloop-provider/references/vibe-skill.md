@@ -106,7 +106,7 @@ mention it to the person.
 <!-- block: start-new-first -->
    Only when they have not supplied it, ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
    URL) or a plain description. If they clearly want a mockup or an
-   exploration with made-up data, start the prototype session below yourself. The person only types `$vibe` and
+   exploration with made-up data, follow the repository's mockup path below. The person only types `$vibe` and
    `$handoff`; do not ask them to invoke `$prototype`. For a
    ticket, dispatch `vibe-requirements-worker`. For a description, dispatch
    the same worker with the description: it checks for an existing ticket

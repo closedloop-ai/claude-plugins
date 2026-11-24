@@ -6,6 +6,9 @@
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
+import { fileURLToPath } from "node:url";
+import { readProcessIdentity } from "../../../shared/process-identity.mjs";
 
 export const HANDOVER_FILE = "handover.md";
 const STATE_FILE = "handoff.json";
@@ -71,18 +74,18 @@ export function handoffProblems(dir) {
 }
 
 /** Write handover.md and the handoff record for `successor`; `notes` is the chat's own text (promises, first steps). */
-export function startHandoff(dir, { successor, mesh, peers = [], crons = [], notes = "", now = new Date() }) {
+export function startHandoff(dir, { outgoingChat = null, successor, mesh, peers = [], crons = [], notes = "", now = new Date() }) {
   if (!successor || !mesh) throw new Error("handoff needs --successor <SendMessage name> and --mesh <Mesh id>");
   // A rerun for the same successor keeps what is already recorded; a new successor is a new handoff, told nobody yet.
   const prior = readState(dir);
-  const same = prior?.successor?.name === successor && prior?.successor?.mesh === mesh ? prior : null;
+  const same = prior?.outgoingChat === outgoingChat && prior?.successor?.name === successor && prior?.successor?.mesh === mesh ? prior : null;
   if (same?.completedAt) {
     // A completed handoff to the same successor only gets its file rewritten (new notes); it is not reopened.
     writeFileSync(path.join(dir, HANDOVER_FILE), handoverText(dir, same, notes));
     return same;
   }
   // A same-successor rerun keeps the first writtenAt, so a watcher the successor started in between stays its own.
-  const state = { successor: { name: successor, mesh }, writtenAt: same?.writtenAt ?? now.toISOString(), peers: [...new Set([...(same?.peers ?? []), ...peers])],
+  const state = { outgoingChat, successor: { name: successor, mesh }, writtenAt: same?.writtenAt ?? now.toISOString(), peers: [...new Set([...(same?.peers ?? []), ...peers])],
     crons: [...new Set([...(same?.crons ?? []), ...crons])], told: same?.told ?? {}, cronsDeleted: same?.cronsDeleted ?? [], watcherStopped: same?.watcherStopped ?? null };
   saveState(dir, state);
   writeFileSync(path.join(dir, HANDOVER_FILE), handoverText(dir, state, notes));
@@ -108,9 +111,9 @@ function handoverText(dir, state, notes) {
 }
 
 /** Mark the handoff complete once nothing is missing, so later board changes never reopen it; returns whether it is. */
-export function completeHandoff(dir, now = new Date()) {
+export function completeHandoff(dir, now = new Date(), outgoingChat) {
   const state = readState(dir);
-  if (!state || handoffProblems(dir).length > 0) return false;
+  if (!state || (outgoingChat !== undefined && (!outgoingChat || state.outgoingChat !== outgoingChat)) || handoffProblems(dir).length > 0) return false;
   if (!state.completedAt) saveState(dir, { ...state, completedAt: now.toISOString() });
   return true;
 }
@@ -135,23 +138,59 @@ export function recordCronDeleted(dir, id) {
 }
 
 /** Stop this chat's watcher: only the pid watcher.json records, and only when watch.lock names the same pid. */
-export function stopWatcher(dir, { kill = (pid) => process.kill(pid, "SIGTERM"), now = new Date() } = {}) {
+export function stopWatcher(dir, { kill = (pid) => process.kill(pid, "SIGTERM"), identityOf = readProcessIdentity, now = new Date() } = {}) {
   const state = readState(dir);
   if (!state) throw new Error("HANDOFF-NOT-STARTED: run fleet-home.mjs handoff --successor <name> --mesh <id> first");
+  const result = stopRecordedWatcher(dir, state.writtenAt, kill, identityOf);
+  if (result.stopped) {
+    state.watcherStopped = { pid: result.pid, at: now.toISOString() };
+    saveState(dir, state);
+  }
+  return { stopped: result.stopped, line: result.line };
+}
+
+/** A legacy heartbeat was written immediately after startup. Match its shell, script and exact program argument. */
+function legacyWatcherIdentity(dir, watcher, current) {
+  const identity = /^(\w{3} \w{3} +\d{1,2} \d\d:\d\d:\d\d \d{4})\s+(?:\/[^ ]*\/)?zsh\s+(.+)$/.exec(current ?? "");
+  if (!identity) return false;
+  const delta = Date.parse(watcher.startedAt) - Date.parse(identity[1]);
+  if (!(delta >= 0 && delta <= 5000)) return false;
+  const script = fileURLToPath(new URL("../../../skills/codex-fleet-monitor/scripts/watch.sh", import.meta.url));
+  const command = identity[2].replace(/ \d+$/, "");
+  const entryEnd = "/skills/codex-fleet-monitor/scripts/watch.sh";
+  const split = command.indexOf(entryEnd + " ");
+  if (split < 0) return false;
+  const entry = command.slice(0,split + entryEnd.length);
+  const root = script.slice(0,-entryEnd.length);
+  const oldRoot = entry.slice(0,-entryEnd.length);
+  const priorInstall = /^\d+\.\d+\.\d+$/.test(path.basename(root)) && /^\d+\.\d+\.\d+$/.test(path.basename(oldRoot))
+    && path.dirname(root) === path.dirname(oldRoot) && existsSync(entry);
+  if (entry !== script && !priorInstall) return false;
+  const subject = command.slice(entry.length + 1);
+  if (!path.isAbsolute(subject)) return false;
+  try { return resolveWorkDir(subject, {chat:null}).dir === path.resolve(dir); }
+  catch { return false; }
+}
+
+/** Signal only the watcher recorded by this program before its reconciled completion. */
+export function stopRecordedWatcher(dir, cutoff, kill = (pid) => process.kill(pid, "SIGTERM"), identityOf = readProcessIdentity) {
   const watcher = readJson(path.join(dir, "watcher.json"), {});
   const pid = Number(watcher?.pid);
-  if (!(pid > 1)) return { stopped: false, line: "WATCHER-NONE: no watcher recorded" };
-  if (!outgoingWatcher(state, watcher)) throw new Error(`WATCHER-SUCCESSOR: watcher ${pid} started after the handoff was written; it is the successor's, not this chat's to stop`);
   const locked = lockPid(dir);
+  if (!(pid > 1) || watcher.exitedAt) {
+    if (existsSync(path.join(dir,"watch.lock"))) throw new Error("WATCHER-INITIALIZING: watcher lock has no matching active heartbeat");
+    return { stopped: false, line: "WATCHER-NONE: no watcher recorded" };
+  }
+  if (!outgoingWatcher({ writtenAt: cutoff }, watcher)) throw new Error(`WATCHER-SUCCESSOR: watcher ${pid} started after the handoff was written; it is the successor's, not this chat's to stop`);
   if (locked !== pid) throw new Error(`WATCHER-MISMATCH: watcher.json names ${pid} but watch.lock names ${Number.isFinite(locked) ? locked : "none"}; stop nothing by guess`);
+  const current = identityOf(pid);
+  if (watcher.identity ? current !== watcher.identity : !legacyWatcherIdentity(dir, watcher, current)) throw new Error("WATCHER-IDENTITY: the recorded watcher process identity cannot be confirmed");
   try {
     kill(pid);
   } catch (error) {
     if (error?.code !== "ESRCH") throw error;
   }
-  state.watcherStopped = { pid, at: now.toISOString() };
-  saveState(dir, state);
-  return { stopped: true, line: `WATCHER-STOPPED ${pid}` };
+  return { stopped: true, pid, line: `WATCHER-STOPPED ${pid}` };
 }
 
 /**

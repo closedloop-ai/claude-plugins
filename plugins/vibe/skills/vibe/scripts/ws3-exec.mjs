@@ -9,9 +9,9 @@ const MAX_BUFFER = 64 * 1024 * 1024;
 export const DEFAULT_TIMEOUT_MS = 120_000;
 
 /** Runs `command` with `args` and returns `{ status, stdout, stderr }`; a spawn failure or time out is status 124 or 127 with the reason on stderr. */
-export function execCommand(command, args, { cwd, input, timeoutMs = DEFAULT_TIMEOUT_MS, env } = {}) {
+export function execCommand(command, args, { cwd, input, timeoutMs = DEFAULT_TIMEOUT_MS, env, maxBuffer = MAX_BUFFER } = {}) {
   const result = spawnSync(command, args, {
-    cwd, input, encoding: "utf8", maxBuffer: MAX_BUFFER, timeout: timeoutMs,
+    cwd, input, encoding: "utf8", maxBuffer, timeout: timeoutMs,
     env: env ? { ...process.env, ...env } : process.env,
   });
   if (result.error) {
