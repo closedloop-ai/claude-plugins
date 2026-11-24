@@ -370,6 +370,20 @@ function requireSlackGateOutcome(attemptPath: string): void {
   }
 }
 
+/** Classify only failed relay processes, without forwarding untrusted stdout or stderr to Slack. */
+function requireSlackRelaySuccess(result: SlackClaudeResult): void {
+  if (!result.error && result.status === 0) return;
+  const output = [result.error?.message, result.stderr, result.stdout].join("\n");
+  let reason = "eval-slack-claude-failed";
+  if (/\b(?:ETIMEDOUT|timed out|timeout)\b/i.test(output)) reason = "eval-slack-claude-timeout";
+  else if (/not logged in|please run \/login|authentication[_ -]error|\bunauthorized\b|\bHTTP 401\b/i.test(output)) {
+    reason = "eval-slack-claude-auth-unavailable";
+  } else if (/(?:usage|rate|weekly|session)[_ -]limit|limit reached|\bHTTP 429\b/i.test(output)) {
+    reason = "eval-slack-claude-usage-limit";
+  }
+  throw new SlackDeliveryError(reason, false);
+}
+
 /** Post a pre-rendered notice through the authenticated Slack MCP connection. */
 export class SlackNightlyRegressionReporter implements NightlyRegressionReporter {
   private readonly claudeExecutable: string;
@@ -437,19 +451,13 @@ export class SlackNightlyRegressionReporter implements NightlyRegressionReporter
       const result = this.run(this.claudeExecutable, args, {
         input: deliveryPrompt(text), timeout: SLACK_POST_TIMEOUT_MS,
       });
+      requireSlackRelaySuccess(result);
       try {
         requireSlackGateOutcome(attemptPath);
         return verifySlackTranscript(result.stdout, text);
       }
       catch (error) {
         if (error instanceof SlackDeliveryError) throw error;
-        if (result.error?.message.includes("ETIMEDOUT") ||
-            result.error?.message.includes("timed out")) {
-          throw new SlackDeliveryError("eval-slack-claude-timeout", false);
-        }
-        if (result.error || result.status !== 0) {
-          throw new SlackDeliveryError("eval-slack-claude-failed", false);
-        }
         throw new SlackDeliveryError(error instanceof Error ? error.message
           : "eval-slack-transcript-invalid", false);
       }

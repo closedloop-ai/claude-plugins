@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -153,7 +154,7 @@ function create(args) {
   const workingPatch = git(worktree, ['diff', 'HEAD', '--binary', '--no-ext-diff'], { encoding: 'buffer' });
   const indexPatch = git(worktree, ['diff', '--cached', '--binary', '--no-ext-diff'], { encoding: 'buffer' });
   const status = git(worktree, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], { encoding: 'buffer' });
-  const untrackedBuffer = git(worktree, ['ls-files', '--others', '--exclude-standard', '-z'], { encoding: 'buffer' });
+  const untrackedBuffer = readGitInventory(worktree, ['ls-files', '--others', '--exclude-standard', '-z'], { encoding: 'buffer' });
   const untrackedPaths = untrackedBuffer.subarray(0, Math.max(0, untrackedBuffer.length - 1)).toString('utf8').split('\0').filter(Boolean);
   const roundTrippedPaths = Buffer.from(`${untrackedPaths.join('\0')}${untrackedPaths.length ? '\0' : ''}`);
   if (!roundTrippedPaths.equals(untrackedBuffer)) fail('Untracked filenames must be valid UTF-8 for checkpointing');

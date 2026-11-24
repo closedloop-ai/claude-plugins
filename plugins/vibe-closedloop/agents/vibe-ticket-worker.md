@@ -66,7 +66,7 @@ paste a plan's body into the ticket.
 Files under the record's `localFixes` are not the person's work; never
 describe them on the ticket.
 
-An owned `prototype/<slug>` session uses the same live ticket, operator,
+An owned prototype session (a `vibe/<slug>` branch, or a legacy `prototype/<slug>` one) uses the same live ticket, operator,
 lookup, and assignment rules. Read the canonical prototype skill at the
 absolute `<repo-root>/.claude/skills/prototype/SKILL.md` path. Its verified
 publication replaces app/API/Storybook deployment fields; `ticket-sections`

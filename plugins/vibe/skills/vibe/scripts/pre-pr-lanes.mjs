@@ -63,10 +63,9 @@
 //
 // A selected lane that fails on the branch source and on captured main is
 // not the session's to fix (the handoff's rule for failures already on main).
-// `run --main-worktree <checkout of captured main> --main-sha <sha>` reruns a
-// failing lane there and records it `main-preexisting` when it fails there
-// too; `check` accepts that record, printing `MAIN-PREEXISTING-LANE`, and the
-// pull request body lists it under Known main failures.
+// A captured-main rerun supplies the other side of the evidence. The record
+// command checks both lists of failure ids and assertions before `check` can
+// print `MAIN-PREEXISTING-LANE`. List that lane under Known main failures.
 //
 // A diff that changes a Storybook story whose package has no typecheck script
 // also selects the story-typecheck.mjs lane: the repository's lane
@@ -83,6 +82,10 @@
 // `record --cloud-result` instead verifies cloud-worker's host, GitHub repository,
 // exact commit and passing recipe against clean HEAD, then records that complete provenance.
 
+import { originatingStackTicket } from "../../../lib/vibe/scripts/e2e-lock.mjs";
+import { containerizedIntent } from "../../../lib/vibe/scripts/docker-disk-admission.mjs";
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -103,7 +106,7 @@ const { testedHead, testedSource, sourceIdentity, sameSource, withStableSource, 
 const { providerDataOr, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 const { readCodexTurnItems } = await vibeCore("lib/handoff/scripts/codex-review-runtime.mjs");
-const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
+const { readEvidence } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
 const { githubRepository } = await vibeCore("lib/vibe/scripts/github-remote.mjs");
 const FLEET_SCRIPT = fileURLToPath(new URL("../../fleet-orchestrator/scripts/fleet.sh", import.meta.url));
 
@@ -132,7 +135,12 @@ const HARNESS_TOOLS = ["dbus-run-session", "xvfb-run", "gnome-keyring-daemon"];
 
 /** The lane commands a lane report names, or null when it names none and does not say nothing changed. */
 export function reportLanes(report) {
-  const all = [...new Set(report.split("\n").map((line) => LANE_LINE.exec(line)?.[1]).filter(Boolean))];
+  const all = [...new Set(report.split("\n").map(line => {
+    const known = LANE_LINE.exec(line)?.[1];
+    if (known) return known;
+    const direct = /^ {4}(\S.*?)(?:\s+\(.*\))?\s*$/.exec(line)?.[1];
+    return direct && containerizedIntent("sh", ["-c", direct]) ? direct : null;
+  }).filter(Boolean))];
   if (all.length === 0) return NOTHING.test(report) ? [] : null;
   return all;
 }
@@ -181,9 +189,14 @@ export function lanePreflightProblem(command, env = process.env, recipe) {
 }
 
 /** The fleet heavy-slot process for a lane run, or null for the direct local path. */
-export function fleetLaneInvocation(values, source, tree = values.worktree) {
+export function fleetLaneInvocation(values, source, tree = values.worktree, ticket) {
   const any = ["fleet-where", "fleet-orch", "fleet-owner"].some((key) => values[key] !== undefined);
-  if (!any) return null;
+  const intent = containerizedIntent("sh", ["-c", values.command],tree);
+  if (!any) {
+    if (!intent) return null;
+    const entry = fileURLToPath(new URL("./e2e-lock.mjs", import.meta.url));
+    return { bin: process.execPath, args: [entry, "run", "--head", source.head, ...(ticket ? ["--ticket", ticket] : []), "--", "sh", "-c", values.command] };
+  }
   if (!["local", "remote"].includes(values["fleet-where"]) || !path.isAbsolute(values["fleet-orch"] ?? "")
     || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(values["fleet-owner"] ?? "")) {
     throw new Error("fleet lane run needs --fleet-where local|remote, absolute --fleet-orch and --fleet-owner");
@@ -194,8 +207,9 @@ export function fleetLaneInvocation(values, source, tree = values.worktree) {
   const command = values["fleet-where"] === "remote"
     ? `test "$(git rev-parse HEAD)" = ${source.head} || { echo "fleet lane HEAD does not match ${source.head}" >&2; exit 78; }; ${values.command}`
     : values.command;
+  const admission = intent ? [intent === "build" ? "--containerized-e2e-build" : "--compose-e2e"] : [];
   return { bin: "bash", args: [FLEET_SCRIPT, values["fleet-orch"], values["fleet-where"], "slot", "heavy",
-    values["fleet-owner"], tree, "sh", "-lc", command], receipt: { where: values["fleet-where"], owner: values["fleet-owner"], head: source.head } };
+    values["fleet-owner"], tree, ...admission, ...(intent && ticket ? ["--stack-ticket", ticket] : []), "sh", "-lc", command], receipt: { where: values["fleet-where"], owner: values["fleet-owner"], head: source.head } };
 }
 
 function sameSelection(record, selection) {
@@ -206,7 +220,7 @@ function sameSelection(record, selection) {
 export function missingLanes(lanes, records, selection) {
   return lanes.filter((lane) => !records.some((record) => record.command === lane && sameSelection(record, selection)
     && ((record.result === "pass" && record.targeted === undefined)
-      || (record.result === "main-preexisting" && /^[a-f0-9]{40}$/.test(record.mainSha ?? "")))));
+      || (record.result === "main-preexisting" && verifiedMainFailureEvidence(record)))));
 }
 
 /** The lanes left for CI on this machine: web e2e without the staging identities, Desktop e2e without the harness. */
@@ -371,7 +385,7 @@ function targetedScope(values) {
   const base = targetBase(values);
   const diff = (...options) => git(values.worktree, ["diff", "--name-only", "--no-renames", "-z", ...options, base, "--"])
     .split("\0").filter(Boolean);
-  const untracked = git(values.worktree, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
+  const untracked = readGitInventory(values.worktree, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
   return {
     base,
     changedFiles: [...new Set([...diff(), ...untracked])].sort(),
@@ -404,11 +418,9 @@ function parseTargetedSpecs(raw) {
 
 function parsedToolResult(item) {
   if (item?.result?.structuredContent && typeof item.result.structuredContent === "object") return item.result.structuredContent;
-  for (const block of item?.result?.content ?? []) {
-    if (block?.type !== "text" || typeof block.text !== "string") continue;
-    try { return JSON.parse(block.text); } catch { /* continue */ }
-  }
-  throw new Error("the graph tool call has no structured result");
+  const text = (item?.result?.content ?? []).filter((block) => block?.type === "text" && typeof block.text === "string");
+  if (!text.length) throw new Error("the graph tool call has no structured result");
+  return capturedJson(text.map((block) => block.text).join("\n"));
 }
 
 function relativePath(file) {
@@ -486,17 +498,17 @@ async function nativeGraphSelection(values, readTurn = readCodexTurnItems) {
 function claudeToolResult(block) {
   const text = typeof block?.content === "string" ? block.content
     : (block?.content ?? []).filter((item) => item?.type === "text" && typeof item.text === "string").map((item) => item.text).join("\n");
-  try { return JSON.parse(text); } catch { throw new Error("the Claude graph tool result is not JSON"); }
+  try { return capturedJson(text); } catch { throw new Error("the Claude graph tool result is not JSON"); }
 }
 
 function claudeGraphSelection(values, selector) {
-  const resultEvidence = evidenceFingerprint(values["graph-launcher-result"]);
-  const launcher = JSON.parse(readFileSync(resultEvidence.path, "utf8"));
+  const {text: resultText, fingerprint: resultEvidence} = readEvidence(values["graph-launcher-result"]);
+  const launcher = JSON.parse(resultText);
   const currentSource = sourceIdentity(values.worktree);
   if (launcher.runtime !== "claude" || launcher.status !== "DONE" || !launcher.sessionId || !launcher.tracePath
     || !sameSource(launcher.source, currentSource)) throw new Error("the Claude graph launcher result is not DONE on the current source");
-  const traceEvidence = evidenceFingerprint(launcher.tracePath);
-  const events = readFileSync(traceEvidence.path, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  const {text: traceText, fingerprint: traceEvidence} = readEvidence(launcher.tracePath);
+  const events = traceText.split("\n").filter(Boolean).map((line) => JSON.parse(line));
   const blocks = events.flatMap((event) => event?.message?.content ?? []);
   const tools = blocks.filter((block) => block?.type === "tool_use" && typeof block.name === "string"
     && block.name.slice(block.name.lastIndexOf("__") + 2).replaceAll("-", "_") === selector);
@@ -636,20 +648,24 @@ async function main(argv) {
     let result = values.result;
     let mainSha;
     let failures;
+    let mainFailures;
     let mainSource = mainTested ? sourceIdentity(values["main-worktree"], mainTested) : undefined;
     if (recordedMain) {
       if (values["main-worktree"]) throw new Error("record --result main-preexisting takes --main-sha, not --main-worktree");
       mainSha = verifiedMainCommit(values.worktree, values["main-sha"]);
-      failures = sharedMainFailures(JSON.parse(readFileSync(values.failures, "utf8")));
+      const compared = JSON.parse(readFileSync(values.failures, "utf8"));
+      failures = sharedMainFailures(compared);
+      mainFailures = compared.main.map(({ id, assertion }) => ({ id, assertion }));
       mainSource = committedSourceIdentity(values.worktree, mainSha);
     }
     if (mainSource && mainSource.diffSha256 !== createHash('sha256').digest('hex')) throw new Error('captured main must be clean to establish a main-preexisting failure');
     if (command === "run") {
+      const ticket = containerizedIntent("sh", ["-c", values.command],values.worktree) ? originatingStackTicket(values.worktree) : null;
       const execute = (tree, expected) => withStableSource(tree, current => {
         if (!sameSource(expected, current)) throw new Error('SOURCE-MOVED before lane startup');
         const preflight = lanePreflightProblem(values.command);
         if (preflight) throw new Error(preflight);
-        const fleet = fleetLaneInvocation(values, expected, tree);
+        const fleet = fleetLaneInvocation(values, expected, tree, ticket);
         return fleet
           ? { status: spawnSync(fleet.bin, fleet.args, { cwd: tree, stdio: 'inherit' }).status, fleet: fleet.receipt }
           : { status: spawnSync(values.command, { cwd: tree, shell: true, stdio: 'inherit' }).status };
@@ -666,8 +682,7 @@ async function main(argv) {
         if (after !== tested) process.stdout.write(`HEAD-MOVED from ${tested.slice(0, 12)} to ${after.slice(0, 12)} during the run\n`);
       }
       if (result === 'fail' && unchanged && mainTested && execute(values['main-worktree'], mainSource).status !== 0) {
-        result = 'main-preexisting';
-        mainSha = mainTested;
+        process.stderr.write(`Both runs failed at ${tested} and main ${mainTested}. Record matching test ids and assertions with record --result main-preexisting --main-sha <sha> --failures <file>.\n`);
       }
       values.fleetReceipt = fleetReceipt;
     }
@@ -675,7 +690,7 @@ async function main(argv) {
     // Two lanes of one pool finish close together: the read, the change and the write happen under one lock so neither record is lost.
     withRecordsLock(values.worktree, () => {
       const records = readRecords(values.worktree).filter((record) => !(record.command === values.command.trim() && sameSelection(record, selected)));
-      records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, provenance: Provenance.Fresh, ...(cacheKey ? { cacheKey } : {}), ...(mainSha ? { mainSha, mainSource } : {}), ...(failures ? { failures } : {}), ...(ranOn ? { ranOn } : {}), ...(values.fleetReceipt ? { fleet: values.fleetReceipt } : {}), ...(targetedReceipt ? { targeted: targetedReceipt } : {}), at: new Date().toISOString() });
+      records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, provenance: Provenance.Fresh, ...(cacheKey ? { cacheKey } : {}), ...(mainSha ? { mainSha, mainSource } : {}), ...(failures ? { failures, mainFailures } : {}), ...(ranOn ? { ranOn } : {}), ...(values.fleetReceipt ? { fleet: values.fleetReceipt } : {}), ...(targetedReceipt ? { targeted: targetedReceipt } : {}), at: new Date().toISOString() });
       writeRecords(values.worktree, records);
     });
     process.stdout.write(`recorded ${result} for ${values.command.trim()} at ${JSON.stringify(source)}${mainSha ? ` (fails on captured main ${mainSha} too)` : ""}${ranOn ? ` (ran on ${ranOn.host} at ${ranOn.proofCommit})` : ""}\n`);
@@ -711,7 +726,7 @@ async function main(argv) {
         writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...kept, ...left.map(({ lane, reason }) => ({ command: lane, head, source: selected.source, laneKey: selected.laneKey, result: "not-run", reason, at })), ...ruled], null, 2)}\n`);
         for (const { lane, reason } of left) process.stdout.write(`NOT-RUN-LANE ${lane} (${reason})\n`);
       }
-      for (const record of records.filter((item) => lanes.includes(item.command) && sameSelection(item, selected) && item.result === "main-preexisting")) {
+      for (const record of records.filter((item) => lanes.includes(item.command) && sameSelection(item, selected) && item.result === "main-preexisting" && verifiedMainFailureEvidence(item))) {
         process.stdout.write(`MAIN-PREEXISTING-LANE ${record.command} (fails on captured main ${record.mainSha} too; list it under Known main failures)\n`);
       }
       const covered = values["reuse-cache"] ? reuseCachedLanes(values, lanes, records, selected) : [];
@@ -820,12 +835,19 @@ function unaffectedImpact(worktree, request, boundary) {
   return qaImpactDirectCommitScope(worktree, { ...request, lastQa: { ...request.lastQa, boundary } }, head);
 }
 
-/** `sha` when it is a full commit SHA this clone has on its fetched main (origin/main); otherwise an error. */
+/** `sha` when it exactly matches this clone's fetched origin/main; otherwise an error. */
 export function verifiedMainCommit(worktree, sha) {
   if (!COMMIT.test(sha ?? "")) throw new Error("--main-sha must be a full 40-character commit SHA");
-  const onMain = spawnSync("git", ["-C", worktree, "merge-base", "--is-ancestor", sha, "refs/remotes/origin/main"]).status === 0;
-  if (!onMain) throw new Error(`--main-sha ${sha} is not a commit on this clone's fetched origin/main; fetch main or name a main commit`);
+  const main = git(worktree, ["rev-parse", "--verify", "refs/remotes/origin/main^{commit}"]);
+  if (sha !== main) throw new Error(`--main-sha ${sha} is not this clone's exact fetched origin/main ${main}; compare runs on current main`);
   return sha;
+}
+
+/** Compares the exact recorded failure IDs and assertions from both lane runs. */
+export function verifiedMainFailureEvidence(record) {
+  if (!COMMIT.test(record?.mainSha ?? "")) return false;
+  try { return sharedMainFailures({ branch: record.failures, main: record.mainFailures }).length > 0; }
+  catch { return false; }
 }
 
 /**

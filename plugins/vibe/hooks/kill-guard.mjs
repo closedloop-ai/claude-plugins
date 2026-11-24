@@ -11,10 +11,11 @@
 // process that was recorded.
 //
 // The hook runs from pre-tool-use.mjs.
-// Usage (record): kill-guard.mjs own <pid>...   (run from the session's working directory, for example with $!)
+// Usage: kill-guard.mjs own <pid>... | stop <pid> | apply-approved <program> <receipt.json> <literal original command>
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { commandSegments } from "./command-segments.mjs";
@@ -23,6 +24,8 @@ import { isEntryPoint } from "../shared/plugin-roots.mjs";
 
 const SIGNAL_OPTION = /^-(?:[A-Za-z][A-Za-z0-9+-]*|\d+)$/;
 const BY_NAME = /^p?kill(?:all)?$/;
+const APPROVAL_HINT = "Ask the fleet orchestrator for approval of its own workers' recorded targets, or the operator for other targets. Run only the approved literal PID snapshot.";
+const APPROVED_SIGNALS = new Set(["SIGTERM", "SIGINT", "SIGHUP", "SIGKILL"]);
 
 /** The file recording the pids each session called its own. */
 export function ledgerFile(home = os.homedir()) {
@@ -34,21 +37,15 @@ export function killProblems(command, isOwn) {
   const problems = [];
   for (const { words, remote, hasSubstitution } of commandSegments(command, { expandShellPayloads: true })) {
     const name = path.basename(words[0] ?? "");
-    if (remote) {
-      if (name === "kill" && hasSubstitution) {
-        problems.push("kill with a command substitution signals whatever a search matched; kill only a pid you recorded as your own");
-      }
-      continue;
-    }
     if (name !== "kill" && BY_NAME.test(name)) {
-      problems.push(`${name} signals by pattern, which can end other sessions' processes; record your own pid when you start a process and run kill <pid>`);
+      problems.push(`${name} signals by pattern, which can end other sessions' processes; ${APPROVAL_HINT}`);
     } else if (name === "xargs" && words.slice(1).some((word) => path.basename(word) === "kill")) {
-      problems.push("xargs kill signals whatever a search matched; kill only a pid you recorded as your own");
+      problems.push(`xargs kill signals whatever a search matched; ${APPROVAL_HINT}`);
     } else if (name === "kill") {
       if (hasSubstitution) {
-        problems.push("kill with a command substitution signals whatever a search matched; kill only a pid you recorded as your own");
+        problems.push(`kill with a command substitution signals whatever a search matched; ${APPROVAL_HINT}`);
       }
-      problems.push(...killTargets(words.slice(1), isOwn));
+      if (!remote) problems.push(...killTargets(words.slice(1), isOwn));
     }
   }
   return problems;
@@ -128,6 +125,65 @@ function recordOwn(pids, cwd, file = ledgerFile()) {
   writeFileSync(file, `${JSON.stringify(ledger, null, 2)}\n`);
 }
 
+/** Stop one previously recorded PID without importing or requiring any installed plugin version. */
+export function stopOwnedPid(pid, { cwd = process.cwd(), ledger = readLedger(ledgerFile()), startOf = startTimeOf, signal = process.kill } = {}) {
+  if (!Number.isSafeInteger(pid) || pid <= 1 || pid === process.pid || pid === process.ppid || !recordedOwn(ledger, pid, cwd, startOf)) {
+    throw new Error("stop needs one live PID this session started and recorded");
+  }
+  signal(pid, "SIGTERM");
+}
+
+/** Verify a single exact command receipt against its ruling and the process identities it approved. */
+export function approvedSignalTargets(record, { command, rulings, owns, clock = Date.now, startOf = startTimeOf }) {
+  if (record?.version !== 1 || record.command !== command || !APPROVED_SIGNALS.has(record.signal)
+    || !["operator", "orchestrator"].includes(record.authority) || !Array.isArray(record.targets) || !record.targets.length) {
+    throw new Error("the recorded approval does not match this command, authority, signal and PID snapshot");
+  }
+  const expires = Date.parse(record.expiresAt);
+  if (!Number.isFinite(expires) || expires < clock()) throw new Error("the signal approval expired");
+  const digest = createHash("sha256").update(JSON.stringify([record.command, record.authority, record.signal, record.expiresAt, record.targets])).digest("hex");
+  if (!rulings.split(/\r?\n/).some((line) => line.trim() === `Signal approval: ${record.authority} ${digest}`)) {
+    throw new Error("the fleet program contains no ruling for this exact approval snapshot");
+  }
+  const seen = new Set();
+  for (const target of record.targets) {
+    if (!Number.isSafeInteger(target?.pid) || target.pid <= 1 || target.pid === process.pid || target.pid === process.ppid
+      || seen.has(target.pid) || typeof target.started !== "string" || startOf(target.pid) !== target.started
+      || (record.authority === "orchestrator" && !owns(target))) {
+      throw new Error("the approval includes an unowned, expired, duplicate or unrecognized process identity");
+    }
+    seen.add(target.pid);
+  }
+  return record.targets;
+}
+
+/** Consume the operator-owned receipt before sending any signal, and never execute its command string. */
+function applyApproved(program, file, command) {
+  const directory = realpathSync(program);
+  const approvals = path.join(directory, "approved-signals");
+  const st = lstatSync(approvals);
+  if (!st.isDirectory() || realpathSync(approvals) !== approvals) throw new Error("use the fleet program's owned approval directory");
+  if (!/^[a-zA-Z0-9_.-]+\.json$/.test(file)) throw new Error("use the approval receipt's basename");
+  const approval = path.join(approvals, file);
+  const receipt = lstatSync(approval);
+  if (!receipt.isFile() || receipt.uid !== process.getuid() || (receipt.mode & 0o077) || receipt.size > 32768) {
+    throw new Error("the approval receipt is not an owned private regular file");
+  }
+  const record = JSON.parse(readFileSync(approval, "utf8"));
+  const rulings = readFileSync(path.join(directory, "rulings.md"), "utf8");
+  const board = JSON.parse(readFileSync(path.join(directory, "board.json"), "utf8"));
+  const ledger = readLedger(ledgerFile());
+  const roots = Object.values(board.writers ?? {}).filter((writer) => !writer.retiredAt && writer.worktree).map((writer) => writer.worktree);
+  const owns = ({ pid, cwd }) => typeof cwd === "string" && roots.some((root) => cwd === root || cwd.startsWith(root + path.sep))
+    && recordedOwn(ledger, pid, cwd);
+  const targets = approvedSignalTargets(record, { command, rulings, owns });
+  renameSync(approval, `${approval}.used`);
+  for (const { pid, started } of targets) {
+    if (startTimeOf(pid) !== started) throw new Error(`recorded process ${pid} changed before it could be signaled`);
+    process.kill(pid, record.signal);
+  }
+}
+
 /** The PreToolUse result for a Bash call: a deny naming every signal it may not send, or null. */
 export function killGuard(event) {
   const command = event?.tool_input?.command;
@@ -140,8 +196,11 @@ export function killGuard(event) {
 
 if (isEntryPoint(import.meta.url)) {
   try {
-    if (process.argv[2] !== "own") throw new Error("usage: kill-guard.mjs own <pid>...");
-    recordOwn(process.argv.slice(3), process.cwd());
+    const [action, ...args] = process.argv.slice(2);
+    if (action === "own" && args.length) recordOwn(args, process.cwd());
+    else if (action === "stop" && args.length === 1 && /^\d+$/.test(args[0])) stopOwnedPid(Number(args[0]));
+    else if (action === "apply-approved" && args.length === 3) applyApproved(...args);
+    else throw new Error("usage: kill-guard.mjs own <pid>... | stop <pid> | apply-approved <program> <receipt.json> <literal original command>");
   } catch (error) {
     process.stderr.write(`kill-guard: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);

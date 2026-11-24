@@ -16,10 +16,22 @@ snapshot() {
     print -r -- "event ${event:t} ${digest%% *}"
   done
 }
-# Read times and sources belong in usage reports, but they are not material watcher changes. Compare a fingerprint
-# with those fields removed, then retain the newest full snapshot so a later real event reports current read times.
+# Read times and sources belong in the full snapshot, outside the comparison key.
 snapshot_key() {
-  print -r -- "$1" | sed -E '/^(codex|claude)-usage /s/ read=[^ ]+ source=[^ ]+//'
+  print -r -- "$1" | sed -E '/^codex-usage /s/ read=[^ ]+ source=[^ ]+//'
+}
+without_claude_usage() {
+  print -r -- "$1" | sed -E '/^(claude-usage|usage claude)( |$)/d'
+}
+watch_usage() {
+  local before=$1 current=$2
+  shift 2
+  printf '%s\0%s' "$before" "$current" | node "$K/watch-usage-state.mjs" "$W" "$@"
+}
+watch_visible() {
+  if [ -f "$W/board.json" ]; then
+    print -r -- "$1" | node "$K/../../fleet-orchestrator/scripts/writer-retirement.mjs" "$W/board.json"
+  else print -r -- "$1"; fi
 }
 # One watcher per work dir. A second copy (one started with `&` in a foreground shell, then started again)
 # double-reports every event and outlives the turn that started it, so it is refused, not run.
@@ -33,30 +45,51 @@ if ! mkdir $lock 2>/dev/null; then
   rm -rf $lock; mkdir $lock || exit 3
 fi
 print $$ > $lock/pid
-trap 'rm -rf $lock' EXIT
+trap 'if [[ $(cat "$lock/pid" 2>/dev/null) == $$ ]]; then rm -f "$lock/pid" && rmdir "$lock"; fi' EXIT
 trap 'exit 143' TERM HUP INT
 # watcher.json records this watcher's pid and last tick, and its exit, so watcher.mjs can tell a lapsed watcher.
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+identity=$(node --input-type=module -e 'const {readProcessIdentity} = await import(process.argv[1]); const id = readProcessIdentity(Number(process.argv[2])); if (!id) process.exit(1); console.log(JSON.stringify(id));' "$K/../../../shared/process-identity.mjs" $$) || exit 2
 beat() {
   local extra=${1:-}
-  print -r -- "{\"pid\":$$,\"startedAt\":\"$started\",\"lastTickAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"intervalSeconds\":$I$extra}" > $W/watcher.json.tmp && mv $W/watcher.json.tmp $W/watcher.json
+  print -r -- "{\"pid\":$$,\"identity\":$identity,\"startedAt\":\"$started\",\"lastTickAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"intervalSeconds\":$I$extra}" > $W/watcher.json.tmp && mv $W/watcher.json.tmp $W/watcher.json
 }
+finish_watch() {
+  [[ $(cat "$lock/pid" 2>/dev/null) == $$ ]] || return
+  local row=$(cat "$W/watcher.json" 2>/dev/null)
+  if [[ "$row" == "{\"pid\":$$,\"identity\":$identity,\"startedAt\":\"$started\","* ]]; then
+    beat ",\"exitedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
+  fi
+  rm -f "$lock/pid" && rmdir "$lock"
+}
+trap 'finish_watch' EXIT
 beat
 # Compare against the last snapshot the previous run saw, so a change between runs is still reported.
-if [ -s $W/last-snapshot.txt ]; then base=$(cat $W/last-snapshot.txt); else base=$(snapshot); echo "$base" > $W/last-snapshot.txt; fi
-base_key=$(snapshot_key "$base")
+if [ -s $W/last-snapshot.txt ]; then
+  base=$(cat $W/last-snapshot.txt)
+else
+  base=$(snapshot)
+  if [ ! -e $W/last-snapshot.txt ]; then watch_usage "$base" "" reset || exit 2; fi
+  echo "$base" > $W/last-snapshot.txt
+fi
 for _ in $(seq 1 $T); do
   sleep $I
   # Each tick runs a recovery pass first (recover.mjs), so a transient failure is resumed without you.
   now=$(snapshot 1)
-  now_key=$(snapshot_key "$now")
+  before_visible=$(watch_visible "$base"); now_visible=$(watch_visible "$now")
+  usage_events=""
+  if [ -n "$now" ]; then usage_events=$(watch_usage "$before_visible" "$now_visible") || exit 2; fi
+  before_other=$(without_claude_usage "$before_visible"); now_other=$(without_claude_usage "$now_visible")
+  base_key=$(snapshot_key "$before_other"); now_key=$(snapshot_key "$now_other")
   beat
-  if [ -n "$now" ] && [ "$now_key" != "$base_key" ]; then
-    echo "$now" > $W/last-snapshot.txt; beat ",\"exitedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""; echo EVENT; diff <(echo "$base") <(echo "$now") | grep '^[<>]'; exit 0
+  if [ -n "$now" ] && { [ "$now_key" != "$base_key" ] || [ -n "$usage_events" ]; }; then
+    echo "$now" > $W/last-snapshot.txt
+    echo EVENT
+    if [ "$now_key" != "$base_key" ]; then diff <(echo "$before_other") <(echo "$now_other") | grep '^[<>]'; fi
+    if [ -n "$usage_events" ]; then print -r -- "$usage_events"; fi
+    exit 0
   fi
   echo "$now" > $W/last-snapshot.txt
   base=$now
-  base_key=$now_key
 done
-beat ",\"exitedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
 echo "HEARTBEAT no change for ${H}s: read every teammate message and each idle writer's question, then re-arm"; cat $W/last-snapshot.txt

@@ -11,7 +11,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { sameSource, sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
-import { evidenceFingerprint } from "./handoff-evidence.mjs";
+import { evidenceFingerprint, evidenceObject, readEvidence } from "./handoff-evidence.mjs";
 import { reviewReceiptProblems } from "./review-receipts.mjs";
 import { missingTicketNames } from "./ticket-names.mjs";
 import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
@@ -22,10 +22,18 @@ const GATE_FILE = "vibe-handoff-gate.json";
 export const EVIDENCE_KEYS = Object.freeze(["body", "runs", "ticket", "rulings", "audit", "matrix", "review"]);
 const DOCUMENT_EVIDENCE = Object.freeze({ members: "member ticket", prds: "PRD", plans: "plan" });
 
-/** The parsed review receipts the given files fingerprint. */
+/** Read each receipt once, retaining the exact fingerprints the handoff witness records. */
+export function readReviewEvidence(files) {
+  if (!Array.isArray(files)) throw new Error("review receipts must be a list");
+  return files.map((file) => {
+    const evidence = typeof file === "string" ? readEvidence(file) : readEvidence(file.path, file);
+    return { fingerprint: evidence.fingerprint, receipt: evidenceObject(evidence) };
+  });
+}
+
+/** Review objects from authenticated receipt files or independently retained fingerprints. */
 export function readReviewReceipts(files) {
-  if (!Array.isArray(files) || files.length === 0) return [];
-  return files.map(file => JSON.parse(readFileSync(evidenceFingerprint(file).path, "utf8")));
+  return readReviewEvidence(files ?? []).map((entry) => entry.receipt);
 }
 
 function git(worktree, args) {
@@ -89,9 +97,9 @@ export function handoffGateProblem(worktree, { base, bodyFile, title } = {}) {
     for (const [key, label] of Object.entries(DOCUMENT_EVIDENCE)) {
       if ((record.evidence?.[key] ?? []).some(saved => JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved))) return `handoff ${label} evidence changed`;
     }
-    if (!Array.isArray(record.receipts) || record.receipts.some(saved => JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved))) return "handoff review receipt changed";
-    if (reviewReceiptProblems(readReviewReceipts(record.receipts.map(item => item.path)), sourceIdentity(worktree),
-      { reusableRoles: new Set(Array.isArray(record.reviewCarry) ? record.reviewCarry : []) }).problems.length) return "handoff review evidence is stale or incomplete";
+    if (!Array.isArray(record.receipts)) return "handoff review receipt changed";
+    if (reviewReceiptProblems(readReviewReceipts(record.receipts), sourceIdentity(worktree),
+      { worktree, reusableRoles: new Set(Array.isArray(record.reviewCarry) ? record.reviewCarry : []) }).problems.length) return "handoff review evidence is stale or incomplete";
     return null;
   } catch {
     return "handoff gate could not verify the current source";

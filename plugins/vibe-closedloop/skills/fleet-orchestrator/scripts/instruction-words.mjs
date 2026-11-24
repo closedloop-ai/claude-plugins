@@ -14,6 +14,7 @@
 // "about <N> words longer" with N within 2% (at least 10 words) of the net;
 // exits 1 otherwise.
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -64,7 +65,7 @@ function main(argv) {
       { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     let untrackedDiff = "";
     if (!values.head) {
-      const files = execFileSync('git', ['-C', values.repo ?? '.', 'ls-files', '--others', '--exclude-standard', '-z', '--', ...markdown], { encoding: 'utf8' }).split('\0').filter(Boolean);
+      const files = readGitInventory(values.repo ?? '.', ['ls-files', '--others', '--exclude-standard', '-z', '--', ...markdown]).split('\0').filter(Boolean);
       untrackedDiff = files.map(file => readFileSync(path.resolve(values.repo ?? '.', file), 'utf8').split('\n').map(line => `+${line}`).join('\n')).join('\n');
     }
     const counts = countWords(`${diff}\n${untrackedDiff}`);

@@ -1,3 +1,4 @@
+import { proseLines } from "../../../shared/markdown-lines.mjs";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { localPlanPaths } from "../../vibe/scripts/session-artifact-paths.mjs";
@@ -10,15 +11,7 @@ const PENDING_EVIDENCE = /^(?:\*\*)?(?:pending|tbd)\b(?:\*\*)?(?:[.:;]\s*.*)?$/i
 function sections(text) {
   const result = new Map();
   let heading = "";
-  let fence = null;
-  for (const line of text.split(/\r?\n/)) {
-    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-    if (marker) {
-      if (!fence) fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker) fence = null;
-      continue;
-    }
-    if (fence) continue;
+  for (const [,line] of proseLines(text)) {
     const next = /^##\s+(.+?)\s*$/.exec(line)?.[1];
     if (next) {
       heading = next;
@@ -103,17 +96,9 @@ export function decisionTableProblems(worktree) {
  * describe a rule, not the table's status.
  */
 function laterNotAligned(text) {
-  let fence = null;
   let latestSection = -1;
   let latestHeld = -1;
-  for (const [index, line] of text.split(/\r?\n/).entries()) {
-    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-    if (marker) {
-      if (!fence) fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker) fence = null;
-      continue;
-    }
-    if (fence) continue;
+  for (const [index,line] of proseLines(text)) {
     if (/^##\s+Final Alignment Status\s*$/.test(line)) latestSection = index;
     else if (!line.trimStart().startsWith("|") && /\bNot aligned\b/i.test(line)) latestHeld = index;
   }
