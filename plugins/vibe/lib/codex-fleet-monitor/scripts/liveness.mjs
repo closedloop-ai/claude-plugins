@@ -6,6 +6,7 @@
 // It never loads a thread's history: a long thread's full read is tens of MB of JSON.
 // Self-contained: speaks the Codex App Server protocol to the managed daemon through
 // `codex app-server proxy`, so a single file is all a remote host needs.
+import { capturedJson } from "../../vibe/scripts/captured-json.mjs";
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -249,7 +250,7 @@ export function daemonSocket(codex = 'codex') {
   const fallback = `${homedir()}/.codex/app-server-control/app-server-control.sock`;
   try {
     const started = execFileSync(codex, ['app-server', 'daemon', 'start'], { encoding: 'utf8', timeout: 30_000 });
-    return JSON.parse(started).socketPath ?? fallback;
+    return capturedJson(started).socketPath ?? fallback;
   } catch {
     return fallback;
   }

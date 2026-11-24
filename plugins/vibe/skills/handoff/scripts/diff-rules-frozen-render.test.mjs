@@ -321,3 +321,19 @@ test("each explicit global input and a lockfile-only diff select every frozen st
   const unrelated = run(t, { base, head: { "packages/other/package.json": "changed other\n" } });
   assert.equal(unrelated.blocking.some((entry) => entry.rule === "frozen-render"), false);
 });
+
+test("AC-49 the writer quick gate finds frozen stories from the base scheme when no predicate is passed", (t) => {
+  const first = "apps/storybook/stories/first.stories.tsx";
+  const componentCss = "packages/design-system/components/first.css";
+  // With no story-order file on the base, the version scheme applies: a story tagged v1.0 is frozen.
+  const result = run(t, { base: {
+    [first]: "import { First } from \"@repo/design-system/components/first\";\nexport default { title: \"Composites/First\", tags: [\"v1.0\"] };\nexport const Default = {};\n",
+    "packages/design-system/components/first.tsx": "import \"./first.css\";\nexport const First = 1;\n",
+    [componentCss]: ".first { color: red; }\n",
+  }, head: { [componentCss]: ".first { color: blue; }\n" } });
+  const quick = runDiffRules({ worktree: result.checkout, base: result.baseSha, binding: PROVIDER_BINDING })
+    .blocking.filter((finding) => finding.rule === "frozen-render");
+  assert.equal(quick.length, 1, "the gate with no caller predicate still selects the frozen story");
+  assert.match(quick[0].problem, /1 frozen v1\.0 story files/);
+  assert.match(quick[0].problem, /first\.stories\.tsx/);
+});

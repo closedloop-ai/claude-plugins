@@ -1,9 +1,9 @@
+import { readGitInventory } from "../../../plugins/vibe/lib/vibe/scripts/git-inventory.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import picomatch from "picomatch";
-import { git } from "../../../plugins/vibe/lib/vibe/scripts/session-record.mjs";
 import { isPlanFile, planPrefixOf } from "./main-sync-plan-folder.js";
 import { isCommittedFile } from "./main-sync-committed-tree.js";
 
@@ -40,7 +40,7 @@ export type InputReference = { kind: "path"; value: string; base: "module" | "ru
 
 /** One finite syntax owner serves both private evidence and retained-report admission. */
 export function committedInputReferences(root: string, matches: (file: string, reference: InputReference) => boolean) {
-  const files = git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean);
+  const files = readGitInventory(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean);
   return files.some((file) => isInputModulePath(file, root)
     && inputModuleReferences(root, file, matches, parseInputModule(root, file)));
 }

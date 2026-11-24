@@ -61,6 +61,7 @@ import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 export { criteriaStates, memberCriteria, ticketCriteria };
 
+const { boundEvidenceReader } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { failScript } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
@@ -169,18 +170,19 @@ function recordedMembers(worktree) {
 }
 
 function main(argv) {
-  const { values } = parseArgs({ args: argv, options: { worktree: { type: "string" }, ticket: { type: "string" }, audit: { type: "string" }, matrix: { type: "string" }, at: { type: "string" }, member: { type: "string", multiple: true }, prd: { type: "string", multiple: true }, plan: { type: "string", multiple: true }, review: { type: "string" }, slug: { type: "string" }, "passing-on": { type: "boolean" }, "ticket-status": { type: "string", multiple: true } } });
+  const { values } = parseArgs({ args: argv, options: { "bound-inputs": { type: "boolean" }, worktree: { type: "string" }, ticket: { type: "string" }, audit: { type: "string" }, matrix: { type: "string" }, at: { type: "string" }, member: { type: "string", multiple: true }, prd: { type: "string", multiple: true }, plan: { type: "string", multiple: true }, review: { type: "string" }, slug: { type: "string" }, "passing-on": { type: "boolean" }, "ticket-status": { type: "string", multiple: true } } });
   if (!values.worktree || !values.ticket || !values.audit || !values.matrix) {
     throw new Error("Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json> [--member <slug>=<body> ...] [--prd <slug>=<body> ...] [--plan <slug>=<body> ...] [--review <review.json>] [--slug <ticket slug>] [--passing-on --ticket-status <slug>=<STATUS> ...]");
   }
-  const ticket = readFileSync(values.ticket, "utf8");
+  const read = values["bound-inputs"] ? boundEvidenceReader(JSON.parse(readFileSync(0, "utf8"))) : file => readFileSync(file, "utf8");
+  const ticket = read(values.ticket);
   const own = ticketCriteria(ticket);
   const recorded = recordedMembers(values.worktree);
-  const members = memberCriteria(values.member ?? [], recorded);
+  const members = memberCriteria(values.member ?? [], recorded, read);
   const criteria = [...own, ...members.criteria];
   const at = values.at === EvidenceAt.Head ? EvidenceAt.Head : EvidenceAt.Worktree;
   const waiting = [];
-  const audit = readFileSync(values.audit, "utf8");
+  const audit = read(values.audit);
   const surface = noSurfaceMarks(audit, criteria, { worktree: values.worktree, at, rowsAudited: true });
   const problems = [
     ...(own.length === 0 ? ["the ticket has no acceptance criteria checklist"] : []),
@@ -188,9 +190,9 @@ function main(argv) {
     ...members.problems,
     ...auditProblems(audit, criteria, values.worktree, at, { passingOn: values["passing-on"] === true, statuses: ticketStatuses(values["ticket-status"] ?? []), waiting, marks: surface.marks }),
     ...surface.problems,
-    ...matrixProblems(JSON.parse(readFileSync(values.matrix, "utf8")), criteria),
+    ...matrixProblems(JSON.parse(read(values.matrix)), criteria),
   ];
-  const unit = unitReview(values, recorded, at, surface.marks);
+  const unit = unitReview(values, recorded, at, surface.marks, read);
   problems.push(...unit.problems);
   const noSurface = [...surface.marks].map(([id, mark]) => noSurfaceLine(id, mark.reason, values.slug));
   const exemptions = unit.notVisible.length ? { notVisible: unit.notVisible.map((entry) => `NOT-VISIBLE ${entry.ticket} ${entry.criterion}: ${entry.reason}`) } : {};
@@ -208,12 +210,12 @@ function ticketStatuses(entries) {
 }
 
 /** A unit (member tickets, recorded or given, or a PRD) needs its review of the completed work: code and visual QA per criterion, page and surface. */
-function unitReview(values, recorded, at, marks) {
+function unitReview(values, recorded, at, marks, read) {
   const isUnit = recorded.length > 0 || (values.member ?? []).length > 0 || (values.prd ?? []).length > 0;
   if (!values.review) {
     return { notVisible: [], problems: isUnit ? ["this session delivers a unit (member tickets or a PRD); pass --review <review.json> and --prd <slug>=<body> for its PRD, so every member and PRD criterion is reviewed in code and in visual QA (unit-review.mjs)"] : [] };
   }
-  const result = reviewUnit({ worktree: values.worktree, ticket: values.ticket, review: values.review, slug: values.slug, members: values.member ?? [], prds: values.prd ?? [], plans: values.plan ?? [], at, marks });
+  const result = reviewUnit({ worktree: values.worktree, ticket: values.ticket, review: values.review, slug: values.slug, members: values.member ?? [], prds: values.prd ?? [], plans: values.plan ?? [], at, marks, read });
   const problems = result.ok ? [] : result.lines.filter((line) => /^(?:GAP|PROBLEM) /.test(line)).map((line) => line.replace(/^PROBLEM /, "unit review: "));
   return { notVisible: result.notVisible, problems };
 }

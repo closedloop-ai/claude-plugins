@@ -1,3 +1,4 @@
+import { readGitInventory } from "../../../plugins/vibe/lib/vibe/scripts/git-inventory.mjs";
 import { MainSyncError } from "./main-sync-contracts.js";
 import type { CheckCommand } from "./main-sync-lanes.js";
 import { rejectReportReplay, reportExecutionSchema, type ReportExecutionOwner as ExecutionOwner } from "./main-sync-report-execution.js";
@@ -5,7 +6,6 @@ import { reportCommandEntries } from "./main-sync-report-command.js";
 import { verifyReportClosure } from "./main-sync-report-closure.js";
 import { committedIdentity } from "./main-sync-state.js";
 import { withCommittedTree } from "./main-sync-committed-tree.js";
-import { git } from "../../../plugins/vibe/lib/vibe/scripts/session-record.mjs";
 
 /** Actual structured recipe argv is checked again; caller text cannot authorize replay or retained-result verdicts. */
 export function verifyReportRecipe(commands: readonly CheckCommand[]) {
@@ -31,7 +31,7 @@ export function verifyReportExecution(retainedRoot: string, root: string, owner:
 /** Declared producer source inputs remain independent of a bootstrap/health purpose. */
 export function verifyReportProducerInputs(retainedRoot: string, root: string, owner: ExecutionOwner, inputs: readonly string[]) {
   const identity = committedIdentity(root);
-  const files = git(root, ["ls-tree", "-r", "--name-only", "HEAD", "--", ...inputs]).split("\n")
+  const files = readGitInventory(root, ["ls-tree", "-r", "--name-only", "HEAD", "--", ...inputs]).trim().split("\n")
     .filter(file => /\.[cm]?[jt]sx?$/.test(file));
   const execution = reportExecutionSchema.parse({ root, retainedRoot, owner, argv: ["declared-producer-inputs"], cwd: root,
     headSha: identity.headSha, treeSha: identity.treeSha });

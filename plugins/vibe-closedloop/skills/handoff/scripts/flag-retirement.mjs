@@ -1,4 +1,5 @@
 import { isE2ePath, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
+import { checkRetiredFlagDependencies } from "./retirement-evidence.mjs";
 import { createImportClosure, escapeRegExp, SOURCE_FILE } from "./source-imports.mjs";
 
 const REGISTRY = /(?:^|\/)retired-feature-flags\.[cm]?[jt]s$/;
@@ -40,6 +41,7 @@ export function checkFlagRetirement(files, repo, changeLog, add) {
   const lines = logLines.map((line) => COVERAGE.exec(line)).filter(Boolean);
 
   return retirements.map(({ key, file }) => {
+    checkRetiredFlagDependencies(key, files, repo, add);
     const entries = new Map();
     const fix = candidates.length ? `review each base spec/story for ${key}; record \`Flag retirement: ${key}: <updated|removed|retained|pinned|unrelated> <path>: <evidence>\` and update or remove cases that used the retired arm`
       : `record \`Flag retirement: ${key}: none: <evidence>\` for the empty base inventory`;

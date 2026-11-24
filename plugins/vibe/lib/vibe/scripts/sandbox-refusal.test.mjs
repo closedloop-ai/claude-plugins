@@ -50,7 +50,7 @@ test("session-questions reports a refused write for an escalated rerun, never a 
 test("image-head reports a refused record for an escalated rerun (ISS-13321)", (t) => {
   const { home } = lockedHome(t);
   const args = ["record", "--project", "cl-e2e", "--worktree", home, "--head", "a".repeat(40), "--records",
-    path.join(home, ".codex", "vibe", "locks", "e2e-images"), "--", "docker", "compose", "up", "--build"];
+    path.join(home, ".codex", "vibe", "locks", "e2e-images"), "--", "docker", "compose", "-f", "e2e/compose.yml", "up", "--build"];
   const sandboxed = run("image-head.mjs", args, home, SANDBOX);
   assert.equal(sandboxed.status, 1);
   assert.equal(JSON.parse(sandboxed.stdout).escalate, true);

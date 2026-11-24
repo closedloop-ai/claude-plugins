@@ -5,12 +5,16 @@
 // So a run starts only when the worktree's HEAD is the commit it means to
 // test, and its result carries HEAD plus the uncommitted diff and tree hashes.
 
+import { readGitInventory } from "./git-inventory.mjs";
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { git } from "./session-record.mjs";
+
+const COMMITTED_READ_BYTES = 128 * 1024 * 1024;
+const BLOB_BATCH_BYTES = 32 * 1024 * 1024;
 
 function matchedHead(worktree, intended) {
   if (!/^[0-9a-f]{7,40}$/i.test(intended ?? "")) throw new Error("name the commit to test as a SHA (--head <sha>)");
@@ -35,6 +39,55 @@ export function testedHead(worktree, intended) {
 function field(hash, value) {
   const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
   hash.update(`${bytes.length}:`).update(bytes);
+}
+
+function blobInput(entries) {
+  return entries.map(({ oid }) => oid).join('\n') + '\n';
+}
+
+/** Hash complete blob frames in tree order without buffering the whole tree's contents. */
+function hashCommittedBlobs(run, entries, hash) {
+  if (entries.length === 0) return;
+  const headers = run(['cat-file', '--batch-check'], blobInput(entries)).toString().split('\n');
+  if (headers.pop() !== '' || headers.length !== entries.length) throw new Error('incomplete committed blob metadata');
+  const sized = entries.map((entry, index) => {
+    const header = headers[index];
+    const [oid, kind, declared] = header.split(' ');
+    const size = Number(declared);
+    if (oid !== entry.oid || kind !== 'blob' || !/^\d+$/.test(declared) || !Number.isSafeInteger(size)) {
+      throw new Error('unverified committed blob metadata');
+    }
+    const frameBytes = Buffer.byteLength(header) + size + 2;
+    if (frameBytes > COMMITTED_READ_BYTES) throw new Error('committed blob exceeds the Git read bound');
+    return { ...entry, header, size, frameBytes };
+  });
+  let start = 0;
+  let batchBytes = 0;
+  for (let index = 0; index < sized.length; index++) {
+    const { frameBytes } = sized[index];
+    if (index > start && batchBytes + frameBytes > BLOB_BATCH_BYTES) {
+      hashBlobBatch(run, sized.slice(start, index), hash);
+      start = index;
+      batchBytes = 0;
+    }
+    batchBytes += frameBytes;
+  }
+  hashBlobBatch(run, sized.slice(start), hash);
+}
+
+function hashBlobBatch(run, entries, hash) {
+  const objects = run(['cat-file', '--batch'], blobInput(entries));
+  let offset = 0;
+  for (const { file, mode, header, size } of entries) {
+    const end = objects.indexOf(10, offset);
+    if (end < 0 || objects.subarray(offset, end).toString() !== header) throw new Error('unverified committed blob');
+    offset = end + 1;
+    const content = objects.subarray(offset, offset + size);
+    offset += size;
+    if (content.length !== size || objects[offset++] !== 10) throw new Error('incomplete committed blob');
+    field(hash, file); field(hash, mode === '120000' ? 'symlink' : mode === '100755' ? '73' : '0'); field(hash, content);
+  }
+  if (offset !== objects.length) throw new Error('unexpected committed blob data');
 }
 
 function hashFiles(root, files, includeDeleted = false) {
@@ -76,10 +129,11 @@ export function sourceIdentity(worktree, intended = git(worktree, ['rev-parse', 
   worktree = git(worktree, ['rev-parse', '--show-toplevel']);
   const head = matchedHead(worktree, intended);
   const run = (args) => execFileSync('git', ['-C', worktree, ...args], { maxBuffer: 128 * 1024 * 1024 });
-  const names = (args) => run(args).toString('utf8').split('\0').filter(Boolean);
-  const untracked = names(['ls-files', '--others', '--exclude-standard', '-z']);
-  const files = [...names(['ls-tree', '-r', '--name-only', '-z', 'HEAD']), ...names(['ls-files', '-z'])];
-  const changed = names(['diff', '--name-only', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', 'HEAD', '--']);
+  const names = (output) => output.toString('utf8').split('\0').filter(Boolean);
+  const untracked = names(readGitInventory(worktree, ['ls-files', '--others', '--exclude-standard', '-z']));
+  const files = [...names(readGitInventory(worktree, ['ls-tree', '-r', '--name-only', '-z', 'HEAD'])),
+    ...names(readGitInventory(worktree, ['ls-files', '-z']))];
+  const changed = names(run(['diff', '--name-only', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', 'HEAD', '--']));
   validateSourceEntries(worktree, [...files, ...untracked]);
   const diffSha256 = hashFiles(worktree, [...changed, ...untracked], true);
   const source = { head, diffSha256, treeSha256: hashFiles(worktree, [...files, ...untracked]) };
@@ -101,29 +155,19 @@ export function committedFile(worktree, commit, file) {
 /** Fingerprint immutable Git blobs using exactly the working-source framing, without checkout or index mutation. */
 export function committedSourceIdentity(worktree, commit) {
   if (!/^[a-f0-9]{40}$/.test(commit ?? "")) throw new Error("a verified full commit SHA is required");
-  const run = args => execFileSync('git', ['-C', worktree, ...args], { maxBuffer: 128 * 1024 * 1024, timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });
+  const run = (args, input) => execFileSync('git', ['-C', worktree, ...args], {
+    input, maxBuffer: COMMITTED_READ_BYTES, timeout: 30_000, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+  });
   if (run(['rev-parse', '--verify', `${commit}^{commit}`]).toString().trim() !== commit) throw new Error('unverified commit');
   // Path remains primary; blob identity and mode also order duplicate-path tree entries.
-  const entries = run(['ls-tree', '-rz', '--full-tree', commit]).toString().split('\0').filter(Boolean).map(line => {
+  const entries = readGitInventory(worktree, ['ls-tree', '-rz', '--full-tree', commit]).split('\0').filter(Boolean).map(line => {
     const match = /^(100644|100755|120000) blob ([a-f0-9]{40})\t(.+)$/.exec(line);
     if (!match) throw new Error('unsupported committed source entry');
     return { mode: match[1], oid: match[2], file: match[3] };
   }).sort((a, b) => a.file < b.file ? -1 : a.file > b.file ? 1
     : a.oid < b.oid ? -1 : a.oid > b.oid ? 1 : a.mode < b.mode ? -1 : a.mode > b.mode ? 1 : 0);
-  const objects = execFileSync('git', ['-C', worktree, 'cat-file', '--batch'], {
-    input: entries.length ? entries.map(entry => entry.oid).join('\n') + '\n' : '', maxBuffer: 128 * 1024 * 1024, timeout: 30_000,
-  });
-  const hash = createHash('sha256'); let offset = 0;
-  for (const entry of entries) {
-    const end = objects.indexOf(10, offset);
-    const [oid, kind, size] = objects.subarray(offset, end).toString().split(' ');
-    if (oid !== entry.oid || kind !== 'blob' || !/^\d+$/.test(size)) throw new Error('unverified committed blob');
-    offset = end + 1;
-    const content = objects.subarray(offset, offset + Number(size)); offset += Number(size);
-    if (content.length !== Number(size) || objects[offset++] !== 10) throw new Error('incomplete committed blob');
-    field(hash, entry.file); field(hash, entry.mode === '120000' ? 'symlink' : entry.mode === '100755' ? '73' : '0'); field(hash, content);
-  }
-  if (offset !== objects.length) throw new Error('unexpected committed blob data');
+  const hash = createHash('sha256');
+  hashCommittedBlobs(run, entries, hash);
   return { head: commit, diffSha256: createHash('sha256').digest('hex'), treeSha256: hash.digest('hex') };
 }
 
@@ -192,7 +236,7 @@ export function copySourceTree(source, destination) {
   if (inside(root, target)) throw new Error('Snapshot output must be outside its selected source root');
   return withStableSource(root, () => {
     const repo = git(root, ['rev-parse', '--show-toplevel']);
-    const selected = execFileSync('git', ['-C', repo, 'ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', path.relative(repo, root) || '.'], { encoding: 'utf8' })
+    const selected = readGitInventory(repo, ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', path.relative(repo, root) || '.'])
       .split('\0').filter(Boolean).map(file => path.relative(root, path.join(repo, file)));
     const allowed = new Set(selected);
     const entries = new Map();

@@ -5,7 +5,8 @@
 // line over recipe text, and where each whole reference file goes. The built plugin carries the provider's contract
 // in provider/provider.json and no block file: the assembled text is all a reader needs.
 
-import { execFileSync } from "node:child_process";
+import { replaceFrontmatterDescription } from "../../../plugins/vibe/lib/vibe/scripts/agent-frontmatter.mjs";
+import { readGitInventory } from "../../../plugins/vibe/lib/vibe/scripts/git-inventory.mjs";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
@@ -269,7 +270,7 @@ export class ClosedLoopBuild {
     const assembled = this.assemble(relative);
     let text = assembled.recipes ? withNote(assembled.text, this.data.recipesNote) : assembled.text;
     const description = this.data.descriptions[relative];
-    if (description !== undefined) text = withDescription(text, description, relative);
+    if (description !== undefined) text = replaceFrontmatterDescription(text, description);
     return this.finish(text, target);
   }
 
@@ -356,10 +357,7 @@ export function builtText(target: string, paths: BuildPaths = DEFAULT_PATHS): st
 
 /** The source plugin's files the build reads: git's tracked and unignored files that exist, minus EXCLUDED; sorted. */
 export function sourceFiles(source: string): string[] {
-  const listed = execFileSync("git", ["-C", source, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
+  const listed = readGitInventory(source, ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."]);
   const files = new Set(listed.split("\0").filter(Boolean));
   return [...files].filter((relative) => !isExcluded(relative) && isFile(join(source, relative))).sort(compare);
 }
@@ -403,15 +401,6 @@ function withNote(text: string, note: string): string {
   if (lines[at]?.startsWith("# ")) lines.splice(at + 1, 0, "", note);
   else lines.splice(at, 0, note, "");
   return lines.join("\n");
-}
-
-function withDescription(text: string, description: string, relative: string): string {
-  const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(text);
-  const lines = frontmatter?.[1]?.split("\n") ?? [];
-  const at = lines.findIndex((line) => line.startsWith("description: "));
-  if (!frontmatter || at === -1) throw new Error(`${relative} has no one-line frontmatter description to replace`);
-  lines[at] = `description: ${description}`;
-  return `---\n${lines.join("\n")}\n---\n${text.slice(frontmatter[0].length)}`;
 }
 
 function executable(entry: Entry, paths: BuildPaths): boolean {

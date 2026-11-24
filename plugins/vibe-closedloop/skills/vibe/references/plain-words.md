@@ -108,25 +108,12 @@ the person.
   slug and the record's real id (read from the open app tab's address bar or
   the API). It refuses a route pattern (`[id]`, `:id`, `<id>`), so look up
   the real path first.
-- A preview, pull request or ticket: the URL its tool returned (the
-  prototype's recorded preview URL, the pull request's URL, the ticket's
-  `webUrl`).
-- The message carries only the URL. The command that built it, its name and
-  its flags never sit in the message, beside the person's words or as a
-  link's target. With no URL to give, such as when you could not run
-  `link`, say in words what is ready, by the name the person sees in the
-  product, and write no link: never a placeholder link or a note in its
-  place.
-- When `link` prints `url: null`, nothing is running or deployed to open yet.
-  Where the step you are on already starts it (a new component's gallery
-  link, `SKILL.md` section 5), start it and run `link` again. Otherwise say so in plain words and offer to start it, such as "Your copy of the app
-  isn't ready to open yet; want me to start it?" or "The component gallery
-  isn't running; want me to start it so you can see this?", asked once like
-  every question (`SKILL.md`, "Questions are asked once"), and name no place
-  to go look in the meantime ("your copy of the app" with nothing deployed is
-  not a place the person can open). On yes, start it
-  (`vibe-setup-worker` starts the local gallery; `SKILL.md` section 6 deploys
-  the app), then send the link. Never send the id or path in its place.
+- Share the verified preview or pull request URL, or the ticket's `webUrl`. Include access instructions
+  when a preview requires team sign-in and share progress while waiting.
+- Send URLs without commands or flags. When `link` prints `url: null`, nothing is running or deployed to open yet. Start the
+  documented environment if the current step calls for it, then run `link` again.
+  Otherwise say so in plain words and offer to start it.
+  Only send the verified link once it exists. Never send the id or path in its place.
 
 ## When the person asks for technical detail
 
