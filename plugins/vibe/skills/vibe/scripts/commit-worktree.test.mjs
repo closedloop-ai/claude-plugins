@@ -332,3 +332,17 @@ test("--exclude never drops the session's tracked changes and refuses a path tha
     assert.equal(git(checkout, ["diff", "--cached", "--name-only"], home), "", `${exclude}: nothing is left staged`);
   }
 });
+
+test("on a seed refresh branch the commit runs the seed walk guard and refuses a product file before committing", (t) => {
+  const { home, checkout } = setup(t);
+  git(checkout, ["checkout", "-q", "-b", "fix/iss-123-vibe-seed"], home);
+  write(checkout, "apps/app/page.tsx", "two\n");
+  const before = commitCount(checkout, home);
+  const refused = runNode(SCRIPT, ["--worktree", checkout, "--subject", "ISS-123: Refresh the seed"], home);
+  assert.notEqual(refused.status, 0);
+  assert.match(JSON.stringify(refused.json), /seed refresh cannot edit product, FEATURE_MAP or unrelated paths: apps\/app\/page\.tsx/);
+  assert.equal(commitCount(checkout, home), before, "nothing was committed");
+  git(checkout, ["checkout", "-q", "-b", "fix/other-work"], home);
+  const ordinary = runNode(SCRIPT, ["--worktree", checkout, "--subject", "ISS-124: Ordinary change"], home);
+  assert.equal(ordinary.status, 0, JSON.stringify(ordinary.json));
+});

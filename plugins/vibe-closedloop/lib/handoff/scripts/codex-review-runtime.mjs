@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { finalMarker, read as readHelpers, readHelperInput, resolveHelperBrief } from "../../fleet-orchestrator/scripts/helpers.mjs";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { assembleProviderText, sessionBinding } from "../../vibe/scripts/provider.mjs";
+import { evidenceArray } from "./handoff-evidence.mjs";
 import { graphAliases } from "./mcp-tool-names.mjs";
 import { connectViaProxy, daemonSocket } from "../../codex-fleet-monitor/scripts/liveness.mjs";
 import { findCli } from "../../../skills/vibe/scripts/plugin-cli.mjs";
@@ -43,7 +44,7 @@ export function observedCodexTurn(thread, sessionId, turnId) {
   const failedToolCalls = turn.items.filter(item => item?.type === "mcpToolCall" && item.status === "failed"
     && typeof item.server === "string" && typeof item.tool === "string")
     .map(item => ({ name: nativeMcpName(item), error: String(item.error?.message ?? item.error ?? item.message ?? "tool call failed") }));
-  return { sessionId, turnId, status: "completed", toolCalls, failedToolCalls };
+  return { sessionId, turnId, status: "completed", ...(thread.cwd ? { cwd: realpathSync(thread.cwd) } : {}), toolCalls, failedToolCalls };
 }
 
 /** A managed reviewer probes graph first; an approval refusal stops before its findings can be accepted. */
@@ -103,19 +104,53 @@ export async function managedReviewClient({ core, resolveCli } = {}) {
   catch (error) { client.close(); throw error; }
 }
 
+/** Allocate a fresh cwd-bound thread on the caller's initialized managed client. */
+async function startReadOnlyThread({ stateFile, worktree, helper, model }, client) {
+  const { initializeSession, startThread } = await import("../../../skills/cl-sweep/scripts/native-app-server-orchestrator.mjs");
+  const { DEFAULT_REASONING_EFFORT } = await import("../../../skills/cl-sweep/scripts/model-policy.mjs");
+  const { listModels } = await import("../../../skills/cl-sweep/scripts/model-catalog.mjs");
+  const modelCatalog = await listModels(client);
+  const session = initializeSession({ stateFile, cwd: worktree, serviceName: helper, approvalPolicy: "never",
+    sandbox: "read-only", model: model, effort: DEFAULT_REASONING_EFFORT, modelCatalog });
+  if (session.options.model !== model) throw new Error("The managed Codex App Server cannot run the requested review model " + model);
+  // Both operations share one initialized connection, including the first turn on a newly allocated thread.
+  const connection = { client, initializeClient: async () => {} };
+  const { threadId } = await startThread({ stateFile }, connection);
+  return { threadId, connection };
+}
+
+/** Dispatch one human QA guide. Return its durable session so the operator can continue in the same thread. */
+export async function launchQaGuide(input, openClient = managedReviewClient, resolvePull) {
+  const { prepareGuide, loadGuideSkill } = await import("./qa-guide-brief.mjs");
+  const worktree = realpathSync(input.worktree);
+  const orchDir = realpathSync(resolveWorkDir(input.orchDir).dir);
+  if (orchDir === worktree || orchDir.startsWith(worktree + path.sep)) throw new Error("QA guide state belongs outside the source worktree");
+  if (!input.writerThread?.trim()) throw new Error("Identify the PR writer thread before dispatch");
+  const brief = prepareGuide(resolveHelperBrief(orchDir, input.brief), worktree, resolvePull);
+  const client = await openClient();
+  try {
+    const skill = await loadGuideSkill(client, worktree);
+    const stateFile = path.join(mkdtempSync(path.join(orchDir, "codex-qa-guide-")), "session.json");
+    const { threadId, connection } = await startReadOnlyThread({ stateFile, worktree, helper: input.helper, model: input.model }, client);
+    if (threadId === input.writerThread) throw new Error("QA guide received the PR writer thread");
+    const { startTurn } = await import("../../../skills/cl-sweep/scripts/native-app-server-orchestrator.mjs");
+    const { turnId } = await startTurn({ stateFile, prompt: [brief, skill].join("\n\n") }, connection);
+    return { threadId, turnId, stateFile };
+  } finally { client.close(); }
+}
+
 /** Run a read-only managed turn and save the actual final answer. Acceptance is a separate coordinator action. */
 export async function runManagedReviewer(input, openClient = managedReviewClient) {
   const { REVIEW_ROLES } = await import("./review-receipts.mjs");
   if (!REVIEW_ROLES.includes(input.role)) throw new Error("Unknown native review role: " + input.role);
-  const { initializeSession, startThread, runTurn, parseGenericCallback, EVENT_PREFIX } =
+  const { runTurn, parseGenericCallback, EVENT_PREFIX } =
     await import("../../../skills/cl-sweep/scripts/native-app-server-orchestrator.mjs");
-  const { DEFAULT_REASONING_EFFORT } = await import("../../../skills/cl-sweep/scripts/model-policy.mjs");
   const worktree = realpathSync(input.worktree);
   const orchDir = realpathSync(resolveWorkDir(input.orchDir).dir);
   if (orchDir === worktree || orchDir.startsWith(worktree + path.sep)) throw new Error("Reviewer evidence belongs outside the source worktree");
   if (Object.hasOwn(readHelpers(orchDir), input.helper)) throw new Error("Choose a fresh reviewer helper name");
   const capabilities = readHelperInput(input.capabilities);
-  const reads = JSON.parse(capabilities.text);
+  const reads = evidenceArray(capabilities);
   const binding = sessionBinding(worktree);
   const aliases = graphAliases(reads);
   if (reads.some(capability => capability.access !== "read")) throw new Error("Reviewers require read-only capabilities");
@@ -131,14 +166,7 @@ export async function runManagedReviewer(input, openClient = managedReviewClient
   let helper;
   let activeTurn;
   try {
-    const { listModels } = await import("../../../skills/cl-sweep/scripts/model-catalog.mjs");
-    const modelCatalog = await listModels(client);
-    const session = initializeSession({ stateFile, cwd: worktree, serviceName: input.helper, approvalPolicy: "never",
-      sandbox: "read-only", model: input.model, effort: DEFAULT_REASONING_EFFORT, modelCatalog });
-    if (session.options.model !== input.model) throw new Error("The managed Codex App Server cannot run the requested review model " + input.model);
-    // Both operations share one initialized connection, including the first turn on a newly allocated thread.
-    const connection = { client, initializeClient: async () => {} };
-    const { threadId } = await startThread({ stateFile }, connection);
+    const { threadId, connection } = await startReadOnlyThread({ stateFile, worktree, helper: input.helper, model: input.model }, client);
     helperAction(orchDir, "start", input.helper, "--kind", input.role === "vibe-verify-worker" ? "verifier" : "reviewer",
       "--runtime", "codex", "--role", input.role, "--agent-definition", definitionPath, "--worker-id", threadId,
       "--worktree", worktree, "--brief", input.brief, "--capabilities", capabilities.fingerprint.path);

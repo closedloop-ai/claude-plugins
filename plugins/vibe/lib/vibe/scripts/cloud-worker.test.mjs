@@ -7,8 +7,8 @@ import test, { after } from 'node:test';
 import { abandonValidation, CloudCallError, cloudRules, generateBrief, importAndSweep, parseValidationResult, pollTask, readValidationArtifact, remoteTrigger, routinesCommand, startClaude, startCodex, validateCommit, validateRequest, validateValidationRequest, validationBrief, validationLanes } from './cloud-worker.mjs';
 import { chromeRemoval, ledgerPath, markRun, NO_EXECUTOR, readLedger, routineLockDir, sweepRemovals } from './cloud-routines.mjs';
 import { release, tryAcquire } from './e2e-lock.mjs';
-import { git, makeHome } from '../../../../vibe/skills/vibe/scripts/test-fixtures.mjs';
-import { bindProviderInProcess } from "../../../../vibe/skills/vibe/scripts/test-fixtures.mjs";
+import { machineTestReport, seedArchivedValidation } from './cloud-outcome-test-fixture.mjs';
+import { git, makeHome, bindProviderInProcess } from "../../../../vibe/skills/vibe/scripts/test-fixtures.mjs";
 
 // Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
@@ -37,7 +37,6 @@ const validationRequest = (worktree = '/tmp/validate-example') => ({
   branch: 'fix/sessionless-launch', commit: COMMIT, lanes: LANES.map((lane) => ({ ...lane })), pollMs: 1000, claudeEnvironment: 'env_01TestRequest',
 });
 
-/** The fixture home beside a checkout() worktree: the routine ledger and lock live there, never in the real home. */
 /** Approved strings (operator rulings q3, 2026-11-13), written out rather than read from production code. */
 const ROUTINE_NAME = 'vibe cloud worker';
 const PENDING_1 = 'CLOUD_ROUTINE_REMOVAL_PENDING: 1 routine(s) vibe created are still recorded for removal; vibe retries on the next cloud run';
@@ -89,7 +88,7 @@ test('ISS-14259 archived and overdue runs become durable outcomes that later pol
 test('a validate request starts a Claude session bound to the branch and the exact commit', async (t) => {
   const worktree = checkout(t);
   const request = validationRequest(worktree);
-  const { calls, remote } = fakeRemote(resultLine());
+  const { calls, remote } = fakeRemote(machineTestReport(request,[0,1]));
   const result = await validateCommit(request, { remote, sleep: async () => {}, home: homeOf(worktree) });
   assert.deepEqual(calls.map((call) => call.action), ['create', 'update', 'run', 'list_runs', 'get_run_log', 'get_run_log']);
   const body = calls[0].payload.body;
@@ -263,6 +262,7 @@ test('the implementation dispatch is unchanged: main-based brief, standing routi
 
 test('a real condensed run log reaches the parser: the header line, then the log, with the result folded into the final message', async (t) => {
   const worktree = checkout(t);
+  seedArchivedValidation(validationRequest(worktree), 'session_v', 'routine_v');
   const condensed = [
     'HTTP 200',
     JSON.stringify({ session_id: 'session_v', events_fetched: 20, events_shown: 15, next_cursor: null }),
@@ -357,7 +357,7 @@ function routineService({ gone = new Set(), report = resultLine(), onCreate } = 
 test('AC-2 (ISS-13998): repeated dispatch and validate runs reuse one standing routine instead of creating one each', async (t) => {
   const worktree = checkout(t);
   const home = homeOf(worktree);
-  const service = routineService();
+  const service = routineService({report:machineTestReport(validationRequest(worktree),[0,1])});
   await startClaude(dispatchRequest(), 'brief one', { remote: service.remote, home });
   await startClaude(dispatchRequest(), 'brief two', { remote: service.remote, home });
   await validateCommit(validationRequest(worktree), { remote: service.remote, sleep: async () => {}, home });
@@ -376,7 +376,7 @@ test('AC-1 and AC-5 (ISS-13998): a validate run adds no routine and the routine 
   writeFileSync(path.join(gitDir, 'cloud-validate-aaaaaaaaaaaa-bbbbbbbbbbbb.json'), JSON.stringify({ provider: 'claude', routineId: 'trig_old', status: 'completed' }));
   writeFileSync(path.join(gitDir, 'cloud-worker-iss-1.json'), JSON.stringify({ provider: 'claude', routineId: 'trig_running' }));
   const goneIds = new Set();
-  const service = routineService({ gone: goneIds });
+  const service = routineService({ gone: goneIds, report:machineTestReport(validationRequest(worktree),[0,1]) });
   const removed = [];
   const executor = async (entries) => { for (const entry of entries) { removed.push(entry); goneIds.add(entry.id); } };
   const lines = [];
@@ -1076,7 +1076,7 @@ test('ISS-14116 a RemoteTrigger read that times out locally is retried with a lo
 test('ISS-14116 a poll whose calls keep timing out locally says the cloud task may still be running and resumes from its receipt', async (t) => {
   const worktree = checkout(t);
   const request = validationRequest(worktree);
-  const { calls, remote: working } = fakeRemote(resultLine());
+  const { calls, remote: working } = fakeRemote(machineTestReport(request,[0,1]));
   const slow = (action, payload) => {
     if (action === 'list_runs') throw Object.assign(new Error('Claude RemoteTrigger list_runs timed out on this machine'), { code: CloudCallError.Timeout });
     return working(action, payload);

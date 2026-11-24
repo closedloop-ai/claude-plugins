@@ -50,6 +50,7 @@
 // lines, then `helpers: <active> active, <stop> to stop, <orphans> orphaned`,
 // and exits 1 when any helper should be stopped or left processes running.
 
+import { capturedJson, capturedJsonDocuments } from "../../vibe/scripts/captured-json.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -60,10 +61,11 @@ import { parseArgs } from "node:util";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { captureOwnedDockerResources, defaultLockDir, readHolder, removeOwnedDockerResources, sameWorktreeEntry } from "../../vibe/scripts/e2e-lock.mjs";
 import { readProcessIdentity } from "../../../shared/process-identity.mjs";
+import { criticFindings, recordAcceptedCritic } from "../../vibe/scripts/visual-critic-evidence.mjs";
 import { sameSource, sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { agentFrontmatterName } from "../../vibe/scripts/agent-frontmatter.mjs";
-import { evidenceFingerprint } from "../../handoff/scripts/handoff-evidence.mjs";
+import { evidenceArray, evidenceFingerprint, evidenceObject, readEvidence } from "../../handoff/scripts/handoff-evidence.mjs";
 import { graphAliases } from "../../handoff/scripts/mcp-tool-names.mjs";
 import { promptProblems } from "./skill-freshness.mjs";
 import { LoadBasis, loadedSkillEvidence } from "../../vibe/scripts/loaded-skill.mjs";
@@ -88,12 +90,14 @@ export function finalMarker(helper, completion) {
   return `FINAL ${helper.finalToken} ${helper.source.treeSha256} ${helper.workerId} ${completion.sessionId} ${completion.turnId} completed`;
 }
 
-/** Read the same regular-file bytes that the named helper registers as a launch input. */
-export function readHelperInput(file) {
-  const fingerprint = evidenceFingerprint(file);
-  const bytes = readFileSync(fingerprint.path);
-  if (createHash("sha256").update(bytes).digest("hex") !== fingerprint.sha256) throw new Error("Reviewer input changed while reading");
-  return { fingerprint, text: bytes.toString("utf8") };
+export { readEvidence as readHelperInput } from "../../handoff/scripts/handoff-evidence.mjs";
+
+/** Strip the exact FINAL last line and preserve everything before it for the owning parser. */
+export function finalBodyLines(text, helper, completion) {
+  const lines = text.split(/\r?\n/);
+  if (lines.at(-1) === "") lines.pop();
+  if (lines.pop() !== finalMarker(helper, completion)) throw new Error("helper deliverable lacks its exact FINAL marker");
+  return lines;
 }
 
 /** Relative briefs belong to the orchestration directory and may link to a shared brief. */
@@ -101,40 +105,24 @@ export function resolveHelperBrief(orchDir, brief) {
   return realpathSync(path.resolve(orchDir, brief));
 }
 
-/** Split saved thread/read objects at their outer braces. JSON.parse validates each complete page. */
-function threadReadPages(text) {
-  const pages = [];
-  let start = 0;
-  let depth = 0;
-  let quoted = false;
-  for (let index = 0; index < text.length; index++) {
-    const char = text[index];
-    if (quoted) {
-      if (char === "\\") index++;
-      else if (char === '"') quoted = false;
-    } else if (char === "{") {
-      if (depth === 0) start = index;
-      depth++;
-    } else if (depth === 0) {
-      if (!" \t\r\n".includes(char)) return null;
-    } else if (char === '"') {
-      quoted = true;
-    } else if (char === "}" && --depth === 0) {
-      try { pages.push(JSON.parse(text.slice(start, index + 1))); }
-      catch { return null; }
-    }
-  }
-  return depth === 0 && pages.length ? pages : null;
-}
-
 /** Every saved page must belong to the named thread. At least one must confirm the exact completed turn. */
-export function completionEventProblem(event, completion) {
-  const pages = typeof event === "string" ? threadReadPages(event) : [event];
-  if (!pages) return "invalid App Server thread/read completion evidence: expected complete JSON object pages with no trailing output";
+export function completionEventProblem(event, completion, worktree, requireCheckout = true) {
+  let pages;
+  try { pages = typeof event === "string" ? capturedJsonDocuments(event) : [event]; }
+  catch { return "invalid App Server thread/read completion evidence: expected complete JSON object pages with no trailing output"; }
+  if (pages.some((page) => !page || typeof page !== "object" || Array.isArray(page))) {
+    return "invalid App Server thread/read completion evidence: expected complete JSON object pages with no trailing output";
+  }
   const unconfirmed = "runtime did not confirm the named completed turn";
   let confirmed = false;
+  let checkoutConfirmed = false;
   for (const page of pages) {
     const thread = page?.thread ?? page;
+    if (worktree && thread?.cwd !== undefined) {
+      try { if (realpathSync(thread.cwd) !== realpathSync(worktree)) return "runtime completion checkout differs from helper worktree"; }
+      catch { return "runtime completion checkout cannot be resolved"; }
+      checkoutConfirmed = true;
+    }
     if (thread?.id !== completion.sessionId || (thread.turns !== undefined && !Array.isArray(thread.turns))) return unconfirmed;
     for (const turn of thread.turns ?? []) {
       if (turn?.id !== completion.turnId) continue;
@@ -142,34 +130,43 @@ export function completionEventProblem(event, completion) {
       confirmed = true;
     }
   }
+  if (worktree && requireCheckout && !checkoutConfirmed) return "runtime completion did not confirm the checkout";
   return confirmed ? null : unconfirmed;
 }
 
-/** Only the helper's explicit final report and unchanged deliverable justify acceptance. */
+/** Verify the completed transition and return the exact bytes accepted by its independent owner. */
+export function verifiedFinalReport(helper, reportFile) {
+  if (!helper?.startedAt || !helper.worktree || !helper.finalToken || !helper.requiresFinal || !reportFile) throw new Error("helper needs a registered worktree and final report");
+  if (helper.abandonedAt || (helper.stoppedAt && !helper.acceptedAt)) throw new Error("helper is abandoned or stopped");
+  const record = readEvidence(reportFile, helper.report ?? helper.finalReport);
+  if (!helper.finalizedAt || helper.finalReportPath !== record.fingerprint.path) throw new Error("helper FINAL token was not consumed for this report");
+  if (!helper.report && !helper.finalReport) throw new Error("helper lacks a finalized report fingerprint");
+  const report = evidenceObject(record);
+  if (report.helper !== helper.name || report.token !== helper.finalToken || report.status !== "FINAL") throw new Error("helper report is not its final deliverable");
+  if (report.workerId !== helper.workerId) throw new Error("helper report names another worker");
+  if (!report.completion?.sessionId || !report.completion?.turnId) throw new Error("helper report lacks completed session and turn identity");
+  if (helper.loadedSkill?.runtime === "codex" && helper.workerId !== report.completion.sessionId) throw new Error("runtime did not confirm the registered helper thread");
+  const current = sourceIdentity(helper.worktree);
+  if (!sameSource(helper.source ?? {}, current) || !sameSource(report.source ?? {}, current)) throw new Error("helper source changed since start");
+  const capabilities = readEvidence(helper.capabilities.path, helper.capabilities);
+  if (JSON.stringify(evidenceFingerprint(helper.agentDefinition.path)) !== JSON.stringify(helper.agentDefinition)) throw new Error("helper canonical agent definition changed");
+  if (helper.kind === "critic" && helper.loadedSkill?.runtime === "codex" && !report.completionEvidence) throw new Error("native critic needs runtime completion evidence");
+  if (report.completionEvidence) {
+    const event = readEvidence(report.completionEvidence.path, report.completionEvidence);
+    const problem = completionEventProblem(event.text, report.completion, helper.worktree, helper.kind === "critic" && helper.loadedSkill?.runtime === "codex");
+    if (problem) throw new Error(problem);
+  }
+  const deliverable = readEvidence(report.deliverable.path, report.deliverable);
+  const lines = finalBodyLines(deliverable.text, helper, report.completion);
+  const findings = criticFindings(helper, lines);
+  if (findings && (findings.path !== report.findings?.path || findings.sha256 !== report.findings?.sha256)) throw new Error("visual critic findings changed since finalization");
+  return { report, record, capabilities, deliverable, lines };
+}
+
+/** Diagnostic for existing callers that only need the final-report verdict. */
 export function finalReportProblem(helper, reportFile) {
-  if (!helper?.startedAt || !helper.worktree || !helper.finalToken || !helper.requiresFinal || !reportFile) return "helper needs a registered worktree and final report";
-  try { if (!helper.finalizedAt || helper.finalReportPath !== evidenceFingerprint(reportFile).path) return "helper FINAL token was not consumed for this report"; }
-  catch { return "helper final report cannot be read"; }
-  let report;
-  try { report = JSON.parse(readFileSync(evidenceFingerprint(reportFile).path, "utf8")); }
-  catch { return "helper final report cannot be read"; }
-  if (report.helper !== helper.name || report.token !== helper.finalToken || report.status !== "FINAL") return "helper report is not its final deliverable";
-  if (report.workerId !== helper.workerId) return "helper report names another worker";
-  if (!report.completion?.sessionId || !report.completion?.turnId) return "helper report lacks completed session and turn identity";
-  try {
-    if (!sameSource(helper.source ?? {}, sourceIdentity(helper.worktree))) return "helper source changed since start";
-    if (JSON.stringify(evidenceFingerprint(helper.capabilities?.path)) !== JSON.stringify(helper.capabilities)) return "helper capability record changed";
-    if (JSON.stringify(evidenceFingerprint(helper.agentDefinition?.path)) !== JSON.stringify(helper.agentDefinition)) return "helper canonical agent definition changed";
-    if (report.completionEvidence) {
-      if (JSON.stringify(evidenceFingerprint(report.completionEvidence.path)) !== JSON.stringify(report.completionEvidence)) return "helper runtime completion evidence changed";
-      const runtimeProblem = completionEventProblem(readFileSync(report.completionEvidence.path, "utf8"), report.completion);
-      if (runtimeProblem) return runtimeProblem;
-    }
-    if (!sameSource(report.source ?? {}, sourceIdentity(helper.worktree))) return "helper report is stale for the current source";
-    if (JSON.stringify(evidenceFingerprint(report.deliverable?.path)) !== JSON.stringify(report.deliverable)) return "helper final deliverable changed";
-    if (!readFileSync(report.deliverable.path, "utf8").trimEnd().endsWith(finalMarker(helper, report.completion))) return "helper deliverable lacks its FINAL marker";
-  } catch { return "helper final deliverable cannot be verified"; }
-  return null;
+  try { verifiedFinalReport(helper, reportFile); return null; }
+  catch (error) { return error.message; }
 }
 
 /** Helpers to stop: accepted more than `idleMinutes` before `now` and never recorded stopped. */
@@ -315,7 +312,7 @@ function currentPrState(repo, pr) {
   const result = spawnSync("gh", ["pr", "view", String(pr), "--repo", repo, "--json", "state,mergedAt"],
     { encoding: "utf8", timeout: 30_000 });
   if (result.error || result.status !== 0) throw new Error("PR state could not be read; owned stack retained.");
-  const value = JSON.parse(result.stdout);
+  const value = capturedJson(result.stdout);
   return value.mergedAt || ["CLOSED", "MERGED"].includes(value.state) ? "terminal" : "open";
 }
 
@@ -364,12 +361,12 @@ export async function reconcileTerminalHelpers(ledger, { prState = currentPrStat
 /** Read the helper ledger, returning an empty ledger before its first write. */
 export function read(orchDir) {
   const file = path.join(orchDir, LEDGER);
-  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+  return existsSync(file) ? evidenceObject(readEvidence(file)) : {};
 }
 
-/** Acquire the helper ledger lock and return its identity-checked release callback. */
-export async function acquireLedgerLock(orchDir, { waitMs = 30_000, clock = Date.now } = {}) {
-  const dir = path.join(orchDir, 'helpers.lock');
+/** Acquire a private program ledger lock and return its identity-checked release callback. */
+export async function acquireLedgerLock(orchDir, { waitMs = 30_000, clock = Date.now, file = "helpers.lock" } = {}) {
+  const dir = path.join(orchDir, file);
   const owner = { pid: process.pid, identity: readIdentity(process.pid), token: randomUUID() };
   if (!owner.identity) throw new Error('helper ledger process identity is unreadable');
   const deadline = clock() + waitMs;
@@ -538,12 +535,12 @@ async function main(argv) {
       const bytes = readFileSync(briefPath);
       if (runtime === "codex") briefEvidence = { path: briefPath, sha256: createHash("sha256").update(bytes).digest("hex") };
       const actorRecord = { loadedSkill: spawnLoad };
-      const problems = promptProblems(actorRecord, bytes.toString("utf8"), { actorId: values["worker-id"], pluginRoot: vibeRoot(values.worktree ?? process.cwd()), worktree: values.worktree });
+      const problems = promptProblems(actorRecord, bytes.toString("utf8"), { reviewSource: true, actorId: values["worker-id"], pluginRoot: vibeRoot(values.worktree ?? process.cwd()), worktree: values.worktree });
       if (problems.length) throw new Error(problems.join("; "));
     }
-    const capabilities = FINAL_KINDS.has(kind) ? readHelperInput(values.capabilities) : null;
-    if (capabilities) graphAliases(JSON.parse(capabilities.text));
-    const definition = FINAL_KINDS.has(kind) ? readHelperInput(values["agent-definition"]) : null;
+    const capabilities = FINAL_KINDS.has(kind) ? readEvidence(values.capabilities) : null;
+    if (capabilities) graphAliases(evidenceArray(capabilities));
+    const definition = FINAL_KINDS.has(kind) ? readEvidence(values["agent-definition"]) : null;
     if (definition && agentFrontmatterName(definition.text) !== values.role) throw new Error("canonical agent definition does not name the requested role");
     // A QA rerun must never change the stack a human is testing on.
     if (values.stack && stacks[values.stack]) {
@@ -613,31 +610,35 @@ async function main(argv) {
     };
   } else if (action === "final") {
     const entry = ledger[name];
-    if (!entry?.startedAt || entry.stoppedAt || entry.finalizedAt || !entry.worktree || !entry.requiresFinal || !values.deliverable || !values.out
+    if (!entry?.startedAt || entry.abandonedAt || entry.stoppedAt || entry.finalizedAt || !entry.worktree || !entry.requiresFinal || !values.deliverable || !values.out
       || !values["session-id"] || !values["turn-id"]) throw new Error("final needs an active helper, worktree, deliverable, completed session/turn and output file");
     if (!sameSource(entry.source ?? {}, sourceIdentity(entry.worktree))) throw new Error("helper source changed since start");
     const completion = { sessionId: values["session-id"], turnId: values["turn-id"] };
-    const completionEvidence = values["completion-event"] ? evidenceFingerprint(values["completion-event"]) : null;
-    if (completionEvidence) {
-      const problem = completionEventProblem(readFileSync(completionEvidence.path, "utf8"), completion);
+    if (entry.loadedSkill?.runtime === "codex" && completion.sessionId !== entry.workerId) throw new Error("runtime did not confirm the registered helper thread");
+    const event = values["completion-event"] ? readEvidence(values["completion-event"]) : null;
+    if (entry.kind === "critic" && entry.loadedSkill?.runtime === "codex" && !event) throw new Error("native critic needs runtime completion evidence");
+    if (event) {
+      const problem = completionEventProblem(event.text, completion, entry.worktree, entry.kind === "critic" && entry.loadedSkill?.runtime === "codex");
       if (problem) throw new Error(problem);
     }
-    evidenceFingerprint(values.deliverable);
-    if (!readFileSync(values.deliverable, "utf8").trimEnd().endsWith(finalMarker(entry, completion))) throw new Error("helper deliverable lacks its FINAL marker");
+    const deliverable = readEvidence(values.deliverable);
+    const findings = criticFindings(entry, finalBodyLines(deliverable.text, entry, completion));
     const out = path.resolve(values.out);
     if (out === entry.worktree || out.startsWith(`${entry.worktree}${path.sep}`)) throw new Error("final report belongs outside the source worktree");
     const report = { helper: name, token: entry.finalToken, status: "FINAL", workerId: entry.workerId, source: sourceIdentity(entry.worktree),
-      completion, ...(completionEvidence ? { completionEvidence } : {}), deliverable: evidenceFingerprint(values.deliverable) };
-    writeFileSync(out, `${JSON.stringify(report)}\n`, { mode: 0o600, flag: "wx" });
-    entry.finalReportPath = evidenceFingerprint(out).path;
+      completion, ...(findings ? {findings} : {}), ...(event ? { completionEvidence: event.fingerprint } : {}), deliverable: deliverable.fingerprint };
+    const reportText = `${JSON.stringify(report)}\n`;
+    writeFileSync(out, reportText, { mode: 0o600, flag: "wx" });
+    entry.finalReportPath = realpathSync(out);
+    entry.finalReport = { path: entry.finalReportPath, sha256: createHash("sha256").update(reportText).digest("hex") };
     entry.finalizedAt = at;
     write(orchDir, ledger);
     return 0;
   } else if (action === "accepted") {
     const entry = ledger[name];
-    const problem = finalReportProblem(entry, values.report);
-    if (problem) throw new Error(problem);
-    ledger[name] = { ...entry, acceptedAt: at, report: evidenceFingerprint(values.report) };
+    const { record, report } = verifiedFinalReport(entry, values.report);
+    if (report.findings) recordAcceptedCritic(entry.worktree, report.source.head, record.fingerprint);
+    ledger[name] = { ...entry, acceptedAt: entry.acceptedAt ?? at, report: record.fingerprint };
   } else if (action === "abandoned") {
     const entry = ledger[name];
     if (!entry?.startedAt || entry.stoppedAt || !entry.requiresFinal || entry.acceptedAt) {

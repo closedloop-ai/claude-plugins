@@ -1,10 +1,13 @@
-import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { bundleDirectory } from "./test-fixtures.js";
+import { chmodSync, mkdirSync, existsSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { finalMerge, invokeSync, syncFixture, validateFixture, currentSyncDefinitions, selectedReportFixture } from "./main-sync-test-fixtures.js";
 import { prismaInputFixture, fumadocsInputFixture, buildInfoInputFixture, largeProducerInputFixture, nextInputFixture, pureInputFixture,
   docsInputFixture, huskyInputFixture, desktopPrismaInputFixture, producerShimInputFixture } from "./main-sync-input-test-fixtures.js";
 import { gzipSync, gunzipSync } from "node:zlib";
+import { inspectInputInventory } from "./main-sync-checks.js";
 import { originIdentity } from "./main-sync-input-files.js";
 
 const fixtures: ReturnType<typeof syncFixture>[] = [];
@@ -12,6 +15,99 @@ afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
 function setup() { const value = syncFixture(); fixtures.push(value); return value; }
 
 describe("production committed-input privacy and origin boundaries", () => {
+  it("AC-092 refuses preparation without a parent-issued purpose before creating a transaction", () => {
+    const value = setup();
+    const turn = value.start("redeploy", null);
+    try {
+      const result = invokeSync(value, "prepare", turn.context);
+      expect(result.json?.error).toMatch(/MAIN_SYNC_PURPOSE_REQUIRED/);
+      expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);
+    } finally { turn.finish(); }
+  });
+
+  it("AC-092 binds a completed native preparation to its own main facts even for a legacy caller", () => {
+    const value = setup();
+    const turn = value.start("redeploy");
+    const result = invokeSync(value, "prepare", turn.context);
+    expect(result.status, result.stdout).toBe(0);
+    expect(result.json?.mainSync).toMatchObject({ importedFileCount: expect.any(Number), importedFilesSha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    expect(result.json?.mainSync).not.toHaveProperty("importedFiles");
+    const before = readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8");
+    expect(() => turn.finish({ status: "DONE" })).toThrow(/UUID and captured main facts/);
+    expect(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8")).toBe(before);
+    const release = (output: object) => spawnSync(process.execPath, [join(bundleDirectory, "writer-state.mjs"), "release-record"], {
+      input: JSON.stringify({ ...turn.grant, lease: turn.context.lease, stoppedTurn: { runtime: "codex", workerId: turn.grant.workerId,
+        requestId: turn.grant.requestId, lease: turn.context.lease, state: "completed", result: output } }), encoding: "utf8",
+    });
+    const refused = release({ status: "DONE" });
+    expect(refused.status).toBe(1);
+    expect(JSON.parse(refused.stdout).code).toBe("MAIN_SYNC_RESULT_INVALID");
+    const contradicted = release({ status: "DONE", data: { mainSyncResult: { mainSync: { ...result.json?.mainSync as object, importedFilesSha256: "0".repeat(64) } } } });
+    expect(JSON.parse(contradicted.stdout).code).toBe("MAIN_SYNC_RESULT_INVALID");
+    const released = release({ status: "DONE", data: { mainSyncResult: result.json } });
+    expect(released.status, released.stderr).toBe(0);
+    expect(JSON.parse(released.stdout).released).toBe(true);
+  });
+
+  it("orders distinct paths sharing a prefix and collapses report-parent ties to one labeled row", () => {
+    const value = setup();
+    for (const file of ["same/ba.js","same/b.js",".vitest"]) value.write(file,"fixture");
+    expect(() => inspectInputInventory(value.worktree)).toThrow(/blocking input/);
+    const rows = JSON.parse(readFileSync(join(value.metadata,"vibe-main-sync-blocking-inputs.json"),"utf8")).paths;
+    expect(rows.map((row: {path: string}) => row.path)).toEqual([".vitest","same/b.js","same/ba.js"]);
+    expect(rows[0].reason).toBe("Retained report requires a canonical directory parent: .vitest");
+  });
+  it("AC-090 review aggregates a non-directory parent of a declared producer with other blockers", () => {
+    const value = setup();
+    for (const file of ["apps/api/.next", "apps/api/next-env.d.ts", "apps/api/app/extra", "leftover/test.js"]) value.write(file, "fixture");
+    expect(() => inspectInputInventory(value.worktree)).toThrow(/apps\/api\/\.next/);
+    const entries = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync-blocking-inputs.json"), "utf8")).paths;
+    for (const path of ["apps/api/.next", "apps/api/app/extra", "leftover/test.js"]) expect(entries).toContainEqual(expect.objectContaining({path}));
+  });
+  it("AC-090 reports an invalid retained report parent together with independent inputs", () => {
+    const value = setup();
+    for (const file of ["playwright-report", "leftover/test.js"]) value.write(file, "fixture");
+    let refusal: unknown;
+    try { inspectInputInventory(value.worktree); } catch (error) { refusal = error; }
+    expect(String(refusal)).toContain("playwright-report");
+    expect(String(refusal)).toContain("leftover/test.js");
+    expect(JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync-blocking-inputs.json"), "utf8")).paths)
+      .toContainEqual(expect.objectContaining({path:"playwright-report"}));
+  });
+  it("AC-090 includes an invalid private directory and independent files in the same labeled report", () => {
+    const value = setup();
+    const paths = [".closedloop-ai/vibe-plans", "leftover/a.js", "leftover/b.json"];
+    for (const file of paths) value.write(file, "{}");
+    let refusal: unknown;
+    try { inspectInputInventory(value.worktree); } catch (error) { refusal = error; }
+    for (const file of paths) expect(String(refusal)).toContain(file);
+    const report = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync-blocking-inputs.json"), "utf8"));
+    expect(report.paths.map((row: { path: string }) => row.path)).toEqual(paths);
+  });
+
+  it("AC-090 reports three unsupported inputs together and preserves all paths in private evidence", () => {
+    const value = setup();
+    const paths = ["leftover/a.js", "leftover/b.html", "leftover/c.json"];
+    for (const file of paths) value.write(file, "{}");
+    mkdirSync(join(value.worktree, ".biome-noscan.jsonc"));
+    paths.unshift(".biome-noscan.jsonc");
+    let error: unknown;
+    try { inspectInputInventory(value.worktree); } catch (failure) { error = failure; }
+    for (const file of paths) expect(String(error)).toContain(file);
+    const report = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync-blocking-inputs.json"), "utf8"));
+    expect(report.paths.map((row: { path: string }) => row.path)).toEqual(paths);
+  });
+
+  it("reports extensionless producer inputs with other inventory refusals", () => {
+    const value = setup();
+    prismaInputFixture(value);
+    const paths = ["leftover/file.js", "packages/database/prisma/first", "packages/database/prisma/second"];
+    for (const file of paths) value.write(file, "fixture");
+    expect(() => inspectInputInventory(value.worktree)).toThrow(/blocking input/);
+    const report = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync-blocking-inputs.json"), "utf8"));
+    expect(report.paths.map((row: { path: string }) => row.path)).toEqual(expect.arrayContaining(paths));
+  });
+
   it("blocks a retained report selected as reader input without reading or removing it", () => {
     const value = setup();
     const output = ".vitest/blob/blob.json";
