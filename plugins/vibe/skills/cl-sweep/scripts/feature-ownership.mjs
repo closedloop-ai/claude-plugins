@@ -1,3 +1,4 @@
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
@@ -128,7 +129,7 @@ function currentOwnershipRecords(ledgerPath) {
   const output = execFileSync(process.execPath, [
     ownershipScript, 'status', '--ledger', ledgerPath,
   ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  const result = JSON.parse(output);
+  const result = capturedJson(output);
   if (!Array.isArray(result.records)) fail('Ownership ledger status did not return current records');
   return new Map(result.records.map((record) => [record.ticket, record]));
 }

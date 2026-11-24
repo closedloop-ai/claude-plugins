@@ -1,3 +1,4 @@
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
 import { execFileSync, spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +16,7 @@ export function coreSkillDirectory(options = {}) {
       input: JSON.stringify(options), encoding: 'utf8', timeout: DISCOVERY_TOTAL_TIMEOUT_MS, maxBuffer: 1024 * 1024,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    const result = JSON.parse(raw);
+    const result = capturedJson(raw);
     if (result.protocol !== PROCESS_API || !result.skillDirectory) throw new Error('Core skill discovery returned an incompatible binding');
     if (bindings.size >= 16) bindings.clear();
     bindings.set(key, result.skillDirectory);
@@ -39,7 +40,7 @@ function errorFrom(value) {
 }
 
 function callOnce(operation, payload, options = {}) {
-  const result = JSON.parse(execFileSync(process.execPath, [apiScript(options)], {
+  const result = capturedJson(execFileSync(process.execPath, [apiScript(options)], {
     input: JSON.stringify({ protocol: PROCESS_API, operation, ...payload }), encoding: 'utf8',
     timeout: 30_000, maxBuffer: 16 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
   }));

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 /**
  * The cloud receipt shapes cloud-worker.mjs writes and cloud-routines.mjs reads: the end states a run can reach
  * and the receipt file names in a worktree's Git metadata. One owner, so a new state or name reaches both.
@@ -22,3 +24,6 @@ export function legacyRoutineName(file) {
   const dispatch = /^cloud-worker-(.+)\.json$/.exec(file);
   return dispatch ? `${dispatch[1].toUpperCase()} cloud worker` : null;
 }
+
+/** Stable non-secret lane identity written into exact-commit validation receipts. */
+export function validationCommandKey(command) { return createHash("sha256").update(command).digest("hex"); }

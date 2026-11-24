@@ -1,3 +1,5 @@
+import { capturedJson } from "./captured-json.mjs";
+import { readGitInventory } from "./git-inventory.mjs";
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
@@ -132,7 +134,7 @@ export function registerWorktreeRetirement({ worktree, repo, pr, proof, ticket =
 function currentPr(repo, number, { timeoutMs = 30_000 } = {}) {
   const raw = execFileSync('gh', ['api', `repos/${repo}/pulls/${number}`],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: Math.min(30_000, Math.max(1, timeoutMs)) });
-  const value = JSON.parse(raw);
+  const value = capturedJson(raw);
   return { repo: value.base?.repo?.full_name, number: value.number, head: value.head?.sha,
     branch: value.head?.ref, state: value.merged_at ? 'MERGED' : String(value.state ?? '').toUpperCase() };
 }
@@ -253,7 +255,7 @@ function generatedIgnoredTree(relative, worktree, envTargets, repository) {
 }
 
 function ignoredPaths(worktree, options) {
-  const raw = gitBytes(worktree, ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'], options);
+  const raw = readGitInventory(worktree, ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'], { encoding: 'buffer', timeout: options?.timeoutMs ?? 20_000 });
   return raw.toString('utf8').split('\0').filter(Boolean);
 }
 

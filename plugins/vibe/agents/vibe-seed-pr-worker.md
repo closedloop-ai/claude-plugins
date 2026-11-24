@@ -15,7 +15,7 @@ committed, return `NEEDS_COMMIT` with the files.
 
 The mode, the fix worktree path, the ticket slug, and the PR URL when one
 exists. Open mode also gets the fix worker's summary and its `Walk:` evidence
-line; push mode gets a new `Walk:` line when the fix re-ran the walk.
+line; push mode gets a new `Walk:` line when the fix re-ran the walk. Include any verified `Walk source:` URL, exact main SHA and route in the PR summary on either path.
 
 ## Read first
 

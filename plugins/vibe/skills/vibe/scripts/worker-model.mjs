@@ -21,6 +21,7 @@
 // the fallback model and adds `fallback_from` and a one-line `note` for the launch output. `set` and `unset`
 // print the saved overrides.
 
+import { agentFrontmatter } from "../../../lib/vibe/scripts/agent-frontmatter.mjs";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,7 +30,6 @@ import { agentRole, ModelRuntime, resolveWorkerModel, setModelOverride } from ".
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 
 const AGENTS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../agents");
-const FRONTMATTER_MODEL = /^---\n[\s\S]*?^model:[ \t]*(\S+)[ \t]*$[\s\S]*?^---/m;
 const USAGE = "Usage: worker-model.mjs <claude|codex> <agent-name> [--codex <CLI>] | set <claude|codex> <role-or-agent> <model> | unset <claude|codex> <role-or-agent>";
 
 /** The native Codex spawn binding for one vibe agent; an unknown agent is refused rather than given a default. */
@@ -42,8 +42,8 @@ export function codexWorkerBinding(agentName, options) {
 /** The model the Claude launcher starts one vibe agent on: the person's override, else the agent file's `model:`. */
 export function claudeWorkerBinding(agentName, options) {
   const { agent, role } = agentRole(agentName);
-  const model = FRONTMATTER_MODEL.exec(readFileSync(path.join(AGENTS, `${agent}.md`), "utf8"))?.[1];
-  if (!model) {
+  const { model } = agentFrontmatter(readFileSync(path.join(AGENTS, `${agent}.md`), "utf8")).metadata;
+  if (typeof model !== "string" || !model.trim()) {
     throw new Error(`${agent} declares no model`);
   }
   return { agent, role, model: resolveWorkerModel(ModelRuntime.Claude, agent, model, options).model };

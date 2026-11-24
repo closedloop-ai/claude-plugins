@@ -1,3 +1,4 @@
+import { capturedJson } from "../../../plugins/vibe/lib/vibe/scripts/captured-json.mjs";
 import { spawnSync } from "node:child_process";
 import { z } from "zod";
 import { MAX_CHECK_MS, MainSyncError, type MainSyncReceipt, type e2eLimitationSchema } from "./main-sync-contracts.js";
@@ -62,7 +63,7 @@ export function discoverRequiredE2eLanes(root: string, receipt: MainSyncReceipt)
   const run = spawnSync(discovery.argv[0]!, discovery.argv.slice(1), { cwd: root, encoding: "utf8",
     timeout: MAX_CHECK_MS, maxBuffer: 16 * 1024 * 1024 });
   if (run.error || run.status !== 0) throw new MainSyncError("Structured owning test-lane discovery failed; no test lane was spawned");
-  const selected = discoverySchema.parse(JSON.parse(run.stdout));
+  const selected = discoverySchema.parse(capturedJson(run.stdout));
   const limitations: z.infer<typeof e2eLimitationSchema>[] = [];
   for (const lane of selected.commands) {
     const bindings: Record<string, string> = { ...lane.env, ...(lane.suites === undefined ? {} : { AFFECTED_SCRIPT_SUITES: lane.suites }) };
