@@ -823,8 +823,8 @@ export function validationBrief(request, managedHost = null, provedBranch = null
     `Validation only. Repository: ${requireRepository(request)}. Branch: ${branch}. Commit: ${request.commit}.`,
     `Check out the exact commit: run \`git fetch origin refs/heads/${branch}\`, then \`git checkout --detach ${request.commit}\`, then confirm \`git rev-parse HEAD\` prints ${request.commit}. If it does not, run no lane and report the commit you have.`,
     `After checkout, run \`${PROVENANCE_COMMAND}\` as one call, exactly as written, and keep its four lines.`,
-    ...(managedHost ? [] : [installInstruction(request)]),
-    ...(resolved.laneSource ? [
+    ...(managedHost || compact ? [] : [installInstruction(request)]),
+    ...(resolved.laneSource && !compact ? [
       `The lanes below are immutable recipes read from ${resolved.laneSource.path} at ${resolved.laneSource.commit} (SHA-256 ${resolved.laneSource.sha256}), not caller shell. For each recipe, apply its workflow/job environment, defaults, matrix row, working directories and conditions; perform its committed setup/action steps, then run its committed run steps in order. Refuse rather than substitute or omit an unsupported step.`,
     ] : []),
     compact?.start ?? (managedHost ? cloudHostInstruction(managedHost, { lanes: resolved.lanes, commit: request.commit, reporter: legacyArtifact ? null : hostReporter(subject, resolved.lanes, requestKey) })

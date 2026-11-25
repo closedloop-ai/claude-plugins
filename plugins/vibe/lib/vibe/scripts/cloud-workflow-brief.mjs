@@ -3,8 +3,11 @@ import { readFileSync } from "node:fs";
 import { outcomeSpec, reporterFiles } from "./cloud-outcome-instruction.mjs";
 import { toolingRoot } from "./cloud-validation-recipes.mjs";
 import { workflowSelectionKey } from "./cloud-workflow-plan.mjs";
+import { WORKFLOW_NOT_RUN } from "./cloud-workflow-runner.mjs";
 
-const modules = ["cloud-workflow-plan.mjs", "workflow-lane-definitions.mjs", "cloud-receipts.mjs", ...reporterFiles];
+// The runner and the host module (the supervisor it runs lane commands through, and the package repair the plan
+// reader runs once before any lane) are shipped and verified like the plan reader.
+const modules = ["cloud-workflow-plan.mjs", "workflow-lane-definitions.mjs", "cloud-receipts.mjs", "cloud-validation-host.mjs", "cloud-workflow-runner.mjs", ...reporterFiles];
 const quote = text => "'"+text.replaceAll("'","'\"'\"'")+"'";
 
 /** This fixed bootstrap verifies every committed helper byte before importing anything from the application. */
@@ -43,7 +46,7 @@ export function compactWorkflowBrief(request,lanes,key,readCommitted) {
   const start=[
     "Prepare the exact ordered CI recipes from the checked-out commit. Save the printed private directory as p for later calls.",
     command.replace(/\n\s*/g," "),
-    "Read the exact ordered lane names in $p/lanes.json. For indices 0 through "+(lanes.length-1)+", read $p/lane-<index>.json privately. Execute its complete workflow and job with the selected matrix. Apply every action, environment, condition, working directory and run step in declared order, as in CI. Do not embed private recipe or output files in a response.",
+    "The exact ordered lane names are in $p/lanes.json. Run each lane by its zero-based index, 0 through "+(lanes.length-1)+", from the repository root with exactly `node \"$p/cloud-workflow-runner.mjs\" <index>`, with stdout and stderr redirected into $d/<index>.stdout and .stderr; its exit code is the lane's exit code. The runner executes the lane's complete committed workflow job in a private copy of the commit, in declared order as in CI: environment setup as root, then every other step as a non-root user. Never run a recipe step yourself, and do not embed private recipe or output files in a response. When the stderr file ends with a "+WORKFLOW_NOT_RUN+" line, record exitCode null and notRun with that line's reason. Keep the last stdout line, CLOUD_WORKFLOW_LANE, in your lane status.",
   ].join("\n\n");
   return {start, reporter:'node "$p/cloud-outcome-writer.mjs" "$(cat "$p/reporter-spec")" "$d"'};
 }

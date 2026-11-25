@@ -1,0 +1,271 @@
+// Runs one committed GitHub workflow lane for cloud validation. Lanes run as a non-root user, as on GitHub's runner
+// (AC-68, item 116; team-lead, 2026-11-25: "Workflow lanes also drop to the actor after root setup"): the job's
+// environment setup runs as root, then every other step runs as the non-root actor through the managed host's lane
+// supervisor, in a private clone of the commit that the actor owns. The cloud agent runs it once per lane from its
+// checkout, `node "$p/cloud-workflow-runner.mjs" <lane index>`, where $p is the private directory prepareWorkflowPlan
+// wrote (lanes.json, lane-<index>.json and reporter-spec).
+import { spawnSync } from "node:child_process";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { cloudHostEnvironment, ownTree, PACKAGE_REPAIR_FILE, rootSetupEnvironment, runLaneGroup, runsAsScript, validationHostActor } from "./cloud-validation-host.mjs";
+
+export const WORKFLOW_NOT_RUN = "CLOUD_WORKFLOW_NOT_RUN";
+// The managed host's per-lane limit, for a job that sets none.
+const JOB_MINUTES = 15;
+// GitHub's runner leaves a new file 0644: main's CI passes the tests that require it. The agent's own umask is unknown,
+// and under 077 four Node tests failed (the r12 kit's cloud emulation), so a lane never inherits it.
+const LANE_UMASK = 0o022;
+const BASE_REF = "${{ github.event.pull_request.base.ref }}";
+// The actions the runner provides, each with the inputs it honors; any other action or input refuses the lane.
+const ACTIONS = new Map([
+  ["actions/checkout", ["fetch-depth"]],
+  ["actions/setup-node", ["node-version", "cache", "cache-dependency-path"]],
+  ["astral-sh/setup-uv", ["python-version"]],
+]);
+// A dependency install fetches from registries and the actor has no network (team-lead, 2026-11-24, attempt six), so it
+// is environment setup, like the managed host's repository bootstrap (operator ruling 2026-11-24 on AC-68).
+const DEPENDENCY_INSTALL = /^(?:npm (?:ci|install)|pnpm install|yarn install|uv sync)(?:\s|$)/;
+
+class Refusal extends Error {}
+const refuse = (reason) => { throw new Refusal(reason); };
+const strings = (values) => Object.fromEntries(Object.entries(values ?? {}).map(([key, value]) => [key, String(value)]));
+const label = (step, index) => `step ${index + 1} (${String(step.name ?? step.uses ?? step.run.trim().split("\n")[0]).slice(0, 80)})`;
+
+/** How a step runs: an action, a step of only `sudo` commands or a dependency install as root; any other as the actor. */
+export function stepRole(step) {
+  if (step.uses) return "action";
+  const commands = step.run.split(/\n|&&/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
+  if (commands.length > 0 && commands.every((line) => /^sudo\s/.test(line))) return "root";
+  if (/(?:^|[\s;&|(`])sudo\s/.test(step.run)) return "mixed";
+  return commands.length === 1 && DEPENDENCY_INSTALL.test(commands[0]) ? "setup" : "actor";
+}
+
+/**
+ * The lane's steps in order with the identity each runs as. Setup after the first lane command, or `sudo` inside one,
+ * would need root mid-lane, which the runner never grants: the whole lane is refused, naming the step.
+ */
+export function workflowLanePlan({ workflow = {}, job }) {
+  let command = null;
+  return job.steps.map((step, index) => {
+    const role = stepRole(step), name = label(step, index);
+    conditionHolds(step.if, false);
+    if (role === "mixed") refuse(`${name} runs sudo inside a lane command`);
+    if (role !== "actor" && command) refuse(`${name} is root setup after the lane command ${command}`);
+    if (role === "actor") command ??= name;
+    if (role === "action") {
+      const action = step.uses.split("@")[0], inputs = ACTIONS.get(action);
+      if (!inputs) refuse(`${name} uses ${action}, which the cloud runner does not provide`);
+      const extra = Object.keys(step.with ?? {}).find((key) => !inputs.includes(key));
+      if (extra) refuse(`${name} sets the ${action} input ${extra}, which the cloud runner does not provide`);
+      return { index, role, name, step };
+    }
+    const shell = step.shell ?? job.defaults?.run?.shell ?? workflow.defaults?.run?.shell;
+    if (shell !== undefined && !["bash", "sh"].includes(shell)) refuse(`${name} uses the shell ${shell}`);
+    const directory = path.posix.normalize(step["working-directory"] ?? job.defaults?.run?.["working-directory"] ?? workflow.defaults?.run?.["working-directory"] ?? ".");
+    if (path.posix.isAbsolute(directory) || directory === ".." || directory.startsWith("../")) refuse(`${name} works outside the checkout`);
+    return { index, role, name, step, shell, directory };
+  });
+}
+
+/** A job or step condition for a pull request validation; one with no status function implies success(), as in CI. */
+export function conditionHolds(condition, failed, event = "pull_request") {
+  if (condition === undefined) return !failed;
+  let text = String(condition).trim();
+  if (text.startsWith("${{") && text.endsWith("}}")) text = text.slice(3, -2).trim();
+  if (text === "always()") return true;
+  if (text === "failure()") return failed;
+  if (text === "cancelled()" || text === "false") return false;
+  if (failed) return false;
+  if (text === "true" || text === "success()") return true;
+  const match = /^github\.event_name\s*(==|!=)\s*(['"])([a-z_]+)\2$/.exec(text);
+  if (!match) refuse(`unsupported condition ${text}`);
+  return (match[3] === event) === (match[1] === "==");
+}
+
+/** Whether the actor can search a directory: every component grants it execute by its owner, group or other bits. */
+export function actorCanSearch(directory, actor, stat = statSync) {
+  for (let current = path.resolve(directory); ; current = path.dirname(current)) {
+    let info;
+    try { info = stat(current); } catch { return false; }
+    const bits = info.uid === actor.uid ? info.mode >> 6 : info.gid === actor.gid ? info.mode >> 3 : info.mode;
+    if (!info.isDirectory() || (bits & 1) === 0) return false;
+    if (path.dirname(current) === current) return true;
+  }
+}
+
+/** The lane's PATH: the tools its setup actions installed, then each host directory the actor can search. */
+export function lanePath(tools, hostPath, actor, stat = statSync) {
+  const host = String(hostPath ?? "").split(path.delimiter).filter((entry) => path.isAbsolute(entry) && actorCanSearch(entry, actor, stat));
+  return [...tools, ...host].join(path.delimiter);
+}
+
+function onPath(name, hostPath, accept = () => true) {
+  for (const entry of String(hostPath ?? "").split(path.delimiter)) {
+    const candidate = path.join(entry, name);
+    if (path.isAbsolute(entry) && existsSync(candidate) && statSync(candidate).isFile() && accept(candidate)) return realpathSync(candidate);
+  }
+  return null;
+}
+
+/** actions/setup-node: copy the host's Node distribution of the requested major into the lane's tools, as the action installs one. */
+function setupNode(step, tools, hostPath, name) {
+  const version = String(step.with?.["node-version"] ?? "");
+  if (!/^\d+$/.test(version)) refuse(`${name} asks for Node ${version || "(unset)"}; the cloud runner provides a major version`);
+  const prefixOf = (binary) => path.dirname(path.dirname(realpathSync(binary)));
+  const binary = onPath("node", hostPath, (candidate) => {
+    const probe = spawnSync(candidate, ["--version"], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] });
+    return probe.status === 0 && probe.stdout.trim().startsWith(`v${version}.`) && existsSync(path.join(prefixOf(candidate), "lib/node_modules/npm/bin/npm-cli.js"));
+  });
+  if (!binary) refuse(`${name}: this host has no Node ${version} distribution`);
+  const prefix = prefixOf(binary), target = path.join(tools, `node-${version}`);
+  if (existsSync(target)) return path.join(target, "bin");
+  mkdirSync(path.join(target, "bin"), { recursive: true });
+  cpSync(binary, path.join(target, "bin", "node"));
+  for (const part of ["lib/node_modules/npm", "lib/node_modules/corepack", "include/node"]) {
+    if (existsSync(path.join(prefix, part))) cpSync(path.join(prefix, part), path.join(target, part), { recursive: true, verbatimSymlinks: true });
+  }
+  for (const [link, script] of [["npm", "npm/bin/npm-cli.js"], ["npx", "npm/bin/npx-cli.js"], ["corepack", "corepack/dist/corepack.js"]]) {
+    if (existsSync(path.join(target, "lib/node_modules", script))) symlinkSync(path.join("..", "lib/node_modules", script), path.join(target, "bin", link));
+  }
+  return path.join(target, "bin");
+}
+
+/** astral-sh/setup-uv: copy the host's uv into the lane's tools and select the requested Python, as the action does. */
+function setupUv(step, tools, hostPath, name, env) {
+  const binary = onPath("uv", hostPath);
+  if (!binary) refuse(`${name}: this host has no uv`);
+  const target = path.join(tools, "uv");
+  mkdirSync(target, { recursive: true });
+  for (const tool of ["uv", "uvx"]) {
+    const source = path.join(path.dirname(binary), tool);
+    if (existsSync(source)) cpSync(source, path.join(target, tool));
+  }
+  if (step.with?.["python-version"] !== undefined) env.UV_PYTHON = String(step.with["python-version"]);
+  return target;
+}
+
+function git(cwd, args) {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 8 * 1024 * 1024 });
+  if (result.status !== 0) refuse(`git ${args[0]} failed: ${String(result.stderr ?? result.error?.message ?? "").trim().slice(-300)}`);
+  return result.stdout;
+}
+
+/**
+ * The actor's private copy of the exact commit, with the checkout's remote branches so a base-branch step finds them,
+ * and whether it is shallow. Every read happens here, while the runner still owns the copy: once the actor owns it, Git
+ * refuses a root caller there as dubious ownership (the r11 kit, as root).
+ */
+export function laneCheckout(checkout, commit, target) {
+  git(checkout, ["clone", "--quiet", "--no-hardlinks", "--no-checkout", checkout, target]);
+  git(target, ["fetch", "--quiet", "--no-tags", checkout, "+refs/remotes/origin/*:refs/remotes/origin/*"]);
+  git(target, ["checkout", "--quiet", "--detach", commit]);
+  if (git(target, ["rev-parse", "HEAD"]).trim() !== commit) refuse("the lane checkout is not the validation commit");
+  return { shallow: git(target, ["rev-parse", "--is-shallow-repository"]).trim() !== "false" };
+}
+
+/** The pull request's base branch: the branch the checkout's origin names as its default, or null when unrecorded. */
+export function pullRequestBase(checkout) {
+  const head = spawnSync("git", ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], { cwd: checkout, encoding: "utf8" });
+  const name = head.status === 0 ? head.stdout.trim() : "";
+  return name.startsWith("origin/") && name.length > 7 ? name.slice(7) : null;
+}
+
+/**
+ * Run one lane's job in declared order. Step output goes to `stdio`; each step's line names the identity it ran as. The
+ * lane's exit code is its first failing step's, unless that step continues on error. The runner's own streams pass by
+ * name, never by number: the agent opens them write-only (`2>file`), and runLaneGroup reads back a numbered stderr,
+ * which failed every setup step that wrote to it with EBADF (the r11 kit's cloud emulation). The lane's checkout and
+ * every step run under LANE_UMASK, and the caller's umask is restored afterwards. `repaired` names the packages the
+ * plan's package repair finished before any lane; the lane's line carries them when there were any.
+ */
+export function runWorkflowLane(options) {
+  const previous = process.umask(LANE_UMASK);
+  try { return runLane(options); } finally { process.umask(previous); }
+}
+
+function runLane({ checkout, commit, definition, work, base = null, uid, gid, environment = process.env, repaired = [],
+  run = runLaneGroup, provision = ownTree, stdio = ["ignore", "inherit", "inherit"], log = (line) => process.stdout.write(line + "\n"), now = Date.now }) {
+  const { workflow = {}, job } = definition;
+  const plan = workflowLanePlan(definition);
+  if (!conditionHolds(job.if, false)) refuse(`the job condition ${job.if} is false for a pull request`);
+  if (!base && plan.some(({ step }) => step.run?.includes(BASE_REF))) refuse("a step names the pull request base branch, which the cloud checkout does not record");
+  const actor = validationHostActor({ uid, gid });
+  const self = uid ?? process.getuid?.();
+  const asRoot = self === 0;
+  if (asRoot && process.getuid?.() === 0 && !actorCanSearch(work, actor)) refuse("the lane's temporary directory is closed to the actor");
+  const clone = path.join(work, "checkout"), home = path.join(work, "home"), tools = path.join(home, "tools"), scripts = path.join(work, "steps");
+  mkdirSync(home, { mode: 0o700 });
+  mkdirSync(path.join(home, "runner-temp"));
+  // Explicit modes: a umask can narrow the ones given at creation, and the actor reads every step script.
+  mkdirSync(scripts);
+  chmodSync(scripts, 0o755);
+  const { shallow } = laneCheckout(checkout, commit, clone);
+  const own = () => { if (asRoot) { provision(clone, actor); provision(home, actor); } };
+  own();
+  const github = { CI: "true", GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request", GITHUB_BASE_REF: base ?? "",
+    GITHUB_WORKSPACE: clone, RUNNER_OS: "Linux", RUNNER_TEMP: path.join(home, "runner-temp") };
+  const env = { ...strings(workflow.env), ...strings(job.env) };
+  const bins = [];
+  const deadline = now() + (job["timeout-minutes"] ?? JOB_MINUTES) * 60_000;
+  const steps = [];
+  let exitCode = 0;
+  for (const { index, role, name, step, shell, directory } of plan) {
+    const as = role === "actor" ? actor.uid : self;
+    if (!conditionHolds(step.if, exitCode !== 0)) { steps.push([index + 1, role, null, null]); continue; }
+    log(`CLOUD_WORKFLOW_STEP ${JSON.stringify({ step: index + 1, name, role, uid: as })}`);
+    if (role === "action") {
+      const action = step.uses.split("@")[0];
+      if (action === "actions/setup-node") bins.unshift(setupNode(step, tools, environment.PATH, name));
+      else if (action === "astral-sh/setup-uv") bins.unshift(setupUv(step, tools, environment.PATH, name, env));
+      else if (Number(step.with?.["fetch-depth"] ?? 1) === 0 && shallow) {
+        refuse(`${name} needs the full history, and the cloud checkout is shallow`);
+      }
+      own();
+      steps.push([index + 1, role, as, 0]);
+      continue;
+    }
+    const script = path.join(scripts, `${index + 1}.sh`);
+    writeFileSync(script, step.run.replaceAll(BASE_REF, base ?? ""));
+    chmodSync(script, 0o644);
+    const argv = shell === "sh" ? ["sh", ["-e", script]] : shell === "bash" ? ["bash", ["--noprofile", "--norc", "-eo", "pipefail", script]] : ["bash", ["-e", script]];
+    const stepEnv = { ...cloudHostEnvironment(environment, home, home), ...github, ...env, ...strings(step.env), PATH: lanePath(bins, environment.PATH, actor) };
+    const cwd = path.join(clone, directory);
+    const options = role === "actor" ? { cwd, env: stepEnv, ...actor, stdio } : { cwd, env: rootSetupEnvironment(stepEnv, environment, clone), stdio };
+    const limit = Math.max(1000, Math.min((step["timeout-minutes"] ?? Infinity) * 60_000, deadline - now()));
+    const result = run(argv[0], argv[1], options, { timeout: limit });
+    if (role !== "actor") own();
+    const code = Number.isInteger(result.exitCode) ? result.exitCode : 1;
+    steps.push([index + 1, role, as, code]);
+    if (code !== 0 && step["continue-on-error"] !== true && exitCode === 0) exitCode = code;
+  }
+  log(`CLOUD_WORKFLOW_LANE ${JSON.stringify({ exitCode, steps, ...(repaired.length ? { repaired } : {}) })}`);
+  return { exitCode, steps };
+}
+
+if (runsAsScript(import.meta.url)) {
+  const plan = path.dirname(fileURLToPath(import.meta.url));
+  let work = null;
+  try {
+    const index = process.argv[2];
+    if (process.argv.length !== 3 || !/^(?:0|[1-9]\d*)$/.test(index ?? "")) refuse("run it as cloud-workflow-runner.mjs <lane index>");
+    const names = JSON.parse(readFileSync(path.join(plan, "lanes.json"), "utf8"));
+    if (Number(index) >= names.length) refuse(`lane index ${index} is outside the plan's ${names.length} lanes`);
+    const definition = JSON.parse(readFileSync(path.join(plan, `lane-${index}.json`), "utf8"));
+    const { commit } = JSON.parse(Buffer.from(readFileSync(path.join(plan, "reporter-spec"), "utf8"), "base64url").toString("utf8"));
+    const repairFile = path.join(plan, PACKAGE_REPAIR_FILE);
+    const repair = existsSync(repairFile) ? JSON.parse(readFileSync(repairFile, "utf8")) : null;
+    if (repair && repair.exitCode !== 0) refuse(`root setup: the host's package repair failed before any lane: ${repair.detail}`);
+    const checkout = realpathSync(process.cwd());
+    if (git(checkout, ["rev-parse", "HEAD"]).trim() !== commit) refuse("the checkout is not the validation commit");
+    work = mkdtempSync(path.join(os.tmpdir(), "vibe-workflow-lane-"));
+    chmodSync(work, 0o711);
+    process.exitCode = runWorkflowLane({ checkout, commit, definition, work, base: pullRequestBase(checkout), repaired: repair?.partlyInstalled ?? [] }).exitCode;
+  } catch (error) {
+    process.stderr.write(`${WORKFLOW_NOT_RUN} ${String(error.message).replace(/\s+/g, " ").slice(0, 300)}\n`);
+    process.exitCode = 78;
+  } finally {
+    if (work) rmSync(work, { recursive: true, force: true });
+  }
+}

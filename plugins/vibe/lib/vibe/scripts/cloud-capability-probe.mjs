@@ -27,10 +27,11 @@ async function run(command, args, seconds) {
   } catch (error) { return fail(error.code ?? error.message); }
 }
 
-/** Measure the executable versions actually selected by the cloud worker shell. */
+/** Measure the lane tools the cloud worker shell actually selects: zsh's configured packages and the exact tool versions. */
 export async function measureLaneTools(command = run) {
   const probes = [
-    ["zsh", "zsh", ["--version"], /^zsh [0-9]+\./],
+    // dpkg's own state, not `zsh --version`: an unpacked but unconfigured zsh still runs (r24 left both iU).
+    ["zsh", "dpkg-query", ["-W", "-f=${Status}\\n", "zsh", "zsh-common"], /^install ok installed\ninstall ok installed$/],
     ["uv", "uv", ["--version"], /^uv [0-9]+\./],
     ["python313", "uv", ["run", "--offline", "--no-project", "--python", "3.13", "python", "--version"], /^Python 3\.13\.[0-9]+/],
     ["node24", "node", ["--version"], /^v24\.[0-9]+\.[0-9]+/],
