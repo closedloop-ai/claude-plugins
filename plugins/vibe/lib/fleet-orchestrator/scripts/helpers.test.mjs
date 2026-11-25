@@ -11,7 +11,7 @@ import { removeOwnedDockerResources } from '../../vibe/scripts/owned-docker.mjs'
 import { sourceIdentity } from '../../vibe/scripts/tested-head.mjs';
 import { evidenceFingerprint } from '../../handoff/scripts/handoff-evidence.mjs';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
-import { completionEventProblem, endProcesses, finalMarker, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity,
+import { completionEventProblem, endProcesses, finalMarker, isAlive, orphans, parsePids, pendingE2eCleanups, pendingRecordedProcess, readIdentity,
   reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
 import { captureScratchLease, reconcileExpiredScratchHelpers, sweepScratchHelpers } from './scratch-cleanup.mjs';
 import { vibeRoot } from '../../../shared/vibe-install.mjs';
@@ -751,6 +751,16 @@ test('a process that ignores SIGTERM is killed after the grace; a survivor keeps
   assert.match(status.stdout, new RegExp(`^ORPHAN qa-f ${left} still running$`, 'm'));
   assert.match(status.stdout, /helpers: 1 active, 0 to stop, 1 orphaned/);
   assert.equal(run([dir, 'pid', 'qa-e', 'abc']).status, 2);
+});
+
+test('a recorded process that exits between its liveness probe and its identity read is gone, while a live unreadable one stays pending', () => {
+  const target = { pid: FAKE, identity: 'recorded birth' };
+  const probes = (...answers) => () => answers.shift();
+  assert.equal(pendingRecordedProcess(target, probes(true, false), () => null), false, 'reaped after the probe: not pending');
+  assert.equal(pendingRecordedProcess(target, probes(true, true), () => null), true, 'still alive with an unreadable identity: cleanup is refused');
+  assert.equal(pendingRecordedProcess(target, probes(true), () => 'recorded birth'), true, 'the recorded process itself is pending');
+  assert.equal(pendingRecordedProcess(target, probes(true), () => 'another birth'), false, 'a reused pid is foreign, not pending');
+  assert.equal(pendingRecordedProcess(target, probes(false), () => 'recorded birth'), false, 'a gone process is not pending');
 });
 
 test('a pid of 1 or lower is never recorded: signalling group 1 reaches every process the user owns', () => {

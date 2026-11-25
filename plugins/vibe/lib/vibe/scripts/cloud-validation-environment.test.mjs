@@ -215,7 +215,10 @@ test("committed API fixture Git reads run as the real checkout owner", t => {
   const commit = git(checkout,["rev-parse","HEAD"],f.home);
   const [{prerequisites:{env}}] = describeCloudLanes([{name:"api",command:API_COMMAND}],
     {read:file=>files[file],commit});
-  const [result] = runCloudHostPlan({checkout,directory,contract:installedProviders()[0].contract,
+  // The fixture's lane needs no database: as root the runner would otherwise start the provider's real declared services.
+  const provider = installedProviders()[0].contract, recipes = provider.data.recipes;
+  const contract = {...provider,data:{...provider.data,recipes:{...recipes,cloudValidation:{...recipes.cloudValidation,rootServices:[]}}}};
+  const [result] = runCloudHostPlan({checkout,directory,contract,
     lanes:[{name:"api",command:"node verify.cjs",envSource:env.source}]});
   assert.equal(result.exitCode,0,result.diagnosis);
   assert.equal(result.runtime.uid,process.getuid() || 65534);
