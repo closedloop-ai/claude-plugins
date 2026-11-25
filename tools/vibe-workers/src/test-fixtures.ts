@@ -22,6 +22,12 @@ export function withReviewCriteria(input: Record<string, unknown>, directory: st
 export const graph: Capability[] = [{ name: "mcp__custom_graph__sync_status", service: "graph", operation: "sync_status", access: "read" }];
 export const liveReads: Capability[] = ["get_document", "get_me"].map((operation) => ({
   name: `mcp__live_workspace__${operation}`, service: TRACKER_SERVICE, operation, access: "read" }));
+/** The graph read 123c0d90 (ISS-14116) made bindable and the change-worker prompt mandatory. */
+export const testsForChanges: Capability = { name: "mcp__custom_graph__code_tests_for_changes", service: "graph",
+  operation: "code_tests_for_changes", access: "read" };
+/** A record write the provider offers but no change-worker action declares. */
+export const updateDocument: Capability = { name: "mcp__live_workspace__update_document", service: TRACKER_SERVICE,
+  operation: "update_document", access: "write" };
 export const recordWrite: Capability = { name: "mcp__live_workspace__create_document_version", service: TRACKER_SERVICE, operation: "create_document_version", access: "write" };
 export const bundleDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "../../../plugins/vibe/skills/vibe/scripts/dist");
 

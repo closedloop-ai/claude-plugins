@@ -224229,7 +224229,7 @@ var ledgerStateSchema = external_exports.object({
 var migrationSchema = external_exports.object({
   id: external_exports.string().uuid(),
   at: external_exports.string().datetime(),
-  reason: external_exports.enum(["definition-missing", "definition-upgraded", "harness-switch"]),
+  reason: external_exports.enum(["definition-missing", "definition-upgraded", "harness-switch", "capability-names"]),
   observedDigest: external_exports.string().length(64).nullable(),
   previous: ledgerStateSchema,
   workerId: workerIdSchema,
@@ -225590,9 +225590,38 @@ var nativeEnvironments = /* @__PURE__ */ new WeakMap();
 function isInputModulePath(file, root) {
   return MODULE_PATH.test(file) && !isPlanFile(root, file);
 }
-function committedInputReferences(root, matches) {
-  const files = readGitInventory(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean);
-  return files.some((file) => isInputModulePath(file, root) && inputModuleReferences(root, file, matches, parseInputModule(root, file)));
+var REFERENCE_SCAN_PHASE = "private-input-references";
+var MAX_PARSED_MODULE_BYTES = 1024 * 1024;
+var REFERENCE_SCAN_BUDGET_MS = 10 * 60 * 1e3;
+var REFERENCE_SCAN_PROGRESS_MS = 15 * 1e3;
+function committedInputReferences(root, matches, {
+  unparsed,
+  maxParsedBytes = MAX_PARSED_MODULE_BYTES,
+  budgetMs = REFERENCE_SCAN_BUDGET_MS,
+  progressMs = REFERENCE_SCAN_PROGRESS_MS,
+  now = Date.now,
+  report = (line) => process.stderr.write(`${line}
+`)
+}) {
+  const modules = readGitInventory(root, ["ls-tree", "-r", "-z", "-l", "HEAD"]).split("\0").filter(Boolean).flatMap((entry) => {
+    const tab = entry.indexOf("	");
+    const file = entry.slice(tab + 1);
+    return isInputModulePath(file, root) ? [{ file, bytes: Number(entry.slice(0, tab).trim().split(/\s+/).at(-1)) }] : [];
+  });
+  const started = now();
+  let reported = started;
+  return modules.some(({ file, bytes }, index) => {
+    const at = now();
+    if (at - started >= budgetMs) {
+      throw new MainSyncError(`Main-sync phase ${REFERENCE_SCAN_PHASE} stopped at its ${Math.round(budgetMs / 1e3)} s bound after ${index} of ${modules.length} committed modules (next ${file}); nothing was published`);
+    }
+    if (at - reported >= progressMs) {
+      report(`main-sync ${REFERENCE_SCAN_PHASE}: ${index} of ${modules.length} committed modules checked in ${Math.round((at - started) / 1e3)} s`);
+      reported = at;
+    }
+    if (!(bytes <= maxParsedBytes)) return unparsed(file, readFileSync8(join7(root, file), "utf8"));
+    return inputModuleReferences(root, file, matches, parseInputModule(root, file));
+  });
 }
 function readInputModule(root, file, environment) {
   if (!isInputModulePath(file, root)) throw new Error("Input module is not a public committed source path");
@@ -227513,12 +227542,12 @@ function sha256(bytes) {
 import { existsSync as existsSync8, lstatSync as lstatSync3, realpathSync as realpathSync8 } from "node:fs";
 import { dirname as dirname7, join as join12, relative as relative4, resolve as resolve6, sep } from "node:path";
 var analyzed;
-function verifyPrivateInput(root, file, head) {
+function verifyPrivateInput(root, file, head, bounds = {}) {
   verifyEvidencePath(root, file);
   const privatePaths = readGitInventory(root, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]).split("\0").filter((path3) => isPlanFile(root, path3));
   const candidates = privatePaths.join("\0");
   if (analyzed?.root !== root || analyzed.head !== head || analyzed.candidates !== candidates) {
-    analyzed = { root, head, candidates, privatePaths: referencesPrivateInputs(root, privatePaths) };
+    analyzed = { root, head, candidates, privatePaths: referencesPrivateInputs(root, privatePaths, bounds) };
   }
   if (analyzed.privatePaths) {
     throw new MainSyncError("Private planning evidence is consumed by a committed import, reader or collector; preserve it and correct the same-writer input boundary", "NEEDS_CHANGE");
@@ -227559,13 +227588,14 @@ function verifyEvidencePath(root, file, label = "Private planning evidence") {
     }
   }
 }
-function referencesPrivateInputs(root, privatePaths) {
+function referencesPrivateInputs(root, privatePaths, bounds) {
+  const folders = planPrefixesOf(root).map((prefix) => prefix.slice(0, -1).split("/").at(-1) ?? "").filter(Boolean);
   return committedInputReferences(root, (file, reference) => {
     if (explicitPlanningReference(root, file, reference) || referenceMatches(root, file, reference, privatePaths)) return true;
     if (reference.kind !== "path") return false;
     const path3 = resolve6(reference.base === "module" ? dirname7(join12(root, file)) : root, reference.value);
     return existsSync8(path3) && isPlanFile(root, relative4(root, realpathSync8(path3)));
-  });
+  }, { ...bounds, unparsed: (_file, text) => [...privatePaths, ...folders].some((name) => text.includes(name)) });
 }
 
 // src/main-sync-input-catalog.ts
@@ -228278,60 +228308,59 @@ function committedInputs(root) {
 function inspectInputInventory(root) {
   return inspectInventory(root, "standalone").inventory;
 }
-function inspectUntrackedPath(root, file, ignored, headSha, reportOutputs) {
-  if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) return false;
-  if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) return false;
+function classifyUntrackedPath(root, file, ignored, headSha, reportOutputs, artifactRoot) {
+  if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) return null;
+  if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) return null;
   if (isPlanFile(root, file)) {
-    if (!ignored) throw new MainSyncError(`Private planning evidence must remain ignored: ${file}`, "NEEDS_CHANGE");
-    verifyPrivateInput(root, file, headSha);
-    return false;
+    if (!ignored) return { offender: { message: `Private planning evidence must remain ignored: ${file}` } };
+    return { read: () => {
+      verifyPrivateInput(root, file, headSha);
+      return false;
+    } };
   }
-  const artifactRoot = artifactRootOf(root);
-  if (PRIVATE_ARTIFACT.test(file) && (artifactRoot && file.startsWith(`${artifactRoot}decision-tables/`) || file.startsWith(".control/"))) return false;
+  if (PRIVATE_ARTIFACT.test(file) && (artifactRoot && file.startsWith(`${artifactRoot}decision-tables/`) || file.startsWith(".control/"))) return null;
   if (producerFor(root, file)) {
-    if (!ignored) throw new MainSyncError(`Canonical generated dependency must remain ignored: ${file}`, "NEEDS_CHANGE");
-    return false;
+    return ignored ? null : { offender: { message: `Canonical generated dependency must remain ignored: ${file}` } };
   }
   if (ignored && reportOutputs.has(file)) {
     const stat = lstatSync7(join19(root, file));
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new MainSyncError(`Retained report must be a regular owned output: ${file}`, "NEEDS_CHANGE");
-    return false;
+    return !stat.isFile() || stat.isSymbolicLink() ? { offender: { message: `Retained report must be a regular owned output: ${file}` } } : null;
   }
-  if (ignored && file === GENERATED_BIOME_PATH) {
+  if (ignored && file === GENERATED_BIOME_PATH) return { read: () => {
     verifyGeneratedBiomeInput(root, headSha);
     return true;
-  }
-  if (file.split("/").at(-1)?.startsWith(GENERATED_BIOME_PATH)) {
-    throw new MainSyncError(`Committed validation inputs differ from HEAD: unsupported generated-input path ${file}`, "NEEDS_CHANGE");
-  }
-  if (EXECUTABLE_INPUT.test(file)) throw new MainSyncError(`Committed validation inputs differ from HEAD: uncommitted executable ${file}`, "NEEDS_CHANGE");
-  return false;
+  } };
+  if (file.split("/").at(-1)?.startsWith(GENERATED_BIOME_PATH)) return { offender: { input: `unsupported generated-input path ${file}` } };
+  if (!ignored && EXECUTABLE_INPUT.test(file)) return { offender: { input: `uncommitted executable ${file}` } };
+  return null;
 }
+var BLOCKING_REPORT = "vibe-main-sync-blocking-inputs.json";
+var MAX_REFUSAL_BYTES = 2048;
 function refuseInputPaths(root, paths) {
   paths.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
-  const file = "vibe-main-sync-blocking-inputs.json";
-  writePrivateSyncReport(join19(checkoutLocation(root).dir, file), JSON.stringify({ paths }));
-  const lines = [];
-  let size = 0;
-  for (const row of paths) {
-    const label = row.reason.includes(row.path) ? row.reason : row.path + ": " + row.reason;
-    const line = label.replace(/[\x00-\x1f\x7f]/g, " ");
-    size += Buffer.byteLength(line) + 1;
-    if (size > 2048) break;
-    lines.push(line);
-  }
-  throw new MainSyncError(`${lines.join("\n")}
-${paths.length} blocking input(s). Full report in the private Git directory: ${file}`, "NEEDS_CHANGE");
+  const reason = (offender) => "input" in offender ? `Committed validation inputs differ from HEAD: ${offender.input}` : offender.message;
+  writePrivateSyncReport(join19(checkoutLocation(root).dir, BLOCKING_REPORT), JSON.stringify({ paths: paths.map(({ path: path3, offender }) => ({ path: path3, reason: reason(offender) })) }));
+  const printable = (text) => text.replace(/[\x00-\x1f\x7f]/g, " ");
+  const labeled = paths.map(({ path: path3, offender }) => "input" in offender ? { input: printable(offender.input) } : { message: printable(offender.message.includes(path3) ? offender.message : `${path3}: ${offender.message}`) });
+  const full = offendersMessage(labeled);
+  if (Buffer.byteLength(full) <= MAX_REFUSAL_BYTES) throw new MainSyncError(full, "NEEDS_CHANGE");
+  const bounded = (shown2) => [
+    offendersMessage(labeled.slice(0, shown2)),
+    `${shown2} of ${paths.length} blocking inputs shown. Full report in the private Git directory: ${BLOCKING_REPORT}`
+  ].filter(Boolean).join("; ");
+  let shown = 0;
+  while (shown < labeled.length && Buffer.byteLength(bounded(shown + 1)) <= MAX_REFUSAL_BYTES) shown += 1;
+  throw new MainSyncError(bounded(shown), "NEEDS_CHANGE");
 }
 function inspectInventory(root, completion) {
   const before = trackedInputs(root);
   const invalidPrivateRoots = verifyPrivateRoot(root);
   const reportOutputs = reportOutputsFor(root);
-  const blocking = new Map(invalidPrivateRoots);
+  const blocking = new Map(Array.from(invalidPrivateRoots, ([path3, message]) => [path3, { message }]));
   for (const path3 of reportOutputs) {
     const invalid = invalidReportParent(root, path3);
     if (invalid) {
-      blocking.set(invalid, "Retained report requires a canonical directory parent: " + invalid);
+      blocking.set(invalid, { message: "Retained report requires a canonical directory parent: " + invalid });
       continue;
     }
     if (!lstatSync7(join19(root, path3), { throwIfNoEntry: false })) continue;
@@ -228339,40 +228368,40 @@ function inspectInventory(root, completion) {
       verifyEvidencePath(root, path3, "Retained report");
     } catch (error) {
       if (!(error instanceof MainSyncError)) throw error;
-      blocking.set(path3, `${path3}: ${error.message}`);
+      blocking.set(path3, { message: `${path3}: ${error.message}` });
     }
   }
   const generated = lstatSync7(join19(root, GENERATED_BIOME_PATH), { throwIfNoEntry: false });
   if (generated && !generated.isFile()) {
-    blocking.set(GENERATED_BIOME_PATH, `Generated-input verification requires a bounded canonical regular file: ${GENERATED_BIOME_PATH}`);
+    blocking.set(GENERATED_BIOME_PATH, { message: `Generated-input verification requires a bounded canonical regular file: ${GENERATED_BIOME_PATH}` });
   }
   let recognizedDerivative = false;
   const untracked = [];
+  const reads = [];
+  const artifactRoot = artifactRootOf(root);
   for (const ignored of [false, true]) {
     const args = ["ls-files", "--others", "--exclude-standard", "-z", ...ignored ? ["--ignored"] : []];
     for (const file of readGitInventory(root, args).split("\0").filter(Boolean)) {
       if (blocking.has(file) || [...invalidPrivateRoots.keys()].some((parent) => file.startsWith(parent + "/"))) continue;
       untracked.push(file);
-      try {
-        if (inspectUntrackedPath(root, file, ignored, before.headSha, reportOutputs)) recognizedDerivative = true;
-      } catch (error) {
-        if (!(error instanceof MainSyncError)) throw error;
-        blocking.set(file, error.message);
-      }
+      const classified = classifyUntrackedPath(root, file, ignored, before.headSha, reportOutputs, artifactRoot);
+      if (classified && "offender" in classified) blocking.set(file, classified.offender);
+      else if (classified) reads.push(classified.read);
     }
   }
   const producers = inputProducers(root).filter((producer) => {
     const roots = producer.roots.filter((output) => {
       const parent = invalidReportParent(root, output);
-      if (parent) blocking.set(parent, "Producer output requires a canonical directory: " + parent);
+      if (parent) blocking.set(parent, { message: "Producer output requires a canonical directory: " + parent });
       return !parent;
     });
     return presentProducers(root, [{ ...producer, roots }]).length > 0;
   });
   for (const { path: path3, reason } of producerInputProblems(producers, untracked)) {
-    if (!blocking.has(path3)) blocking.set(path3, reason);
+    if (!blocking.has(path3)) blocking.set(path3, { message: reason });
   }
-  if (blocking.size) refuseInputPaths(root, Array.from(blocking, ([path3, reason]) => ({ path: path3, reason })));
+  if (blocking.size) refuseInputPaths(root, Array.from(blocking, ([path3, offender]) => ({ path: path3, offender })));
+  for (const read of reads) if (read()) recognizedDerivative = true;
   const plans = planPrefixesOf(root).flatMap((prefix) => committedLocalPlans(root, prefix));
   if (plans.length) throw new MainSyncError("Local technical plans are committed; publication is blocked");
   if (recognizedDerivative) {
@@ -228385,6 +228414,11 @@ function inspectInventory(root, completion) {
   if (completion === "origin" && producers.length) metadata = verifyProducerInputsForOrigin(root, before.headSha, producers, untracked);
   else verifyProducerInputs(root, before.headSha, producers, untracked);
   return { inventory: { ...before, producers }, metadata };
+}
+function offendersMessage(offenders) {
+  const inputs = offenders.flatMap((offender) => "input" in offender ? [offender.input] : []);
+  const messages = offenders.flatMap((offender) => "message" in offender ? [offender.message] : []);
+  return [...messages, ...inputs.length ? [`Committed validation inputs differ from HEAD: ${inputs.join("; ")}`] : []].join("; ");
 }
 function verifyOriginProof(root, metadata, before, proof, changed = /* @__PURE__ */ new Set()) {
   const writer = readWriterSummary(root);
@@ -228775,11 +228809,17 @@ function prepareMainSyncInputs(raw) {
 function prepareMainSync(raw) {
   const value = syncContext(raw, "prepare");
   const root = value.place.root;
-  const inventory = inspectInputInventory(root);
   const previousFile = join20(value.place.dir, MAIN_SYNC_FILE);
   const state = existsSync12(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : void 0;
-  if (state?.inputs?.headSha === inventory.headSha && state.inputs.treeSha === inventory.treeSha) committedInputs(root);
   const previous = state?.phase === "input-readiness" ? state.previous : state;
+  let scanned = false;
+  const scan = () => {
+    const inventory = inspectInputInventory(root);
+    if (state?.inputs?.headSha === inventory.headSha && state.inputs.treeSha === inventory.treeSha) committedInputs(root);
+    scanned = true;
+  };
+  const advertisedMain = remoteMainSha(root);
+  if (!advertisedMain || !isAncestor(root, advertisedMain)) scan();
   if (previous && (previous.worktree !== root || previous.branch !== value.place.branch || previous.originalBase !== value.place.session.baseCommit || previous.operator.id !== value.place.session.operator.id || previous.operator.email !== value.place.session.operator.email)) {
     throw new MainSyncError("Previous main-sync provenance belongs to another session; preserve it and inspect the owned evidence");
   }
@@ -228797,6 +228837,7 @@ function prepareMainSync(raw) {
     throw new MainSyncError("Fresh main fetch failed; nothing was published");
   }
   const fetchedMain = git(root, ["rev-parse", "FETCH_HEAD^{commit}"]);
+  if (!scanned && !isAncestor(root, fetchedMain)) scan();
   const startingHead = git(root, ["rev-parse", "HEAD"]);
   const common = git(root, ["merge-base", startingHead, fetchedMain]);
   const decision = mainMergeDecision(root, value.place.session, fetchedMain);
@@ -229098,6 +229139,13 @@ function isAncestor(root, commit) {
     return true;
   } catch {
     return false;
+  }
+}
+function remoteMainSha(root) {
+  try {
+    return remoteHead(root, "main");
+  } catch {
+    return "";
   }
 }
 function remoteHead(root, branch) {

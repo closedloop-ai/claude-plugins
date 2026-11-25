@@ -57,104 +57,108 @@ export function inspectInputInventory(root: string) {
   return inspectInventory(root, "standalone").inventory;
 }
 
-/** Classify a single candidate while retaining the existing producer, private input and report checks. */
-function inspectUntrackedPath(root: string, file: string, ignored: boolean, headSha: string, reportOutputs: ReadonlySet<string>): boolean {
-  if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) return false;
-  if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) return false;
+/** What one untracked or ignored path is: a blocking offender, a read deferred until no path blocks, or neither. */
+type Classified = { offender: Offender } | { read: () => boolean } | null;
+
+/** Classify one candidate while retaining the existing producer, private input and report checks; nothing is read here. */
+function classifyUntrackedPath(root: string, file: string, ignored: boolean, headSha: string, reportOutputs: ReadonlySet<string>,
+  artifactRoot: string | null): Classified {
+  if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) return null;
+  if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) return null;
   if (isPlanFile(root, file)) {
-    if (!ignored) throw new MainSyncError(`Private planning evidence must remain ignored: ${file}`, "NEEDS_CHANGE");
-    verifyPrivateInput(root, file, headSha);
-    return false;
+    if (!ignored) return { offender: { message: `Private planning evidence must remain ignored: ${file}` } };
+    return { read: () => { verifyPrivateInput(root, file, headSha); return false; } };
   }
-  const artifactRoot = artifactRootOf(root);
-  if (PRIVATE_ARTIFACT.test(file) && ((artifactRoot && file.startsWith(`${artifactRoot}decision-tables/`)) || file.startsWith(".control/"))) return false;
+  if (PRIVATE_ARTIFACT.test(file) && ((artifactRoot && file.startsWith(`${artifactRoot}decision-tables/`)) || file.startsWith(".control/"))) return null;
   if (producerFor(root, file)) {
-    if (!ignored) throw new MainSyncError(`Canonical generated dependency must remain ignored: ${file}`, "NEEDS_CHANGE");
-    return false;
+    return ignored ? null : { offender: { message: `Canonical generated dependency must remain ignored: ${file}` } };
   }
   if (ignored && reportOutputs.has(file)) {
     const stat = lstatSync(join(root, file));
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new MainSyncError(`Retained report must be a regular owned output: ${file}`, "NEEDS_CHANGE");
-    return false;
+    return !stat.isFile() || stat.isSymbolicLink() ? { offender: { message: `Retained report must be a regular owned output: ${file}` } } : null;
   }
-  if (ignored && file === GENERATED_BIOME_PATH) {
-    verifyGeneratedBiomeInput(root, headSha);
-    return true;
-  }
-  if (file.split("/").at(-1)?.startsWith(GENERATED_BIOME_PATH)) {
-    throw new MainSyncError(`Committed validation inputs differ from HEAD: unsupported generated-input path ${file}`, "NEEDS_CHANGE");
-  }
-  if (EXECUTABLE_INPUT.test(file)) throw new MainSyncError(`Committed validation inputs differ from HEAD: uncommitted executable ${file}`, "NEEDS_CHANGE");
-  return false;
+  if (ignored && file === GENERATED_BIOME_PATH) return { read: () => { verifyGeneratedBiomeInput(root, headSha); return true; } };
+  // A name in the generated-input family is checked against its producer contract wherever it sits.
+  if (file.split("/").at(-1)?.startsWith(GENERATED_BIOME_PATH)) return { offender: { input: `unsupported generated-input path ${file}` } };
+  // A git-ignored file is never a validation input: only an untracked one can differ from HEAD.
+  if (!ignored && EXECUTABLE_INPUT.test(file)) return { offender: { input: `uncommitted executable ${file}` } };
+  return null;
 }
 
-/** Store every blocking path privately and return a deterministic, byte-bounded refusal. */
-function refuseInputPaths(root: string, paths: { path: string; reason: string }[]): never {
+const BLOCKING_REPORT = "vibe-main-sync-blocking-inputs.json";
+const MAX_REFUSAL_BYTES = 2048;
+
+/**
+ * Store every blocking path privately, then refuse with all of them in one message. A message over its byte bound lists
+ * the paths that fit and names the private report that holds the rest.
+ */
+function refuseInputPaths(root: string, paths: { path: string; offender: Offender }[]): never {
   paths.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
-  const file = "vibe-main-sync-blocking-inputs.json";
-  writePrivateSyncReport(join(checkoutLocation(root).dir, file), JSON.stringify({ paths }));
-  const lines: string[] = [];
-  let size = 0;
-  for (const row of paths) {
-    const label = row.reason.includes(row.path) ? row.reason : row.path + ": " + row.reason;
-    const line = label.replace(/[\x00-\x1f\x7f]/g, " ");
-    size += Buffer.byteLength(line) + 1;
-    if (size > 2048) break;
-    lines.push(line);
-  }
-  throw new MainSyncError(`${lines.join("\n")}\n${paths.length} blocking input(s). Full report in the private Git directory: ${file}`, "NEEDS_CHANGE");
+  const reason = (offender: Offender) => "input" in offender ? `Committed validation inputs differ from HEAD: ${offender.input}` : offender.message;
+  writePrivateSyncReport(join(checkoutLocation(root).dir, BLOCKING_REPORT), JSON.stringify({ paths: paths.map(({ path, offender }) => ({ path, reason: reason(offender) })) }));
+  // A path's control characters never reach the message as line breaks or terminal codes.
+  const printable = (text: string) => text.replace(/[\x00-\x1f\x7f]/g, " ");
+  const labeled = paths.map(({ path, offender }): Offender => "input" in offender ? { input: printable(offender.input) }
+    : { message: printable(offender.message.includes(path) ? offender.message : `${path}: ${offender.message}`) });
+  const full = offendersMessage(labeled);
+  if (Buffer.byteLength(full) <= MAX_REFUSAL_BYTES) throw new MainSyncError(full, "NEEDS_CHANGE");
+  const bounded = (shown: number) => [offendersMessage(labeled.slice(0, shown)),
+    `${shown} of ${paths.length} blocking inputs shown. Full report in the private Git directory: ${BLOCKING_REPORT}`].filter(Boolean).join("; ");
+  let shown = 0;
+  while (shown < labeled.length && Buffer.byteLength(bounded(shown + 1)) <= MAX_REFUSAL_BYTES) shown += 1;
+  throw new MainSyncError(bounded(shown), "NEEDS_CHANGE");
 }
 
 function inspectInventory(root: string, completion: "standalone" | "origin") {
   const before = trackedInputs(root);
   const invalidPrivateRoots = verifyPrivateRoot(root);
   const reportOutputs = reportOutputsFor(root);
-  const blocking = new Map(invalidPrivateRoots);
+  const blocking = new Map<string, Offender>(Array.from(invalidPrivateRoots, ([path, message]) => [path, { message }]));
   for (const path of reportOutputs) {
     const invalid = invalidReportParent(root, path);
     if (invalid) {
-      blocking.set(invalid, "Retained report requires a canonical directory parent: " + invalid);
+      blocking.set(invalid, { message: "Retained report requires a canonical directory parent: " + invalid });
       continue;
     }
     if (!lstatSync(join(root, path), { throwIfNoEntry: false })) continue;
     try { verifyEvidencePath(root, path, "Retained report"); }
     catch (error) {
       if (!(error instanceof MainSyncError)) throw error;
-      blocking.set(path, `${path}: ${error.message}`);
+      blocking.set(path, { message: `${path}: ${error.message}` });
     }
   }
   const generated = lstatSync(join(root, GENERATED_BIOME_PATH), { throwIfNoEntry: false });
   if (generated && !generated.isFile()) {
-    blocking.set(GENERATED_BIOME_PATH, `Generated-input verification requires a bounded canonical regular file: ${GENERATED_BIOME_PATH}`);
+    blocking.set(GENERATED_BIOME_PATH, { message: `Generated-input verification requires a bounded canonical regular file: ${GENERATED_BIOME_PATH}` });
   }
   let recognizedDerivative = false;
   const untracked: string[] = [];
-
+  // Both listings are classified first, so one refusal reports every offender; files are read only after none.
+  const reads: (() => boolean)[] = [];
+  const artifactRoot = artifactRootOf(root);
   for (const ignored of [false, true]) {
     const args = ["ls-files", "--others", "--exclude-standard", "-z", ...(ignored ? ["--ignored"] : [])];
     for (const file of readGitInventory(root, args).split("\0").filter(Boolean)) {
       if (blocking.has(file) || [...invalidPrivateRoots.keys()].some(parent => file.startsWith(parent + "/"))) continue;
       untracked.push(file);
-      try {
-        if (inspectUntrackedPath(root, file, ignored, before.headSha, reportOutputs)) recognizedDerivative = true;
-      } catch (error) {
-        if (!(error instanceof MainSyncError)) throw error;
-        blocking.set(file, error.message);
-      }
+      const classified = classifyUntrackedPath(root, file, ignored, before.headSha, reportOutputs, artifactRoot);
+      if (classified && "offender" in classified) blocking.set(file, classified.offender);
+      else if (classified) reads.push(classified.read);
     }
   }
   const producers = inputProducers(root).filter(producer => {
     const roots = producer.roots.filter(output => {
       const parent = invalidReportParent(root, output);
-      if (parent) blocking.set(parent, "Producer output requires a canonical directory: " + parent);
+      if (parent) blocking.set(parent, { message: "Producer output requires a canonical directory: " + parent });
       return !parent;
     });
     return presentProducers(root, [{ ...producer, roots }]).length > 0;
   });
   for (const { path, reason } of producerInputProblems(producers, untracked)) {
-    if (!blocking.has(path)) blocking.set(path, reason);
+    if (!blocking.has(path)) blocking.set(path, { message: reason });
   }
-  if (blocking.size) refuseInputPaths(root, Array.from(blocking, ([path, reason]) => ({ path, reason })));
+  if (blocking.size) refuseInputPaths(root, Array.from(blocking, ([path, offender]) => ({ path, offender })));
+  for (const read of reads) if (read()) recognizedDerivative = true;
   const plans = planPrefixesOf(root).flatMap((prefix) => committedLocalPlans(root, prefix));
   if (plans.length) throw new MainSyncError("Local technical plans are committed; publication is blocked");
   if (recognizedDerivative) {
@@ -167,6 +171,16 @@ function inspectInventory(root: string, completion: "standalone" | "origin") {
   if (completion === "origin" && producers.length) metadata = verifyProducerInputsForOrigin(root, before.headSha, producers, untracked);
   else verifyProducerInputs(root, before.headSha, producers, untracked);
   return { inventory: { ...before, producers }, metadata };
+}
+
+/** An untracked path that blocks validation: a source input that differs from HEAD, or a whole refusal of its own. */
+type Offender = { input: string } | { message: string };
+
+/** One offender keeps its own sentence; several are listed in one, with the source inputs together under one prefix. */
+function offendersMessage(offenders: readonly Offender[]) {
+  const inputs = offenders.flatMap((offender) => "input" in offender ? [offender.input] : []);
+  const messages = offenders.flatMap((offender) => "message" in offender ? [offender.message] : []);
+  return [...messages, ...(inputs.length ? [`Committed validation inputs differ from HEAD: ${inputs.join("; ")}`] : [])].join("; ");
 }
 
 /** Recovery may replace authenticated changed output bodies, never untouched bytes, package refs or evidence. */

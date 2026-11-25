@@ -10,6 +10,7 @@ import { adoptStartupQuestions } from "./session-questions.mjs";
 import { listedFlagKeys } from "./flag-keys.mjs";
 import { validateOperator, validEnvironmentOrgId, vercelAliases } from "./vibe-session-data.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { pathCitationAuthority } from "../../handoff/scripts/path-citations.mjs";
 
 const { git, readSessionRecord, sessionLiveTicket, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { ProviderState, providerDataOr, sessionBinding, UNPROBED_REFUSAL } = await vibeCore("lib/vibe/scripts/provider.mjs");
@@ -372,7 +373,6 @@ async function touchSession(values, requireOption) {
   if (values["body-refreshed"]) delete updated.prBodyStale;
   if (values["cite-path"] !== undefined || values.criterion !== undefined) {
     const requested = { path: values["cite-path"], cites: values.criterion };
-    const { pathCitationAuthority } = await import("../../handoff/scripts/path-citations.mjs");
     const verified = pathCitationAuthority(worktree, updated, { requested }).citations.find(entry => entry.source === "request");
     if (!verified) throw new Error("The bound ticket needs a current criterion naming this exact repository file.");
     const row = { ticket: verified.ticket, ...requested, text: verified.text };

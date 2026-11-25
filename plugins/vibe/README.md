@@ -337,7 +337,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.109` contains 17 skills and 17 agents, and no hook manifest: the
+Version `1.1.111` contains 17 skills and 17 agents, and no hook manifest: the
 `vibe-core` plugin, which vibe declares as a dependency, registers the hooks and
 runs `hooks/runtime.mjs` from the vibe a session uses. Skill commands forward to guards in `hooks/` and runtime modules in `lib/`. The package has no standalone commands, root shell scripts or production Python tools. Tests sit beside their owners; Python contract helpers and the generic scan live in `tools/python/`.
 

@@ -6,6 +6,7 @@ import ts from "typescript";
 import picomatch from "picomatch";
 import { isPlanFile, planPrefixOf } from "./main-sync-plan-folder.js";
 import { isCommittedFile } from "./main-sync-committed-tree.js";
+import { MainSyncError } from "./main-sync-contracts.js";
 
 const MODULE_PATH = /\.(?:[cm]?[jt]sx?|json)$/;
 const CONFIG_PATH = /(?:^|\/)(?:tsconfig[^/]*\.json|(?:vitest|playwright|storybook|next|source)\.config\.[cm]?[jt]s|\.storybook\/main\.[cm]?[jt]s)$/;
@@ -38,11 +39,51 @@ export type InputReference = { kind: "path"; value: string; base: "module" | "ru
   kind: "collector" | "vite"; values: string[]; excludes: string[]; base: string; dot: boolean; unresolved: boolean;
 };
 
-/** One finite syntax owner serves both private evidence and retained-report admission. */
-export function committedInputReferences(root: string, matches: (file: string, reference: InputReference) => boolean) {
-  const files = readGitInventory(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0").filter(Boolean);
-  return files.some((file) => isInputModulePath(file, root)
-    && inputModuleReferences(root, file, matches, parseInputModule(root, file)));
+/** The committed-reference scan's phase, named in its progress lines and in its time-bound refusal. */
+export const REFERENCE_SCAN_PHASE = "private-input-references";
+/**
+ * A committed module above this size is a generated or vendored bundle: its text is searched, never parsed. Parsing the
+ * two 10.7 MB main-sync bundles alone held one main-sync step at full CPU for 37 minutes.
+ */
+export const MAX_PARSED_MODULE_BYTES = 1024 * 1024;
+/** How long the whole scan may run before it fails with its phase named, and how often it reports progress. */
+export const REFERENCE_SCAN_BUDGET_MS = 10 * 60 * 1000;
+export const REFERENCE_SCAN_PROGRESS_MS = 15 * 1000;
+export type ReferenceScanOptions = {
+  /** Whether an unparsed large module's text names a target; it stands in for `matches` there. */
+  unparsed: (file: string, text: string) => boolean;
+  maxParsedBytes?: number; budgetMs?: number; progressMs?: number;
+  now?: () => number; report?: (line: string) => void;
+};
+
+/**
+ * One finite syntax owner serves the private-evidence walk. Each committed module up to `maxParsedBytes` is parsed;
+ * a larger one is read as text for `unparsed`. Progress goes to stderr every `progressMs`, and the walk fails with its
+ * phase named once it has run for `budgetMs`.
+ */
+export function committedInputReferences(root: string, matches: (file: string, reference: InputReference) => boolean,
+  { unparsed, maxParsedBytes = MAX_PARSED_MODULE_BYTES, budgetMs = REFERENCE_SCAN_BUDGET_MS, progressMs = REFERENCE_SCAN_PROGRESS_MS,
+    now = Date.now, report = (line) => process.stderr.write(`${line}\n`) }: ReferenceScanOptions) {
+  const modules = readGitInventory(root, ["ls-tree", "-r", "-z", "-l", "HEAD"]).split("\0").filter(Boolean).flatMap((entry) => {
+    const tab = entry.indexOf("\t");
+    const file = entry.slice(tab + 1);
+    return isInputModulePath(file, root) ? [{ file, bytes: Number(entry.slice(0, tab).trim().split(/\s+/).at(-1)) }] : [];
+  });
+  const started = now();
+  let reported = started;
+  return modules.some(({ file, bytes }, index) => {
+    const at = now();
+    if (at - started >= budgetMs) {
+      throw new MainSyncError(`Main-sync phase ${REFERENCE_SCAN_PHASE} stopped at its ${Math.round(budgetMs / 1000)} s bound after `
+        + `${index} of ${modules.length} committed modules (next ${file}); nothing was published`);
+    }
+    if (at - reported >= progressMs) {
+      report(`main-sync ${REFERENCE_SCAN_PHASE}: ${index} of ${modules.length} committed modules checked in ${Math.round((at - started) / 1000)} s`);
+      reported = at;
+    }
+    if (!(bytes <= maxParsedBytes)) return unparsed(file, readFileSync(join(root, file), "utf8"));
+    return inputModuleReferences(root, file, matches, parseInputModule(root, file));
+  });
 }
 
 /** The global private walk and selected report walk share the same syntax/binding owner. */

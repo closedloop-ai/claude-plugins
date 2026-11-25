@@ -30,6 +30,8 @@ const INITIAL_BARE_WORD_BASELINE = Object.freeze([
   "plugins/vibe/skills/handoff/scripts/diff-rules.mjs:CONTROL_TERM",
   "plugins/vibe/skills/handoff/scripts/diff-rules.mjs:HARNESS_NAME",
   "plugins/vibe/skills/handoff/scripts/diff-rules.mjs:SYNC_TABLE",
+  "plugins/vibe/skills/handoff/scripts/frozen-story-moves.mjs:MOVE_WORD",
+  "plugins/vibe/skills/handoff/scripts/frozen-story-moves.mjs:STORY_WORD",
   "plugins/vibe/skills/handoff/scripts/inventory-bundle.mjs:FLAG_NAME",
   "plugins/vibe/skills/handoff/scripts/live-ticket-check.mjs:UNFINISHED",
   "plugins/vibe/skills/handoff/scripts/pr-body-claims.mjs:CI_CLAIM",

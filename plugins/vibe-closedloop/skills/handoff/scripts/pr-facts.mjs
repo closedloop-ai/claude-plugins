@@ -376,13 +376,16 @@ export function evidenceProblems(runsFile, changed, commit, worktree, rulingId =
 /** What a drafted body gets wrong against the facts. */
 export function bodyProblems(body, facts, files, prBase, template = "", runsFile = null, planPrefix = null) {
   const flat = body.replace(/\s+/g, " ");
-  const disclosures = new Set(facts.pathCitations?.length ? visibleMarkdownLines(body).map(line => line.replace(/^- /, "")) : []);
+  const moves = (facts.frozenStoryMoves ?? []).flatMap((move) => move.disclosures);
+  const disclosures = new Set(facts.pathCitations?.length || moves.length ? visibleMarkdownLines(body).map(line => line.replace(/^- /, "")) : []);
   const byPath = new Map(files.map((file) => [file.path, file]));
   const changedLine = (file, line) => file.hunks.some((hunk) => hunk.added.some((entry) => entry.line === line)
     || (hunk.newCount === 0 && (line === hunk.newStart || line === hunk.newStart + 1)));
   const mentioned = new Set([...body.matchAll(PR_NUMBER)].map((match) => Number(match[1])));
   return [
     ...(facts.pathCitations ?? []).filter(entry => !disclosures.has(entry.disclosure)).map(entry => "PR body must include: " + entry.disclosure),
+    // Each moved or retired frozen story ID, with the ticket criterion that authorized it (frozen-story-moves.mjs).
+    ...moves.filter((line) => !disclosures.has(line)).map((line) => "PR body must include: " + line),
     ...[...body.matchAll(CITATION)].flatMap(([cited, file, line]) => (byPath.has(file) && byPath.get(file).status !== "D" && changedLine(byPath.get(file), Number(line))
       ? [] : [`${cited} is not a changed line of the diff`])),
     ...(facts.overlap === null ? ["open pull requests could not be read, so overlap is unchecked"] : facts.overlap
@@ -432,7 +435,7 @@ export function loadOpenPrs(worktree) {
 }
 
 /** The facts for the inventory's JSON, with the gates when a body or a runs file is given. */
-export function pullRequestFacts({ worktree, base, include, prs, ownBranch, ticketText, rulingsText, body, runs, commit, prBase = "main", requiredTests = [], pathCitations = [], template,
+export function pullRequestFacts({ worktree, base, include, prs, ownBranch, ticketText, rulingsText, body, runs, commit, prBase = "main", requiredTests = [], pathCitations = [], frozenStoryMoves = [], template,
   probeCapability = currentCapabilityProbe }) {
   return withStableSource(worktree, current => {
     const binding = runs?.source === undefined ? { testedCommit: commit, problems: [] }
@@ -445,6 +448,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
     const areas = sessionAreas(worktree);
     const facts = {
       pathCitations,
+      frozenStoryMoves,
       serverOnly: !changed.some((file) => isUiFile(file, areas)),
       requiredLanes: requiredLanes(changed, [], areas),
       assertionChanges: assertionChanges(files, {

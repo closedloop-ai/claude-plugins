@@ -31,7 +31,10 @@ Moved out of `quality-loop.md`, which says when to read it; later edits to that 
    Leave `capabilities` out to keep the recorded binding's capabilities. When
    given, it is at most 48 graph reads, tracker reads and
    the five record writes (`writer-state.mjs help` lists the bindable
-   operations); anything else is refused.
+   operations); anything else is refused. A capability the recorded binding
+   lacks is accepted only when the current definition declares it (a read the
+   provider offers, or a record write a change-worker action declares); any
+   other addition is refused.
    The command independently reads the current definition from its own plugin
    root and verifies the old definition with its recorded capabilities.
 4. The atomic ledger update appends `migrations`: old writer ID, full old
@@ -101,12 +104,26 @@ session records:
 
 1. Finish its turn `"status": "FAILED"` with `"state": "failed"` evidence.
 2. Run `migrate` with step 3's JSON (recorded `"runtime": "codex"`, no
-   `workerId`) plus this field:
+   `workerId`), its `capabilities` as the parent discovered them in Claude
+   Code's tool names (never the recorded Codex spellings), plus this field:
    `"harnessSwitch": { "to": "claude", "cause": "usage-limit", "evidence": "<error line>" }`
-3. Continue at step 5.
+3. Continue at step 5, launching with exactly the `capabilities` the result
+   returns.
 
 The command refuses running turns, retained grants, a `BLOCKED`
-writer and a same-runtime switch, and records the switch in `migrations`.
+writer and a same-runtime switch. It also refuses a switch with no
+`capabilities` and one whose `capabilities` drop one the new runtime declares. As in step 3, a capability
+the recorded binding lacks under either name is accepted only when the current
+definition declares it; any other addition is refused. It
+records the switch in `migrations`. The new binding keeps every read and only
+the record writes some change-worker action declares, which is all the
+Claude launcher admits. A Claude writer still bound to the old runtime's
+names (`WRITER_BINDING_CHANGED` with Claude's names, `MCP_TOOLS_MISSING`
+with the recorded ones) or to record writes it does not declare
+(`RECORD_CAPABILITY_UNDECLARED`) is rebound by `migrate` with `"runtime":
+"claude"`, no `harnessSwitch` and the same capabilities in Claude's names,
+less those writes. It records reason `capability-names` and refuses any other
+capability change.
 
 Any other binding/read/identity error remains `BLOCKED` internally. Never
 migrate around a refusal the recorded writer can still settle, or to create

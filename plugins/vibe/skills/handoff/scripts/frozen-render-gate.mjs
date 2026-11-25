@@ -3,6 +3,9 @@
 // `frozen-render` rule would name (selectFrozenStoryFiles, without the session's local fixes), plus any a changed
 // generated render input reaches, which that rule leaves to its source; builds both static Storybooks, renders them with
 // frozen-render.mjs, writes results.json and, on a pass, appends the `Frozen render unchanged` line to the change log.
+// A frozen story file the session moved or retired under an accepted ticket authorization (frozen-story-moves.mjs) is
+// not selected: before rendering, the gate appends one `Frozen story move:` line per such move to the change log, naming
+// its story IDs and the authorizing ticket and criterion.
 // It prints one verdict on stdout and any per-story repetition evidence on stderr:
 //   FROZEN PASS <files> files <stories> stories inputs <digest>   exit 0 (also when nothing is selected)
 //   FROZEN BLOCK <k> stories: <results.json>                     exit 1; read only the cropped diffs it names
@@ -27,6 +30,7 @@ import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { chromiumLauncher, frozenInputs, FrozenSlotBusy, prepareBase, renderOptions, runOwnedFrozenComparison, selectFrozenStoryFiles } from "./frozen-render.mjs";
 import { localFixPaths } from "./local-fix-paths.mjs";
+import { frozenStoryMoves } from "./frozen-story-moves.mjs";
 import { repositoryLayout } from "../../vibe/scripts/area-paths.mjs";
 import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
@@ -42,18 +46,22 @@ const BOOTSTRAP_OK = "OK";
 
 /**
  * Runs the gate and returns its one line and exit code, handing them to `onVerdict` first. `dependencies` replace
- * selection, the comparison, the input digest, the browser launcher and the base worktree's preparation, bootstrap and
- * removal in tests.
+ * selection, the accepted frozen story moves, the comparison, the input digest, the browser launcher and the base
+ * worktree's preparation, bootstrap and removal in tests.
  */
 export async function frozenGate({ repo, base, baseDir, out, changeLog, onVerdict = () => {}, ...render }, {
-  select = selectFrozenStoryFiles, compare = runOwnedFrozenComparison, inputsOf = frozenInputs, launch = () => chromiumLauncher(repo),
+  select = selectFrozenStoryFiles, moves = frozenStoryMoves, compare = runOwnedFrozenComparison, inputsOf = frozenInputs, launch = () => chromiumLauncher(repo),
   prepare = prepareBase, bootstrap = bootstrapWorktree, removeWorktree = detachWorktree, record = readSessionRecord, layout = repositoryLayout,
 } = {}) {
   // Without the provider's layout, import aliases, the Storybook preview and render manifests are unknown, so an
   // empty selection would be a false pass.
   if (Object.keys(layout() ?? {}).length === 0) return gateError("no vibe provider layout is bound; selection cannot be computed");
   // The session's local fixes are left out exactly as the inventory leaves them out of the frozen-render rule.
-  const storyFiles = select(repo, base, new Set(localFixPaths(record(repo)).keys()));
+  const session = record(repo);
+  const accepted = moves(repo, base, session).moves;
+  recordMoves(changeLog, accepted);
+  const moved = new Set(accepted.map((move) => move.path));
+  const storyFiles = select(repo, base, new Set(localFixPaths(session).keys())).filter((file) => !moved.has(file));
   if (storyFiles.length === 0) {
     return { exitCode: GateExit.Pass, line: `FROZEN PASS 0 files 0 stories inputs ${inputsOf(repo, base, [])}` };
   }
@@ -92,6 +100,16 @@ async function compareAndRecord({ repo, base, baseDir, out, changeLog, storyFile
     return { exitCode: GateExit.Block, line: `FROZEN BLOCK ${summary.blocking.length} stories: ${results}`, ...report };
   }
   return gateError(summary.lines?.at(-1) ?? "the comparison returned no verdict");
+}
+
+/** Appends each accepted move's `Frozen story move:` line to the change log once. */
+function recordMoves(changeLog, accepted) {
+  if (!changeLog || accepted.length === 0) return;
+  const existing = existsSync(changeLog) ? readFileSync(changeLog, "utf8") : "";
+  const lines = accepted.map((move) => `Frozen story move: ${move.path} -> ${move.to ?? (move.kind === "retired" ? "retired" : move.path)}: `
+    + `${move.ticket} ${move.criterion}: ${move.storyIds.length} stories (${move.storyIds.join(", ")})`)
+    .filter((line) => !existing.split("\n").includes(line));
+  if (lines.length) appendFileSync(changeLog, `${existing && !existing.endsWith("\n") ? "\n" : ""}${lines.join("\n")}\n`);
 }
 
 /** The repository's bootstrap for `worktree` through setup-ctl.mjs, as its one JSON result line. */

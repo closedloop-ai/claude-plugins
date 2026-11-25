@@ -213,3 +213,28 @@ test("standalone frozen rendering reads the slots of the current chat's bound pr
   writeFileSync(path.join(home, "config.env"), "HEAVY_SLOTS=2\n");
   assert.equal(frozenHeavySlots(env), "2");
 });
+
+test("ISS-14682 AC1: the gate records an authorized frozen story move with its ticket and criterion and does not select it", async (t) => {
+  const { out } = sandbox(t);
+  const changeLog = path.join(out, "changes.md");
+  mkdirSync(out, { recursive: true });
+  const ids = [storyId("Composites v1.0/First", "Default"), storyId("Composites v1.0/First", "Open")];
+  const move = { path: FIRST, to: "apps/storybook/stories/current-first.stories.tsx", kind: "moved", ticket: "ISS-123", criterion: "AC-1",
+    version: 2, storyIds: ids, disclosures: [] };
+  const line = `Frozen story move: ${FIRST} -> apps/storybook/stories/current-first.stories.tsx: ISS-123 AC-1: 2 stories (${ids.join(", ")})`;
+  const summary = await summaryFor(t, { [BASE]: { "first--default": passes(shot(GREY)) }, [HEAD]: { "first--default": passes(shot(GREY)) } });
+  const compared = [];
+  const gate = (selected) => frozenGate({ repo: "/repo", base: "abc", baseDir: "/base", out, changeLog }, {
+    record: () => ({ frozenStoryMoves: [{ path: FIRST, ticket: "ISS-123", cites: "AC-1" }] }),
+    moves: (repo, base, record) => { assert.deepEqual([repo, base, record.frozenStoryMoves[0].path], ["/repo", "abc", FIRST]); return { moves: [move], problems: [] }; },
+    select: () => selected, launch: () => "launcher", inputsOf: () => "digest",
+    compare: async (args) => { compared.push(args.storyFiles); return summary; },
+  });
+  assert.deepEqual(await gate([FIRST]), { exitCode: GateExit.Pass, line: "FROZEN PASS 0 files 0 stories inputs digest" });
+  assert.deepEqual(compared, []);
+  assert.equal(readFileSync(changeLog, "utf8"), `${line}\n`);
+  await gate([FIRST, SECOND]);
+  assert.deepEqual(compared, [[SECOND]]);
+  // The move is recorded once however often the gate runs.
+  assert.equal(readFileSync(changeLog, "utf8").split("\n").filter((entry) => entry === line).length, 1);
+});

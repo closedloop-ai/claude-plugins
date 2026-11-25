@@ -6,7 +6,7 @@ import os, { hostname } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { capabilityProbeProblems, ciCheckProblems, computeOverlap, pathWorkflowProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, prRulesFor, selectionProblems, sessionRepository, STACKED_BASE_STATEMENT, targetedEvidenceProblems } from "./pr-facts.mjs";
+import { bodyProblems, capabilityProbeProblems, ciCheckProblems, computeOverlap, pathWorkflowProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, prRulesFor, selectionProblems, sessionRepository, STACKED_BASE_STATEMENT, targetedEvidenceProblems } from "./pr-facts.mjs";
 import { templateHeadingProblems } from "./pr-template.mjs";
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { git, gitEnv, makeCheckout, makeHome, PROVIDER_BINDING, runNode, SYMPHONY_PATH_POLICY, bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
@@ -875,4 +875,14 @@ test("the session's own pull request is never its overlap when the branch pushes
   ];
   const overlap = computeOverlap({ worktree: wt, changed: ['a.ts'], prs, ownBranch: 'vibe/local' });
   assert.deepEqual(overlap.map((pr) => pr.number), [437]);
+});
+
+test("ISS-14682 AC3: the body must list each moved or retired frozen story ID with its ticket and criterion", () => {
+  const disclosures = ["Frozen story moved: `composites-row--default` (ISS-1 AC-1).", "Frozen story retired: `composites-cell--default` (ISS-1 AC-2)."];
+  const facts = { overlap: [], assertionChanges: [], contractChanges: [], refusals: [], asks: [],
+    frozenStoryMoves: [{ disclosures: [disclosures[0]] }, { disclosures: [disclosures[1]] }] };
+  const missing = (body) => bodyProblems(body, facts, [], "main").filter((problem) => problem.includes("Frozen story"));
+  assert.deepEqual(missing("Moves the Row story.\n"), disclosures.map((line) => `PR body must include: ${line}`));
+  assert.deepEqual(missing(`Moves the Row story.\n\n- ${disclosures[0]}\n`), [`PR body must include: ${disclosures[1]}`]);
+  assert.deepEqual(missing(`Moves the Row story.\n\n${disclosures.map((line) => `- ${line}`).join("\n")}\n`), []);
 });

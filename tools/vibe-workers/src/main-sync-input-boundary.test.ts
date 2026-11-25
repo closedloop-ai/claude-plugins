@@ -3,7 +3,7 @@ import { bundleDirectory } from "./test-fixtures.js";
 import { chmodSync, mkdirSync, existsSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { finalMerge, invokeSync, syncFixture, validateFixture, currentSyncDefinitions, selectedReportFixture } from "./main-sync-test-fixtures.js";
+import { advanceMain, finalMerge, invokeSync, syncFixture, validateFixture, currentSyncDefinitions, selectedReportFixture } from "./main-sync-test-fixtures.js";
 import { prismaInputFixture, fumadocsInputFixture, buildInfoInputFixture, largeProducerInputFixture, nextInputFixture, pureInputFixture,
   docsInputFixture, huskyInputFixture, desktopPrismaInputFixture, producerShimInputFixture } from "./main-sync-input-test-fixtures.js";
 import { gzipSync, gunzipSync } from "node:zlib";
@@ -52,7 +52,8 @@ describe("production committed-input privacy and origin boundaries", () => {
   it("orders distinct paths sharing a prefix and collapses report-parent ties to one labeled row", () => {
     const value = setup();
     for (const file of ["same/ba.js","same/b.js",".vitest"]) value.write(file,"fixture");
-    expect(() => inspectInputInventory(value.worktree)).toThrow(/blocking input/);
+    // One message in main's ISS-14689 AC2 form, in the report's byte order.
+    expect(() => inspectInputInventory(value.worktree)).toThrow(/^Retained report requires a canonical directory parent: \.vitest; Committed validation inputs differ from HEAD: uncommitted executable same\/b\.js; uncommitted executable same\/ba\.js$/);
     const rows = JSON.parse(readFileSync(join(value.metadata,"vibe-main-sync-blocking-inputs.json"),"utf8")).paths;
     expect(rows.map((row: {path: string}) => row.path)).toEqual([".vitest","same/b.js","same/ba.js"]);
     expect(rows[0].reason).toBe("Retained report requires a canonical directory parent: .vitest");
@@ -98,12 +99,30 @@ describe("production committed-input privacy and origin boundaries", () => {
     expect(report.paths.map((row: { path: string }) => row.path)).toEqual(paths);
   });
 
+  it("AC-090 a refusal past its 2048-byte bound lists the paths that fit in order, counts them, and names the private report that keeps every path", () => {
+    const value = setup();
+    const paths = Array.from({ length: 40 }, (_, index) => `leftover/${String(index).padStart(2, "0")}-${"x".repeat(60)}.js`);
+    for (const file of paths) value.write(file, "{}");
+    let refusal: unknown;
+    try { inspectInputInventory(value.worktree); } catch (error) { refusal = error; }
+    const message = String((refusal as Error | undefined)?.message);
+    expect(Buffer.byteLength(message)).toBeLessThanOrEqual(2048);
+    const shown = paths.filter((file) => message.includes(file));
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown).toEqual(paths.slice(0, shown.length));
+    expect(message).toMatch(new RegExp(`^Committed validation inputs differ from HEAD: uncommitted executable leftover/00-x+\\.js; .*; ${shown.length} of 40 blocking inputs shown\\. Full report in the private Git directory: vibe-main-sync-blocking-inputs\\.json$`));
+    const report = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync-blocking-inputs.json"), "utf8"));
+    expect(report.paths.map((row: { path: string }) => row.path)).toEqual(paths);
+  });
+
   it("reports extensionless producer inputs with other inventory refusals", () => {
     const value = setup();
     prismaInputFixture(value);
     const paths = ["leftover/file.js", "packages/database/prisma/first", "packages/database/prisma/second"];
     for (const file of paths) value.write(file, "fixture");
-    expect(() => inspectInputInventory(value.worktree)).toThrow(/blocking input/);
+    let refusal: unknown;
+    try { inspectInputInventory(value.worktree); } catch (error) { refusal = error; }
+    for (const file of paths) expect(String(refusal)).toContain(file);
     const report = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync-blocking-inputs.json"), "utf8"));
     expect(report.paths.map((row: { path: string }) => row.path)).toEqual(expect.arrayContaining(paths));
   });
@@ -153,6 +172,8 @@ describe("production committed-input privacy and origin boundaries", () => {
     value.write("apps/app/probe.ts", `import '../../${path}';\n`);
     value.git(["add", "apps/app/probe.ts"]);
     value.git(["commit", "-m", "Synthetic consumed private input"]);
+    // Only a branch behind main is scanned at preparation (ISS-14689 AC1).
+    advanceMain(value);
     const turn = value.start("redeploy");
     try {
       const result = invokeSync(value, "prepare", turn.context);
@@ -170,6 +191,8 @@ describe("production committed-input privacy and origin boundaries", () => {
     value.write(path, "throw new Error('must remain uncollected');\n");
     value.write("vitest.config.ts", "export default {test:{include:['**/*.test.tsx']}};\n");
     value.git(["add", "vitest.config.ts"]); value.git(["commit", "-m", "Synthetic root collector expansion"]);
+    // Only a branch behind main is scanned at preparation (ISS-14689 AC1).
+    advanceMain(value);
     const turn = value.start("redeploy");
     try {
       const result = invokeSync(value, "prepare", turn.context);
@@ -211,6 +234,8 @@ describe("production committed-input privacy and origin boundaries", () => {
       value.git(["commit", "-m", "Synthetic unignored evidence"]);
     }
     if (failure === "staged") value.git(["add", "-f", path]);
+    // Only a branch behind main is scanned at preparation (ISS-14689 AC1).
+    advanceMain(value);
     const turn = value.start("redeploy");
     try {
       const result = invokeSync(value, "prepare", turn.context);
@@ -445,6 +470,8 @@ describe("production committed-input privacy and origin boundaries", () => {
     state.inputs.inputSha256 = originIdentity(state.inputs.trackedInputSha256, state.inputs.files, state.inputs.packages);
     writeFileSync(file, JSON.stringify(state));
     const before = readFileSync(file);
+    // Only a branch behind main is scanned at preparation (ISS-14689 AC1).
+    advanceMain(value);
     const publisher = value.start("redeploy");
     try {
       const result = invokeSync(value, "prepare", publisher.context);
@@ -509,6 +536,8 @@ describe("production committed-input privacy and origin boundaries", () => {
     }
     if (failure === "execution-log") writeFileSync(state.inputs.producers[0].log, "unverified execution\n");
     const retained = readFileSync(join(value.worktree, generated.output));
+    // Only a branch behind main is scanned at preparation (ISS-14689 AC1).
+    advanceMain(value);
     const prepare = value.start("redeploy");
     try {
       const result = invokeSync(value, "prepare", prepare.context);

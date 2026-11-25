@@ -292,7 +292,26 @@ over the base confirmation renders, or its branch play failure reproduced);
 frozen stories any other way. The line names the session files it rendered
 and counts only while their story states and dependency inputs are
 unchanged. A later commit or main merge reruns it only when `qa-impact.mjs`
-names one of those states or the frozen-render dependency digest changes. A finding's `fix` is written for the writer, never relayed to the
+names one of those states or the frozen-render dependency digest changes.
+When one clause of a live-ticket criterion (split only at sentence ends and
+semicolons) is an affirmative instruction for a frozen v1.0 story, the writer
+records it with
+`node ../vibe/scripts/vibe-sessions.mjs frozen-story-move --worktree "<wt>"
+--path <story file at the base> --criterion <AC-n>`. That clause starts after
+any list marker with Move, Retire or Rename and then the story (its file path
+or a story ID) as the verb's direct object, with only "the", "frozen", "v1.0",
+"story", "stories", "file" or "stories in/of/from" between them and, after it,
+only an optional "story" or "stories" and then the clause's end, punctuation,
+"to", "into", "under" or "and"; or it starts with the story's name and then "is
+moved", "is retired", "moves to" or "is renamed to". It names no other story
+except a destination after "to", "into" or "under", which is never itself
+authorized, and it is not a question. Neither the criterion nor the sub-bullets
+under its box hold a negation, exclusion, condition, deferral or temporal gate
+("after", "before", "once"), read with story file paths and this story's IDs
+masked so its own name never counts; anything else authorizes nothing. Each inventory run lists
+each accepted move with its ticket and criterion under `frozenStoryMoves`, and
+each refusal under `frozenStoryMoveProblems`, where the file stays blocked.
+The gate leaves accepted moves out. A finding's `fix` is written for the writer, never relayed to the
 person as a step (`../vibe/references/plain-words.md`, "What the person is
 asked to do").
 

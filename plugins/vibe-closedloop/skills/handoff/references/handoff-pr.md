@@ -8,6 +8,9 @@ Moved out of `../SKILL.md`, which says when to read it; later edits to that text
 Copy each `pathCitations[].disclosure` from the pull-request inventory into
 the PR body on its own line. The gate checks the exact file and criterion
 against the session's current ticket evidence and records them in its witness.
+Copy each line of every `frozenStoryMoves[].disclosures` the same way: each
+moved or retired frozen story ID with the ticket and criterion that
+authorized it (`vibe-sessions.mjs frozen-story-move`).
 
 For each review or verification turn, read the current ticket by slug. Append the output of `node <pluginRoot>/lib/handoff/scripts/review-context.mjs --ticket <slug> --read <full tracker response.json>` to the actual input, passing `--rulings <program rulings.md>` for program decisions. Report a conflict with a criterion or ruling as a QUESTION for the operator.
 
