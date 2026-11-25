@@ -6,7 +6,7 @@
 // the private directory prepareWorkflowPlan wrote (lanes.json, lane-<index>.json and reporter-spec).
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,7 +31,6 @@ const ACTIONS = new Map([
 export const SUDOERS_DIRECTORY = "/etc/sudoers.d";
 // A lane's entry, named for the runner process that wrote it; a pending one ends in ".new".
 const LANE_ENTRY = /^vibe-workflow-lane-([1-9]\d*)-[0-9a-f]{8}(?:\.new)?$/;
-const RELEASE_SIGNALS = ["SIGTERM", "SIGINT"];
 
 class Refusal extends Error {}
 const refuse = (reason) => { throw new Refusal(reason); };
@@ -70,15 +69,18 @@ function visudoCheck(file) {
 
 /**
  * Root setup's grant for one lane: passwordless sudo for the actor, as GitHub's runner gives its user, proved with the
- * actor's own `sudo -n true` through the supervisor the steps run under. Returns the function that removes the grant.
- * Each lane has its own entry, so one lane's removal never ends another's grant. When the entry cannot be installed or
- * the actor's sudo fails (no sudo, no include of the directory, a "no new privileges" flag), the lane is refused by name
- * and no step runs: a lane never falls back to root.
+ * actor's own `sudo -n true` through the supervisor the steps run under. Returns the function that removes the grant,
+ * which runLane calls in its `finally` at the lane's end. A runner killed mid-lane never reaches that `finally` (its
+ * steps run synchronously, so it installs no signal handler; team-lead, 2026-11-25), and the stale-entry sweep at the
+ * next grant removes the entry it left; the cloud sandbox is discarded after the run anyway. Each lane has its own
+ * entry, so one lane's removal never ends another's grant. When the entry cannot be installed or the actor's sudo fails
+ * (no sudo, no include of the directory, a "no new privileges" flag), the lane is refused by name and no step runs: a
+ * lane never falls back to root.
  */
-export function grantActorSudo({ actor, run, cwd, env, directory = SUDOERS_DIRECTORY, check = visudoCheck, alive = processAlive, signals = process }) {
+export function grantActorSudo({ actor, run, cwd, env, directory = SUDOERS_DIRECTORY, check = visudoCheck, alive = processAlive }) {
   const unavailable = (why) => refuse(`root setup: the actor's passwordless sudo is unavailable: ${why}`);
   if (!existsSync(directory)) unavailable(`${directory} does not exist`);
-  // A runner killed before its release left its entry, and the next lane's grant removes it (ADV-R11-4).
+  // The stale-entry sweep: a runner killed before its lane ended left its entry, and this grant removes it (ADV-R11-4).
   for (const name of readdirSync(directory)) {
     const pid = Number(LANE_ENTRY.exec(name)?.[1]);
     if (pid > 1 && pid !== process.pid && !alive(pid)) rmSync(path.join(directory, name), { force: true });
@@ -92,13 +94,7 @@ export function grantActorSudo({ actor, run, cwd, env, directory = SUDOERS_DIREC
     if (checked.exitCode !== 0) unavailable(`visudo refused the entry: ${checked.detail}`);
     renameSync(pending, entry);
   } finally { rmSync(pending, { force: true }); }
-  // A SIGTERM or SIGINT removes the grant before the runner exits; Node runs the handler once a running step returns.
-  function released(signal) { release(); process.exit(128 + os.constants.signals[signal]); }
-  function release() {
-    rmSync(entry, { force: true });
-    for (const signal of RELEASE_SIGNALS) signals.off(signal, released);
-  }
-  for (const signal of RELEASE_SIGNALS) signals.on(signal, released);
+  const release = () => rmSync(entry, { force: true });
   const proof = run("sudo", ["-n", "true"], { cwd, env, ...actor, stdio: ["ignore", "pipe", "pipe"] }, { timeout: 60_000 });
   if (proof.exitCode !== 0) {
     release();
@@ -147,6 +143,57 @@ export function actorCanSearch(directory, actor, stat = statSync) {
     if (!info.isDirectory() || (bits & 1) === 0) return false;
     if (path.dirname(current) === current) return true;
   }
+}
+
+// The host CA settings that name a certificate file, and the one that names a certificate directory.
+const CA_FILES = ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO"];
+const CA_DIRECTORY = "SSL_CERT_DIR";
+
+/**
+ * Whether the actor can read `target` by its mode bits, through every directory above it and above the file a link
+ * names; for a directory, also list and search it and read each certificate file in it.
+ */
+export function actorCanRead(target, actor) {
+  let real, info;
+  try { real = realpathSync(target); info = statSync(real); } catch { return false; }
+  const bits = info.uid === actor.uid ? info.mode >> 6 : info.gid === actor.gid ? info.mode >> 3 : info.mode;
+  if ((bits & 4) === 0 || !actorCanSearch(path.dirname(target), actor) || !actorCanSearch(path.dirname(real), actor)) return false;
+  if (!info.isDirectory()) return true;
+  return (bits & 1) !== 0 && readdirSync(real).every((name) => {
+    const entry = path.join(real, name);
+    try { return !statSync(entry).isFile() || actorCanRead(entry, actor); } catch { return true; }
+  });
+}
+
+/**
+ * The CA settings a root runner's steps receive (s5 lint smoke: uv as the actor loaded no CA certificate from a host
+ * CA path only root could read). Each CA file, or certificate directory, the host names that the actor cannot read is
+ * copied into `directory`, which is root's, 0755, inside the lane's private area and removed with it: a file 0644, and
+ * a directory 0755 holding each certificate file under its own name (hash links become copies). That setting names the
+ * copy. A setting the actor can read keeps the host's path, and one naming no such file or directory stays as the host
+ * set it. Only these CA settings are copied; proxies and everything else pass as stepNetworkEnvironment leaves them.
+ */
+export function actorCertificates(network, directory, actor) {
+  const staged = {};
+  const copy = (source, target) => { copyFileSync(source, target); chmodSync(target, 0o644); };
+  for (const key of [...CA_FILES, CA_DIRECTORY]) {
+    const source = network[key];
+    if (typeof source !== "string" || !path.isAbsolute(source)) continue;
+    let info;
+    try { info = statSync(source); } catch { continue; }
+    if (!(key === CA_DIRECTORY ? info.isDirectory() : info.isFile()) || actorCanRead(source, actor)) continue;
+    if (!existsSync(directory)) { mkdirSync(directory); chmodSync(directory, 0o755); }
+    const target = path.join(directory, key);
+    if (key === CA_DIRECTORY) {
+      mkdirSync(target);
+      chmodSync(target, 0o755);
+      for (const name of readdirSync(source)) {
+        try { if (statSync(path.join(source, name)).isFile()) copy(path.join(source, name), path.join(target, name)); } catch { /* a dangling link is no certificate */ }
+      }
+    } else copy(source, target);
+    staged[key] = target;
+  }
+  return { ...network, ...staged };
 }
 
 /** The lane's PATH: the tools its setup actions installed, then each host directory the actor can search. */
@@ -262,8 +309,10 @@ function runLane({ checkout, commit, definition, work, base = null, uid, gid, en
   const github = { CI: "true", GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request", GITHUB_BASE_REF: base ?? "",
     GITHUB_WORKSPACE: clone, RUNNER_OS: "Linux", RUNNER_TEMP: path.join(home, "runner-temp") };
   // Every step is the actor's, installs included, so the actor reaches the registries with the host's own network
-  // settings, as GitHub's runner user does, its sudo keeps them, and a proxy URL's userinfo never reaches a step.
-  const host = { ...cloudHostEnvironment(environment, home, home), ...stepNetworkEnvironment(environment) };
+  // settings, as GitHub's runner user does, its sudo keeps them, and a proxy URL's userinfo never reaches a step. A root
+  // runner gives the actor a readable copy of each host CA path it cannot read (actorCertificates).
+  const network = stepNetworkEnvironment(environment);
+  const host = { ...cloudHostEnvironment(environment, home, home), ...(asRoot ? actorCertificates(network, path.join(work, "ca"), actor) : network) };
   const env = { ...strings(workflow.env), ...strings(job.env) };
   const bins = [];
   const deadline = now() + (job["timeout-minutes"] ?? JOB_MINUTES) * 60_000;

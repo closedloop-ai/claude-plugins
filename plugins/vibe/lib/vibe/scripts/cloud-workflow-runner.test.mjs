@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
@@ -196,10 +196,7 @@ test("AC-68 the grant: one checked 0440 entry per lane for the actor's uid, prov
   const checked = [], ran = [];
   const check = (file) => { checked.push([path.basename(file), readFileSync(file, "utf8"), statSync(file).mode & 0o777]); return { exitCode: 0, detail: "" }; };
   const run = (command, args, options) => { ran.push([command, args, options.uid, options.gid, readdirSync(directory)]); return PASS; };
-  const listeners = () => ["SIGTERM", "SIGINT"].map((signal) => process.listenerCount(signal));
-  const before = listeners();
   const release = grantActorSudo({ actor, run, cwd: f.root, env: { PATH: "/usr/bin:/bin" }, directory, check });
-  assert.deepEqual(listeners(), before.map((count) => count + 1), "the grant releases itself on SIGTERM and SIGINT");
   const [entry] = readdirSync(directory);
   assert.match(entry, /^vibe-workflow-lane-\d+-[0-9a-f]{8}$/, "a name with no dot, which sudo reads");
   assert.equal(readFileSync(path.join(directory, entry), "utf8"), ENTRY_65534);
@@ -212,7 +209,6 @@ test("AC-68 the grant: one checked 0440 entry per lane for the actor's uid, prov
   assert.equal(readdirSync(directory).length, 1, "one lane's release leaves another lane's grant");
   second();
   assert.deepEqual(readdirSync(directory), []);
-  assert.deepEqual(listeners(), before, "a released grant leaves no signal handler");
   const unavailable = /^Error: root setup: the actor's passwordless sudo is unavailable: /;
   assert.throws(() => grantActorSudo({ actor, run, cwd: f.root, env: {}, directory, check: () => ({ exitCode: 1, detail: "parse error" }) }),
     new RegExp(unavailable.source + "visudo refused the entry: parse error$"));
@@ -222,7 +218,6 @@ test("AC-68 the grant: one checked 0440 entry per lane for the actor's uid, prov
   assert.deepEqual(readdirSync(directory), [], "a refused grant leaves no entry and no pending file");
   assert.throws(() => grantActorSudo({ actor, run, cwd: f.root, env: {}, directory: path.join(f.root, "missing"), check }),
     new RegExp(unavailable.source + ".*missing does not exist$"));
-  assert.deepEqual(listeners(), before, "a refused grant leaves no signal handler");
 });
 
 test("AC-68 a grant first removes each lane entry whose runner is gone, and keeps a live runner's, pid 1's and any other file (ADV-R11-4)", (t) => {
@@ -443,6 +438,74 @@ test("AC-68 a step's proxy URLs and the actor's sudo proof never carry a proxy U
       ["http://proxy.invalid:3128", "https://proxy.invalid:3129/", "http://proxy.invalid:3128", "HTTP://proxy.invalid", "localhost,127.0.0.1"]);
     assert.deepEqual(Object.entries(env).filter(([, value]) => /secret|tokenvalue|name:pass/.test(String(value))).map(([name]) => name), []);
   }
+});
+
+// A certificate's bytes; CA material is public, and the copy must be byte for byte.
+const CERTIFICATE = "-----BEGIN CERTIFICATE-----\nZml4dHVyZSBjZXJ0aWZpY2F0ZQ==\n-----END CERTIFICATE-----\n";
+
+test("AC-68 a root runner gives the actor a readable 0644 copy of each host CA file or directory only root can read, and keeps every other CA setting as the host set it (s5 lint smoke)", (t) => {
+  const f = lane(t), envs = [];
+  const closed = path.join(f.root, "root-only"), bundle = path.join(closed, "proxy-ca.pem"), certs = path.join(closed, "certs");
+  file(bundle, CERTIFICATE);
+  file(path.join(certs, "proxy-ca.pem"), CERTIFICATE);
+  symlinkSync("proxy-ca.pem", path.join(certs, "0badf00d.0"));
+  symlinkSync("missing.pem", path.join(certs, "dangling.0"));
+  chmodSync(closed, 0o700);
+  // /etc/hosts stands for a CA path the actor can already read: world-readable under searchable directories.
+  const network = { SSL_CERT_FILE: bundle, REQUESTS_CA_BUNDLE: bundle, SSL_CERT_DIR: certs, NODE_EXTRA_CA_CERTS: "/etc/hosts",
+    GIT_SSL_CAINFO: "/nonexistent/vibe-ca.pem", CURL_CA_BUNDLE: certs, UV_NATIVE_TLS: "true", HTTPS_PROXY: "http://proxy.invalid:3128" };
+  const lane0 = (uid, work) => runWorkflowLane({ checkout: f.checkout, commit: f.commit, work, definition: job([{ run: "true" }]), uid, gid: uid,
+    environment: { PATH: "/usr/bin:/bin", ...network }, provision: () => {}, log: () => {},
+    sudo: (grant) => { envs.push(grant.env); return () => {}; }, run: (command, args, options) => { envs.push(options.env); return PASS; } });
+  lane0(0, f.work);
+  const staged = path.join(f.work, "ca");
+  assert.equal(statSync(staged).mode & 0o777, 0o755, "the copies' directory is open to the actor");
+  assert.equal(envs.length, 2, "the actor's sudo proof and the one step");
+  for (const env of envs) {
+    assert.deepEqual([env.SSL_CERT_FILE, env.REQUESTS_CA_BUNDLE, env.SSL_CERT_DIR], ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "SSL_CERT_DIR"].map((name) => path.join(staged, name)),
+      "each CA path only root can read names its copy");
+    assert.deepEqual([env.NODE_EXTRA_CA_CERTS, env.GIT_SSL_CAINFO, env.CURL_CA_BUNDLE, env.UV_NATIVE_TLS, env.HTTPS_PROXY],
+      ["/etc/hosts", "/nonexistent/vibe-ca.pem", certs, "true", "http://proxy.invalid:3128"],
+      "a readable path, a missing one, a directory where a file belongs and every other setting stay as the host set them");
+  }
+  for (const copy of [path.join(staged, "SSL_CERT_FILE"), path.join(staged, "REQUESTS_CA_BUNDLE")]) {
+    assert.equal(readFileSync(copy, "utf8"), CERTIFICATE, "the copy has the certificate's bytes");
+    assert.equal(statSync(copy).mode & 0o777, 0o644);
+  }
+  const directory = path.join(staged, "SSL_CERT_DIR");
+  assert.equal(statSync(directory).mode & 0o777, 0o755);
+  assert.deepEqual(readdirSync(directory).sort(), ["0badf00d.0", "proxy-ca.pem"], "each certificate under its own name, the hash link as a copy, no dangling link");
+  for (const name of readdirSync(directory)) {
+    assert.equal(readFileSync(path.join(directory, name), "utf8"), CERTIFICATE);
+    assert.equal(lstatSync(path.join(directory, name)).mode & 0o777, 0o644);
+    assert.ok(lstatSync(path.join(directory, name)).isFile());
+  }
+  envs.length = 0;
+  const own = mkdtempSync(path.join(f.root, "lane-"));
+  chmodSync(own, 0o711);
+  // A uid that is not this process's, so the closed directory is not the actor's own and a copy would be made.
+  lane0(process.getuid() === 1000 ? 1001 : 1000, own);
+  assert.equal(envs[0].SSL_CERT_FILE, bundle, "a non-root runner's steps are its own user's, so nothing is copied");
+  assert.equal(existsSync(path.join(own, "ca")), false);
+});
+
+test("AC-68 the runner command: a step as the actor reads a host CA file only root can read through its copy in the lane's private area, removed with it (s5 lint smoke)", (t) => {
+  const f = lane(t);
+  const asRoot = process.getuid() === 0;
+  const closed = path.join(f.root, "root-only"), bundle = path.join(closed, "proxy-ca.pem");
+  file(bundle, CERTIFICATE);
+  chmodSync(closed, 0o700);
+  const read = 'echo "path $SSL_CERT_FILE"; echo "id $(id -u)"; cat "$SSL_CERT_FILE"';
+  const { runner, temporary } = runnerCommand(f, [job([{ uses: "actions/checkout@v4" }, { run: read }])], null, { SSL_CERT_FILE: bundle });
+  const ran = runner("0");
+  assert.equal(ran.status, 0, ran.stderr);
+  const used = /^path (.+)$/m.exec(ran.stdout)?.[1] ?? "";
+  if (asRoot) {
+    assert.match(ran.stdout, /^id 65534$/m, "the step ran as the actor");
+    assert.ok(used.startsWith(temporary + path.sep) && used.endsWith(path.join("ca", "SSL_CERT_FILE")), `the step names the copy: ${used}`);
+  } else assert.equal(used, bundle, "a non-root runner's step reads the host's own path");
+  assert.ok(ran.stdout.includes(CERTIFICATE), "the step read the certificate's bytes");
+  assert.deepEqual(readdirSync(temporary), [], "the copy is removed with the lane's private area");
 });
 
 test("AC-68 every lane step runs under umask 022 as on GitHub's runner, whatever the agent's shell sets, and the caller's umask comes back", (t) => {

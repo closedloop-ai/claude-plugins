@@ -133,7 +133,8 @@ export function cloudHostEnvironment(current, home, registry) {
 // The host's own registry trust and proxy settings (r18: without them the first registry fetch failed in 1 s, where
 // r17's bootstrap with them took 37 s). The managed host's root setup keeps them and its non-root actor never receives
 // them (team-lead, 2026-11-24, attempt six). A workflow lane's steps all run as the actor, installs included, so they
-// receive them, proxy URLs without userinfo (cloud-workflow-runner.mjs stepNetworkEnvironment). uv reads the system trust store only under UV_NATIVE_TLS or
+// receive them, proxy URLs without userinfo (cloud-workflow-runner.mjs stepNetworkEnvironment), and a CA path only root can
+// read as a readable copy (actorCertificates). uv reads the system trust store only under UV_NATIVE_TLS or
 // UV_SYSTEM_CERTS, which the cloud sets (r24's `uv sync` warned about UV_NATIVE_TLS).
 export const HOST_NETWORK = ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO",
   "NODE_USE_SYSTEM_CA", "UV_NATIVE_TLS", "UV_SYSTEM_CERTS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"];

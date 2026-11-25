@@ -1,5 +1,6 @@
-// The runner's sudo grant under signals (ADV-R11-4). Each test starts its own child process and signals only that
-// child; these tests run on the isolated Linux test host and in CI, never on the development machine.
+// The stale-entry sweep against a runner that was really killed (ADV-R11-4). The test starts its own child process and
+// signals only that child; it runs on the isolated Linux test host and in CI, never on the development machine. A
+// runner killed mid-lane never reaches its release (team-lead, 2026-11-25): the next grant's sweep removes its entry.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdirSync, readdirSync } from "node:fs";
@@ -28,28 +29,11 @@ setInterval(() => {}, 1000);`;
   return { child, granted, exited };
 }
 
-function sudoersDirectory(t) {
+test("AC-68 the next grant removes the entry of a runner killed mid-lane (ADV-R11-4)", async (t) => {
   const f = makeHome("sudoers-signal-");
   t.after(f.cleanup);
   const directory = path.join(f.root, "sudoers.d");
   mkdirSync(directory);
-  return directory;
-}
-
-for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130]]) {
-  test(`AC-68 a runner stopped by ${signal} removes its sudoers entry before it exits (ADV-R11-4)`, async (t) => {
-    const directory = sudoersDirectory(t);
-    const { child, granted, exited } = startHolder(directory);
-    await granted;
-    assert.equal(readdirSync(directory).length, 1, "the holder's grant is in place");
-    child.kill(signal);
-    assert.deepEqual(await exited, { code, signal: null }, `the holder exits as a ${signal} would end it`);
-    assert.deepEqual(readdirSync(directory), [], "no grant outlives the stopped runner");
-  });
-}
-
-test("AC-68 the next grant removes the entry of a runner killed before any handler ran (ADV-R11-4)", async (t) => {
-  const directory = sudoersDirectory(t);
   const { child, granted, exited } = startHolder(directory);
   await granted;
   child.kill("SIGKILL");
