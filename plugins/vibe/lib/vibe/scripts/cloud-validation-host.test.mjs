@@ -14,6 +14,8 @@ const FAIL = { exitCode: 1, stdoutTail: "", stderrTail: "fixture failure", diagn
 function fixture(t) {
   const f = makeHome("vibe-validation-host-");
   t.after(f.cleanup);
+  // A root runner hands each lane to the unprivileged actor, which must reach the checkout through this 0700 temp root.
+  chmodSync(f.root, 0o711);
   const checkout = path.join(f.root, "checkout");
   const directory = path.join(f.root, "state");
   mkdirSync(checkout);

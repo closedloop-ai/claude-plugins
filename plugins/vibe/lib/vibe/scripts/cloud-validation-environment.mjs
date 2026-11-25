@@ -282,7 +282,8 @@ export async function executeCloudValidation({ file, digest, request, env, lanes
     metadata: { commit: request.commit, environment: env, laneKeys, ...(request.cloudProof ? { proof: cloudcheckProofIdentity(request.commit, digest) } : {}) }, timeoutMs,
     recover: async entry => {
       const disposition = recoverValidationReservation(entry,{ledger:ledger(),remote});
-      if (disposition !== "unknown" && existsSync(entry.receipt)) {
+      // A run the reservation recorded as acknowledged is restored even before the provider lists it.
+      if ((disposition !== "unknown" || entry.launch?.runId) && existsSync(entry.receipt)) {
         await restoreValidationRun(home,entry,regularJson(entry.receipt),timeoutMs);
       }
       return disposition;

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { processIdentityStatus, readProcessIdentity } from "../../../shared/process-identity.mjs";
@@ -8,12 +8,17 @@ import { regularJson, writeAtomic } from "./owned-state.mjs";
 
 // A standing routine owns its configuration and its current provider run until the run is terminal.
 export const CLOUD_VALIDATION_CAPACITY = 1;
+// An accepted run logs its launch marker within minutes. Past this window a launch whose launcher is gone and
+// whose run nothing proves is reclaimed, so the account's queue never waits on it forever.
+export const LAUNCH_WINDOW_MS = 10 * 60 * 1000;
 const BUSY = "CLOUD_VALIDATION_QUEUE_TIMEOUT";
 const TERMINAL = new Set(["completed", "failed", "canceled", "cancelled", "archived"]);
 
 function identityKey(account) {
   return createHash("sha256").update(account).digest("hex");
 }
+
+function queuesDir(home) { return path.join(home, ".codex", "vibe", "cloud", "validation-queues"); }
 
 function readQueue(file) {
   if (!existsSync(file)) return { version: 1, active: null, queued: [], abandoned: [] };
@@ -22,37 +27,49 @@ function readQueue(file) {
   return state;
 }
 
+/** Change one account's queue under its lock. */
+async function updateQueue(file, change) {
+  const lock = path.join(path.dirname(file), "queue.lock");
+  const holder = { pid: process.pid, token: randomUUID(), purpose: "cloud-validation-queue" };
+  const locked = await acquire(lock, holder, { waitSeconds: 5, pollMs: 10 });
+  if (!locked.acquired) throw new Error("cloud validation queue state is busy; retry the exact request");
+  try {
+    const current = readQueue(file);
+    const answer = change(current);
+    writeAtomic(file, current);
+    return answer;
+  } finally { release(lock, holder); }
+}
+
+/** A queue entry's launcher is alive unless it has no pid or its pid and recorded start time prove it gone. */
+function launcherAlive(entry, identityOf) {
+  return Boolean(entry?.pid) && processIdentityStatus(entry.pid, entry.identity, { identityOf }) !== "dead";
+}
+
+function abandonedRecord(entry, reason) {
+  return { key: entry.key, reason, ...(entry.launch?.sessionId ? { sessionId: entry.launch.sessionId } : {}) };
+}
+
 /** Serialize local admission state for one pinned Claude account and preserve an interrupted running reservation. */
 export async function withCloudValidationAdmission({ home, account, key, receipt, metadata, timeoutMs, signal, recover, now = Date.now,
   wait = (ms, currentSignal) => delay(ms, undefined, { signal: currentSignal }), sleepMs = 500,
-  drainUnbound = false, report = (line) => process.stderr.write(`${line}\n`), identityOf = readProcessIdentity,
+  drainUnbound = false, report = (line) => process.stderr.write(`${line}\n`), identityOf = readProcessIdentity, launchWindowMs = LAUNCH_WINDOW_MS,
 }, action) {
-  const queues = path.join(home, ".codex", "vibe", "cloud", "validation-queues");
+  const queues = queuesDir(home);
   // The first verified pin must wait for any earlier unbound provider run, including an interrupted launch.
   if (!drainUnbound && account !== "unbound-validation" && existsSync(path.join(queues,identityKey("unbound-validation"),"queue.json"))) {
     await withCloudValidationAdmission({home, account:"unbound-validation", key:"drain:"+account+":"+key, receipt, metadata,
-      timeoutMs,signal,recover,now,wait,sleepMs,report,identityOf,drainUnbound:true},async()=>{});
+      timeoutMs,signal,recover,now,wait,sleepMs,report,identityOf,launchWindowMs,drainUnbound:true},async()=>{});
   }
   const dir = path.join(queues,identityKey(account));
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = path.join(dir, "queue.json");
-  const lock = path.join(dir, "queue.lock");
   const owner = { token: randomUUID(), pid: process.pid, identity: identityOf(process.pid), key, receipt, metadata };
   const deadline = now() + timeoutMs;
   if (!owner.identity) throw new Error("cloud validation could not determine its exact queue process identity");
   report(`CLOUD_VALIDATION_CAPACITY ${CLOUD_VALIDATION_CAPACITY}: one active validation per account; excess requests wait in order`);
-  const alive = (entry) => entry.pid && processIdentityStatus(entry.pid, entry.identity, { identityOf }) !== "dead";
-  async function update(change) {
-    const holder = { pid: process.pid, token: randomUUID(), purpose: "cloud-validation-queue" };
-    const locked = await acquire(lock, holder, { waitSeconds: 5, pollMs: 10 });
-    if (!locked.acquired) throw new Error("cloud validation queue state is busy; retry the exact request");
-    try {
-      const current = readQueue(file);
-      const answer = change(current);
-      writeAtomic(file, current);
-      return answer;
-    } finally { release(lock, holder); }
-  }
+  const alive = (entry) => launcherAlive(entry, identityOf);
+  const update = (change) => updateQueue(file, change);
 
   await update((state) => {
     const previous = state.queued.find((entry) => entry.key === key);
@@ -79,25 +96,40 @@ export async function withCloudValidationAdmission({ home, account, key, receipt
       if (selected) break;
       if (active && !alive(active)) {
         const disposition = active.phase === "reserved" ? "terminal" : await recover(active);
-        const resume = !drainUnbound && active.key === key && active.receipt === receipt && disposition === "active" &&
-          !(existsSync(receipt) && regularJson(receipt).status === "abandoned");
-        if (disposition === "terminal" || resume) await update((state) => {
+        const launch = active.phase === "launching";
+        // Past its window nothing will ever prove or end a gone launcher's launch except the provider itself.
+        const settled = launch && !(now() - Date.parse(active.launchingAt ?? active.launch?.startedAt) < launchWindowMs);
+        const recorded = existsSync(active.receipt) ? regularJson(active.receipt) : null;
+        const identical = !drainUnbound && active.key === key && active.receipt === receipt;
+        // The identical request adopts the run its receipt names, active or launched but not yet listed by the provider.
+        const resume = identical && recorded?.status !== "abandoned" &&
+          (disposition === "active" || (launch && disposition === "unknown" && recorded !== null));
+        // Another request marks a settled launch's run abandoned; it holds the account while the provider reports it active.
+        if (settled && !identical && disposition !== "terminal" && recorded && !TERMINAL.has(recorded.status) && recorded.status !== "abandoned") {
+          writeAtomic(active.receipt, { ...recorded, status: "abandoned", finishedAt: new Date(now()).toISOString() });
+        }
+        const reclaim = settled && disposition === "unknown" && !resume;
+        if (disposition === "terminal" || resume || reclaim) await update((state) => {
           if (state.active?.token !== active.token) return;
-          if (!resume) state.active = null;
-          else {
+          if (resume) {
             state.queued = state.queued.filter((entry) => entry.token !== owner.token);
-            state.active = { ...owner, phase: active.phase };
+            state.active = { ...owner, phase: active.phase, ...(active.launch ? { launch: active.launch, launchingAt: active.launchingAt } : {}) };
             selected = true;
+            return;
           }
+          if (reclaim) state.abandoned = [...state.abandoned, abandonedRecord(active, "launcher exited during launch; no provider run was proven")].slice(-200);
+          state.active = null;
         });
       }
       if (selected) break;
       if (now() >= deadline) throw Object.assign(new Error(`${BUSY}: this request did not launch; retry the same request after the active reservation settles`), { code: BUSY });
       await wait(Math.min(sleepMs, Math.max(1, deadline - now())), signal);
     }
+    // Called before the provider run with its launch nonce, and again with the run and session ids the moment it is acknowledged.
     const launching = (launch, requirements) => update((state) => {
       if (state.active?.token !== owner.token) throw new Error("cloud validation admission no longer belongs to this request");
       state.active.phase = "launching";
+      state.active.launchingAt ??= new Date(now()).toISOString();
       if (launch) state.active.launch = launch;
       if (requirements?.outcomeTransport) state.active.metadata={...state.active.metadata,outcomeTransport:requirements.outcomeTransport};
       if (requirements?.managedHost === true) state.active.metadata = {...state.active.metadata,managedHost:true};
@@ -117,6 +149,41 @@ export async function withCloudValidationAdmission({ home, account, key, receipt
       else state.active = null;
     });
   }
+}
+
+/** A queue entry as `abandon` reports it, without its request metadata. */
+function entryView(entry) {
+  if (!entry) return null;
+  const { metadata: _metadata, ...view } = entry;
+  return view;
+}
+
+/**
+ * Release the queue reservation of a request whose launch wrote no receipt, found by its request key in any
+ * account's queue. A launcher that is still alive keeps it. Without confirm it reports the entry and changes nothing.
+ */
+export async function releaseValidationReservation({ home, key, confirm = false, unconfirmed, identityOf = readProcessIdentity }) {
+  const queues = queuesDir(home);
+  const file = (existsSync(queues) ? readdirSync(queues) : []).map((name) => path.join(queues, name, "queue.json"))
+    .find((candidate) => existsSync(candidate) && readQueue(candidate).active?.key === key);
+  if (!file) throw new Error("no cloud task exists to poll and no queue reservation holds this request");
+  const refuseLive = (entry) => {
+    if (launcherAlive(entry, identityOf)) throw new Error(`cloud validation launcher ${entry.pid} still holds this reservation; stop it before abandoning`);
+  };
+  if (!confirm) {
+    const active = readQueue(file).active;
+    refuseLive(active);
+    return unconfirmed({ queue: file, active: entryView(active), releases: active.token });
+  }
+  const released = await updateQueue(file, (state) => {
+    if (state.active?.key !== key) throw new Error("the queue reservation changed during abandon; rerun abandon");
+    refuseLive(state.active);
+    const entry = state.active;
+    state.abandoned = [...state.abandoned, abandonedRecord(entry, "abandoned locally; its launch wrote no receipt")].slice(-200);
+    state.active = null;
+    return entry;
+  });
+  return { status: "abandoned", queue: file, released: entryView(released), active: entryView(readQueue(file).active) };
 }
 
 const LIST_RUNS_PAGES = 10;
@@ -174,6 +241,8 @@ export function recoverValidationReservation(entry, { ledger, remote }) {
   const receipt = existsSync(entry.receipt) ? regularJson(entry.receipt) : null;
   if (receipt && TERMINAL.has(receipt.status)) return "terminal";
   let run = receipt ?? ledger.runs.find(row => row.requestKey === entry.key && (!entry.launch?.launchToken || row.launchToken === entry.launch.launchToken));
+  // The reservation records an acknowledged run before the ledger row and the receipt are written.
+  if (!run && entry.launch?.runId) run = entry.launch;
   if (!run) {
     try { run = locateLaunch(entry.launch,remote); } catch { return "unknown"; }
   }
