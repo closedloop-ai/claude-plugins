@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import ts from "typescript";
 import { invokeSync, syncFixture, selectedReportFixture } from "./main-sync-test-fixtures.js";
-import { inputExpressionReference, readInputModule, referenceMatches } from "./main-sync-input-references.js";
+import { inputExpressionReference, MAX_PARSED_MODULE_BYTES, readInputModule, referenceMatches } from "./main-sync-input-references.js";
+import { verifyPrivateInput } from "./main-sync-private-inputs.js";
 
 const fixtures: ReturnType<typeof syncFixture>[] = [];
 afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
@@ -25,10 +26,16 @@ function opaqueExample(path: string) {
   return file;
 }
 
-function setup(path: string, body: string) {
-  const value = syncFixture(); fixtures.push(value);
+/** Commits `body` at `path` and returns the new HEAD, so a scan of that commit never reuses an earlier result. */
+function commitExample(value: ReturnType<typeof syncFixture>, path: string, body: string) {
   value.write(path, body);
   value.git(["add", path]); value.git(["commit", "-m", "Synthetic committed reference example"]);
+  return value.git(["rev-parse", "HEAD"]);
+}
+
+function setup(path: string, body: string) {
+  const value = syncFixture(); fixtures.push(value);
+  commitExample(value, path, body);
   value.write(".closedloop-ai/vibe-plans/acceptance-test-checkpoint.json", "{\"retainedDiagnostic\":true}\n");
   value.write(".closedloop-ai/vibe-plans/probes/retained.test.tsx", "throw new Error('private evidence must not execute');\n");
   return value;
@@ -528,3 +535,38 @@ function restorationFixture(domain: "report" | "private", targetOverflow: boolea
   const source = readInputModule(value.worktree, file, environment);
   return { value, file, source, environment, candidate };
 }
+
+describe("ISS-14689 AC3: the private-input reference scan is bounded", () => {
+  const checkpoint = ".closedloop-ai/vibe-plans/acceptance-test-checkpoint.json";
+  // Only the parsed expression names the plan folder: its text never spells it out.
+  const reader = "import {readFileSync} from 'node:fs';\nimport {join} from 'node:path';\n"
+    + "export const read = (name) => readFileSync(join('.closedloop-ai', 'vibe-' + 'plans', name), 'utf8');\n";
+  const padded = (body: string) => `${body}// ${"x".repeat(MAX_PARSED_MODULE_BYTES)}\n`;
+  const head = (value: ReturnType<typeof syncFixture>) => value.git(["rev-parse", "HEAD"]);
+
+  it("ISS-14689 AC5: does not AST-parse a committed bundle larger than the parse bound", () => {
+    const bundle = "tools/reader/dist/reader.mjs";
+    const value = setup(bundle, reader);
+    expect(() => verifyPrivateInput(value.worktree, checkpoint, head(value))).toThrow(/Private planning evidence is consumed/);
+    const large = commitExample(value, bundle, padded(reader));
+    expect(() => verifyPrivateInput(value.worktree, checkpoint, large)).not.toThrow();
+    // Its text is still searched: a large bundle that names the plan folder is a reader.
+    const named = commitExample(value, bundle, padded("import {readFileSync} from 'node:fs';\nreadFileSync('.closedloop-ai/vibe-plans/notes.md');\n"));
+    expect(() => verifyPrivateInput(value.worktree, checkpoint, named)).toThrow(/Private planning evidence is consumed/);
+  });
+
+  it("reports progress on stderr and fails with its named phase once its time bound passes", () => {
+    const lines: string[] = [];
+    let clock = 0;
+    const now = () => (clock += 1000);
+    const value = setup("apps/app/plain.ts", "export const plain = 1;\n");
+    expect(() => verifyPrivateInput(value.worktree, checkpoint, head(value),
+      { progressMs: 1000, budgetMs: 10 * 60 * 1000, now, report: (line) => lines.push(line) })).not.toThrow();
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines[0]).toMatch(/^main-sync private-input-references: 0 of \d+ committed modules checked in 1 s$/);
+    const bounded = commitExample(value, "apps/app/plain.ts", "export const bounded = 1;\n");
+    clock = 0;
+    expect(() => verifyPrivateInput(value.worktree, checkpoint, bounded, { budgetMs: 2000, now, report: () => {} }))
+      .toThrow(/^Main-sync phase private-input-references stopped at its 2 s bound after 1 of \d+ committed modules \(next [^)]+\); nothing was published$/);
+  });
+});

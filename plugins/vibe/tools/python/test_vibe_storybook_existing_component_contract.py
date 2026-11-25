@@ -39,6 +39,7 @@ GUARDRAILS = VIBE / "references" / "guardrails.md"
 DESIGN_PASS = VIBE / "references" / "design-pass.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
+FROZEN_STORY_MOVES = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "frozen-story-moves.mjs"
 TAXONOMY_SCRIPT = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "storybook-taxonomy.mjs"
 SESSIONS = VIBE / "scripts" / "vibe-sessions.mjs"
 README = PLUGIN_ROOT / "README.md"
@@ -143,10 +144,12 @@ def test_the_inventory_freezes_v1_files_and_admits_only_recorded_replacements_fo
     for required in (
         '...(base !== undefined && isV1Story(base) ? ["frozen"] : []),',
         "existingStoryTitlesKept: retitledStories.every((story) => story.replacement !== null),",
-        '"--diff-filter=R"',
+        "storyRenames(worktree, baseCommit, { pathspecs: STORY_PATHSPECS })",
         "record?.storyReplacements",
     ):
         assert required in inventory, required
+    # The inventory's moved-story listing is the shared storyRenames helper, which owns the git rename filter.
+    assert '"--diff-filter=R"' in skill_split.read(FROZEN_STORY_MOVES)
     assert "const STORY_META_START = " in skill_split.read(TAXONOMY_SCRIPT)
     guardrails = flat(skill_split.read(GUARDRAILS))
     assert "and any other edit or move of a v1.0 story file (`v1Stories`, `storiesInV2Taxonomy`)" in guardrails

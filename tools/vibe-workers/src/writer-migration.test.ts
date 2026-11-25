@@ -6,13 +6,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { acquireRecordTurn, changeWriter, markClaudeStarted, migrateWriter, readWriterSummary, registerWriter } from "./ledger.js";
 import { runWorker } from "./claude-worker.js";
 import { acquireNativeRecord, releaseNativeRecord, verifyStrandedRecordGrant } from "./native-record.js";
-import { bundleDirectory, fixture, graph, readProof, writeAgent } from "./test-fixtures.js";
+import { bundleDirectory, fixture, graph, readProof, recordWrite, testsForChanges, updateDocument, writeAgent } from "./test-fixtures.js";
+import type { Capability } from "./contracts.js";
 import { archiveGitFixture } from "../../shared/git-commit-fixture.mjs";
 import { REPO_ROOT, VIBE_1_1_25_SHA } from "./pinned-releases.js";
 
 const fixtures: ReturnType<typeof fixture>[] = [];
 afterEach(() => { for (const item of fixtures.splice(0)) item.cleanup(); });
-function setup(runtime: "codex" | "claude" = "codex") {
+function setup(runtime: "codex" | "claude" = "codex", recorded: Capability[] = graph) {
   const value = fixture();
   fixtures.push(value);
   const oldRoot = join(value.base, "cache", "vibe", "1.0.10");
@@ -24,7 +25,7 @@ function setup(runtime: "codex" | "claude" = "codex") {
     writeFileSync(join(root!, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version }));
   }
   const registered = registerWriter({ worktree: value.worktree, runtime, agentRoot: oldRoot,
-    agentName: "vibe-change-worker", capabilities: graph, ...(runtime === "codex" ? { workerId: "old-native" } : {}) });
+    agentName: "vibe-change-worker", capabilities: recorded, ...(runtime === "codex" ? { workerId: "old-native" } : {}) });
   const input = { worktree: value.worktree, runtime, agentRoot: currentRoot, agentName: "vibe-change-worker",
     capabilities: graph, previousWorkerId: registered.workerId, previousDigest: registered.definitionDigest,
     ...(runtime === "codex" ? { workerId: "new-native" } : {}) };
@@ -409,6 +410,15 @@ describe("recorded writer migration", () => {
     expect(value.read().binding.capabilities).toEqual(value.read().migrations[0].previous.binding.capabilities);
     expect(value.read().binding.capabilities.length).toBeGreaterThan(0);
   });
+  it("keeps a Claude writer's recorded record writes, declared or not, when migrate is sent none (ISS-13291)", () => {
+    const value = setup("claude", [...graph, recordWrite, updateDocument]);
+    const recorded = value.read().binding.capabilities;
+    rmSync(value.oldRoot, { recursive: true });
+    const { capabilities: ignored, ...input } = value.input;
+    expect(migrateWriter(input, value.currentRoot).lastMigration?.reason).toBe("definition-missing");
+    expect(value.read().binding.capabilities).toEqual(recorded);
+    expect(recorded).toHaveLength(3);
+  });
   it("migrates when the recorded agent file alone is missing", () => {
     const value = setup();
     rmSync(join(value.oldRoot, "agents", "vibe-change-worker.md"));
@@ -734,4 +744,31 @@ describe("a BLOCKED writer stranded by a plugin update (ISS-13291)", () => {
       expect(proof[0]!.args).toContain(migrated.workerId);
     } finally { process.env.PATH = originalPath; }
   });
+});
+
+describe("ISS-14689 OP1 (operator item, not a ticket criterion): a definition change adds only what the current definition declares", () => {
+  /** Leaves the recorded definition missing (its root removed) or changed in an older cached release. */
+  function changedDefinition(change: "missing" | "upgraded", runtime: "codex" | "claude") {
+    const value = setup(runtime);
+    if (change === "missing") rmSync(value.oldRoot, { recursive: true });
+    else writeAgent(value.oldRoot, "vibe-change-worker", "Read, Write, Edit");
+    return value;
+  }
+
+  it.each([["missing", "codex"], ["missing", "claude"], ["upgraded", "codex"], ["upgraded", "claude"]] as const)(
+    "lets an older writer gain code_tests_for_changes when its definition is %s (%s)", (change, runtime) => {
+      const value = changedDefinition(change, runtime);
+      const migrated = migrateWriter({ ...value.input, capabilities: [...graph, testsForChanges] }, value.currentRoot);
+      expect(migrated.lastMigration?.reason).toBe(`definition-${change}`);
+      expect(value.read().binding.capabilities).toEqual([testsForChanges, ...graph].sort((a, b) => a.name.localeCompare(b.name)));
+    });
+
+  it.each(["missing", "upgraded"] as const)(
+    "refuses a definition %s migration that adds a capability no change-worker action declares", (change) => {
+      const value = changedDefinition(change, "codex");
+      const before = readFileSync(value.ledgerFile, "utf8");
+      expect(() => migrateWriter({ ...value.input, capabilities: [...graph, updateDocument] }, value.currentRoot))
+        .toThrow("A migration may add only the capabilities the current definition declares: mcp__live_workspace__update_document");
+      expect(readFileSync(value.ledgerFile, "utf8")).toBe(before);
+    });
 });

@@ -7,7 +7,7 @@ import { assertIsolatedTestRead } from "./test-state-isolation.mjs";
 export function git(cwd, args, options = {}) {
   return execFileSync("git", args, {
     cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"], timeout: options.timeout,
+    stdio: ["ignore", "pipe", "pipe"], timeout: options.timeout, env: options.env,
   }).trim();
 }
 

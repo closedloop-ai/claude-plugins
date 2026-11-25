@@ -28,6 +28,15 @@ export function mcpToolAliases(name: string): string[] {
   const hyphenated = `${identity.slice(0, boundary)}__${identity.slice(boundary + 2).replaceAll("_", "-")}`;
   return [...new Set([name, identity, hyphenated])];
 }
+/**
+ * One capability's identity whatever runtime spells its tool: its service, operation and access, and its server name
+ * with `-` and `_` alike (Codex writes `team_graph` where Claude Code writes `team-graph`).
+ */
+export function capabilityIdentity(capability: { name: string; service: string; operation: string; access: string }): string {
+  const identity = mcpToolIdentity(capability.name) ?? capability.name;
+  const server = identity.slice(identity.indexOf("__") + 2, identity.lastIndexOf("__")).replaceAll("-", "_");
+  return [capability.service, server, capability.operation, capability.access].join("\0");
+}
 export const capabilitySchema = z.object({
   name: z.string().regex(capabilityName),
   service: z.enum(["graph", TRACKER_SERVICE, LEGACY_TRACKER_SERVICE]).transform((service) => (service === LEGACY_TRACKER_SERVICE ? TRACKER_SERVICE : service)),
@@ -132,7 +141,7 @@ const ledgerStateSchema = z.object({
 /** Retains the full prior writer state without recursively copying migration history. */
 export const migrationSchema = z.object({
   id: z.string().uuid(), at: z.string().datetime(),
-  reason: z.enum(["definition-missing", "definition-upgraded", "harness-switch"]),
+  reason: z.enum(["definition-missing", "definition-upgraded", "harness-switch", "capability-names"]),
   observedDigest: z.string().length(64).nullable(),
   previous: ledgerStateSchema, workerId: workerIdSchema, binding: bindingSchema,
   releasedRecord: z.object({ requestId: identifierSchema, recordAction: identifierSchema,

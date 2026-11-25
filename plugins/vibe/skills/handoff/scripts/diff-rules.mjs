@@ -59,7 +59,8 @@ const HAND_ROLLED_BACKOFF = /\*\*\s*\(?\s*\w*(?:attempt|retry|retries|n)\b/i;
 const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*)/;
 const BREADCRUMB_SIGNAL = /breadcrumb|crumb|ancestor/i;
 const BREADCRUMB_BUILDER = /^(?:export\s+)?(?:function|const|let)\s+\w*(?:breadcrumb|crumb|ancestor)\w*\b/i;
-const STORY_FILE = /\.stories\.tsx?$/;
+/** A story source file; the one pattern the frozen-story checks share. */
+export const STORY_FILE = /\.stories\.tsx?$/;
 // A human source with no tracker bound: an issue or pull request number, or a URL.
 const GENERIC_SOURCE = String.raw`(?:#\d+|https?:\/\/\S+)`;
 // Docs and agent folders a session may not edit, without a provider naming the repository's own.
@@ -587,7 +588,8 @@ function checkStories(files, allFiles, repo, logged, add) {
  * itself are the inventory's `v1Stories` and `compileOnlyV1Repairs`.
  */
 function checkFrozenRenders(files, repo, changeLog, add) {
-  const stories = repo.frozenStories();
+  // A ticket-authorized move or retirement is no longer frozen, so its render is not held to main's.
+  const stories = repo.frozenStories().filter((story) => !repo.frozenStoryMoves?.has(story));
   if (stories.length === 0) {
     return;
   }
@@ -643,7 +645,7 @@ function checkLostStoryIds(files, repo, logged, add) {
     const lost = storyIds(baseText).filter((id) => !still.has(id));
     const headTitle = file.status === "D" ? null : storyMetaTitle(repo.head(file.path) ?? "");
     const retitled = headTitle !== null && headTitle !== storyMetaTitle(baseText ?? "");
-    if (lost.length && !retitled && !repo.storyReplacements.has(file.path)) {
+    if (lost.length && !retitled && !repo.storyReplacements.has(file.path) && !repo.frozenStoryMoves?.has(file.oldPath ?? file.path)) {
       add("lost-story-id", file.path, 1, `loses story IDs ${lost.join(", ")}`, "keep the title and export names, or record the file as a sibling replacement's entry (`vibe-sessions.mjs story-replacement`)");
     }
     for (const id of lost) {
@@ -860,20 +862,23 @@ function untrackedAsAdded(worktree, planPrefix) {
  * Runs every rule on the session diff. `exclude` holds paths that are not the
  * session's work (local fixes); `isFrozenStory` is the base's v1.0 predicate
  * (storybook-taxonomy.mjs, by the base's scheme); `storyReplacements` holds
- * story files recorded as a sibling replacement's entry; `phase` is the
+ * story files recorded as a sibling replacement's entry; `frozenStoryMoves`
+ * holds the base paths of ticket-authorized frozen story moves and retirements
+ * (frozen-story-moves.mjs), whose own story IDs neither rule below blocks; `phase` is the
  * inventory's (only the pull-request phase writes tests); `binding` is the
  * session's provider binding, whose `recipes.diffRules` and tracker slugs the
  * repository rules read (none without one).
  */
-export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), isFrozenStory = () => false, storyReplacements = new Set(), phase = "pull-request",
-  binding = sessionBinding(worktree) }) {
+export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), isFrozenStory = () => false, storyReplacements = new Set(),
+  frozenStoryMoves = new Set(), phase = "pull-request", binding = sessionBinding(worktree) }) {
   const planPrefix = localPlanPrefix(binding);
   const files = [...parseUnifiedDiff(git(worktree, ["diff", "--no-color", "--unified=0", "-M", base]), planPrefix), ...untrackedAsAdded(worktree, planPrefix)]
     .filter((file) => !exclude.has(file.path));
   const logFile = changeLog ?? path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-changes.md");
   const log = existsSync(logFile) ? readFileSync(logFile, "utf8") : "";
-  return evaluateDiff(files, log, gitRepo(worktree, base, isFrozenStory, storyReplacements,
-    compileDiffRules(providerDataOr(binding, "recipes", "diffRules", null), binding), sessionInternalIds(worktree, log)), phase);
+  const repo = gitRepo(worktree, base, isFrozenStory, storyReplacements,
+    compileDiffRules(providerDataOr(binding, "recipes", "diffRules", null), binding), sessionInternalIds(worktree, log));
+  return evaluateDiff(files, log, { ...repo, frozenStoryMoves }, phase);
 }
 
 /** The private row ids (decision tables, change log) the copy rules treat as session-internal. */
