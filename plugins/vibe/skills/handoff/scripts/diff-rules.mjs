@@ -201,11 +201,7 @@ export function evaluateDiff(changedFiles, changeLog, repo, phase = "pull-reques
     add("shared-path", file.path, file.added[0]?.line ?? 1, "changes a shared read or write path without recorded evidence that existing callers are unchanged", "record `Shared path: <path>: unchanged for existing callers; evidence: <test or missing test entry with legacy fixtures>` or `...: changed; ruling: <human source>`");
   }
   const fileFindings = (group, file, source, check) => {
-    const compute = () => {
-      const outcomes = [];
-      check((rule, file, line, problem, fix) => outcomes.push({ rule, file, line, problem, fix }));
-      return outcomes;
-    };
+    const compute = () => { const outcomes = []; check((rule, file, line, problem, fix) => outcomes.push({ rule, file, line, problem, fix })); return outcomes; };
     blocking.push(...(fileRuleCache ? fileRuleCache.findings(group, file, source, compute) : compute()));
   };
   for (const file of live.filter((entry) => SCRIPT_FILE.test(entry.path) && !isTestFile(entry.path))) {
@@ -932,10 +928,7 @@ export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), i
   repo.tableRows = sessionTableRows(worktree);
   repo.currentHead = () => git(worktree, ["rev-parse", "HEAD"]);
   repo.receiptDir = path.dirname(logFile);
-  repo.surfaceProofs = () => {
-    const evidence = path.join(repo.receiptDir, "vibe-pr-evidence.json");
-    return existsSync(evidence) ? JSON.parse(readFileSync(evidence, "utf8")) : null;
-  };
+  repo.surfaceProofs = () => { const evidence = path.join(repo.receiptDir, "vibe-pr-evidence.json"); return existsSync(evidence) ? JSON.parse(readFileSync(evidence, "utf8")) : null; };
   return evaluateDiff(files, log, repo, phase, fileRuleCache);
 }
 

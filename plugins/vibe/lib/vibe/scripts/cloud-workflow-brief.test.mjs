@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { fakeDpkg, git, makeCheckout, makeHome, privateSudoers } from "../../../skills/vibe/scripts/test-fixtures.mjs";
-import { validationBrief, validationLanes } from "./cloud-worker.mjs";
+import { validateCommit, validationBrief, validationLanes } from "./cloud-worker.mjs";
 import { workflowLaneDefinitions } from "./workflow-lane-definitions.mjs";
 import { reporterFiles } from "./cloud-outcome-instruction.mjs";
 import { compactWorkflowBrief, WORKFLOW_BRIEF_UNAVAILABLE } from "./cloud-workflow-brief.mjs";
@@ -15,6 +15,8 @@ const tools="plugins/vibe/lib/vibe/scripts";
 const fixtureFiles=["cloud-workflow-plan.mjs","workflow-lane-definitions.mjs","cloud-receipts.mjs","cloud-validation-host.mjs","cloud-workflow-runner.mjs",...reporterFiles];
 const checksum=value=>createHash("sha256").update(value).digest("hex");
 const workflowPath=".github/workflows/ci.yml";
+// The refusal's route to the managed pnpm lanes, as a pattern (team-lead ruling (b), 2026-11-25).
+const managedRoute="validate this commit through its managed pnpm lanes instead: lanes \\[\\{name, command\\}\\] whose command is a pnpm script, with no workflow file";
 const root=fileURLToPath(new URL("../../../../../",import.meta.url));
 // The bootstrap's plan step runs the host's package repair, which runs dpkg as root: every bootstrap here runs with
 // dpkg and dpkg-query stubbed first on its PATH, so a root test run never configures a real package.
@@ -161,15 +163,50 @@ test("AC-68 workflow lanes whose commit lacks the shipped runner, or holds other
       ...(source?{laneSource:{kind:"github-workflow",path:workflowPath,sha256:checksum(workflow),commit}}:{})});
   };
   const shipped=Object.fromEntries(fixtureFiles.map(name=>[tools+"/"+name,readFileSync(path.join(root,tools,name),"utf8")]));
-  assert.throws(()=>brief({}),new RegExp(`^Error: ${WORKFLOW_BRIEF_UNAVAILABLE}: workflow lanes run only through the shipped runner, and commit [0-9a-f]{40} has no plugins/vibe/lib/vibe/scripts/cloud-workflow-plan\\.mjs$`),
+  assert.throws(()=>brief({}),new RegExp(`^Error: ${WORKFLOW_BRIEF_UNAVAILABLE}: workflow lanes run only through the shipped runner, and commit [0-9a-f]{40} has no plugins/vibe/lib/vibe/scripts/cloud-workflow-plan\\.mjs; ${managedRoute}$`),
     "a repository without the tools");
   const runner=tools+"/cloud-workflow-runner.mjs";
   assert.throws(()=>brief({...shipped,[runner]:shipped[runner]+"// another version\n"}),
-    new RegExp(`^Error: ${WORKFLOW_BRIEF_UNAVAILABLE}: .*'s plugins/vibe/lib/vibe/scripts/cloud-workflow-runner\\.mjs differs from the installed copy$`), "a commit with another runner");
+    new RegExp(`^Error: ${WORKFLOW_BRIEF_UNAVAILABLE}: .*'s plugins/vibe/lib/vibe/scripts/cloud-workflow-runner\\.mjs differs from the installed copy; ${managedRoute}$`), "a commit with another runner");
   assert.throws(()=>compactWorkflowBrief({commit:"c".repeat(40)},[],"key",()=>{throw new Error("missing");}),new RegExp(`^Error: ${WORKFLOW_BRIEF_UNAVAILABLE}: `),
     "the brief builder itself refuses; it never returns a fallback");
   assert.match(brief(shipped),/node "\$p\/cloud-workflow-runner\.mjs" <index>/,"the same request with the shipped tools briefs");
   assert.match(brief({},[{name:"check",command:"node --test"}],false),/- check: node --test/,"a command lane needs no runner and still briefs");
+});
+
+test("AC-68 a pnpm lane or a managed-host lane never gets the workflow refusal, even on a commit without the shipped runner (team-lead ruling (b), 2026-11-25)",t=>{
+  const f=makeHome("compact-pnpm-");t.after(f.cleanup);
+  const workflow="on: pull_request\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo lane\n";
+  const worktree=path.join(f.root,"checkout");
+  makeCheckout({...f,checkout:worktree,remoteUrl:"https://github.com/example/widgets.git",files:{[workflowPath]:workflow,
+    "package.json":JSON.stringify({scripts:{"docker:ensure":"node scripts/docker.mjs"}})}});
+  const commit=git(worktree,["rev-parse","HEAD"],f.home);
+  const request=(lanes,source=false)=>({provider:"claude",repository:"example/widgets",commit,worktree,branch:"main",model:"fixture-model",lanes,
+    resultArtifact:{kind:"validation-outcomes",branch:"vibe-validation-results/pnpm",path:".vibe-validation-outcomes-99887766.json"},
+    ...(source?{laneSource:{kind:"github-workflow",path:workflowPath,sha256:checksum(workflow),commit}}:{})});
+  const managed={tool:{commit:"a".repeat(40),ref:"refs/heads/vibe-proof"},affected:[]};
+  assert.throws(()=>validationBrief(request([{name:"check"}],true)),new RegExp(`^Error: ${WORKFLOW_BRIEF_UNAVAILABLE}: `),"precondition: this commit's workflow lanes are refused");
+  const briefs={
+    "a pnpm lane":validationBrief(request([{name:"typecheck",command:"pnpm --filter widgets typecheck"}])),
+    "a managed pnpm lane":validationBrief(request([{name:"containers",command:"pnpm docker:ensure"}]),managed),
+    "a workflow lane on the managed host":validationBrief(request([{name:"check"}],true),managed),
+  };
+  for (const [name,brief] of Object.entries(briefs)) assert.doesNotMatch(brief,/CLOUD_WORKFLOW_BRIEF_UNAVAILABLE|cloud-workflow-runner/,name);
+  assert.match(briefs["a pnpm lane"],/- typecheck: pnpm --filter widgets typecheck/,"the pnpm lane is briefed as its own command");
+});
+
+test("AC-68 a workflow validation the brief refuses ends before the queue hold, the proof push or any launch",async t=>{
+  const f=makeHome("compact-refused-hold-");t.after(f.cleanup);
+  const workflow="on: pull_request\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo lane\n";
+  const worktree=path.join(f.root,"checkout");
+  makeCheckout({...f,checkout:worktree,remoteUrl:"https://github.com/example/widgets.git",files:{[workflowPath]:workflow}});
+  const commit=git(worktree,["rev-parse","HEAD"],f.home), calls=[];
+  const request={provider:"claude",repository:"example/widgets",commit,worktree,branch:"main",model:"fixture-model",lanes:[{name:"check"}],cloudProof:true,
+    claudeEnvironment:"env_01TestRequest",laneSource:{kind:"github-workflow",path:workflowPath,sha256:checksum(workflow),commit}};
+  await assert.rejects(validateCommit(request,{remote:action=>{calls.push(action);throw new Error("no provider call expected");},sleep:async()=>{},home:f.home,
+    proofGit:()=>{calls.push("proof git");return "";}}),new RegExp(`^Error: ${WORKFLOW_BRIEF_UNAVAILABLE}: `));
+  assert.deepEqual(calls,[],"no routine, run or proof push");
+  assert.equal(existsSync(path.join(f.home,".codex/vibe/cloud/validation-queues")),false,"the account's validation slot was never taken");
 });
 
 // A compact plan prepared as the bootstrap prepares it, with the host's package repair replaced by a fixed result.

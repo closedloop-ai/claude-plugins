@@ -16,7 +16,7 @@ import { artifactRootOf, isPlanFile, planPrefixesOf } from "./main-sync-plan-fol
 import { invalidReportParent, verifyPrivateInput, verifyPrivateRoot, verifyEvidencePath } from "./main-sync-private-inputs.js";
 import { inputProducers, presentProducers, producerInputProblems, producerFor, producerFiles, producerPackage, producerOwnerInputs, verifyProducerInputs, verifyProducerInputsForOrigin } from "./main-sync-input-catalog.js";
 import { isOwnedPrototypeSession } from "../../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs";
-import { checkSteps, reportOutputsFor, type MainSyncStep } from "./main-sync-recipe.js";
+import { checkSteps, reportOutputsFor, runLeftoverScope, type MainSyncStep } from "./main-sync-recipe.js";
 import { originIdentity, sameOriginFiles } from "./main-sync-input-files.js";
 import { checkoutLocation, readWriterSummary } from "./ledger.js";
 import { bindCheckBudgets, commandSelection } from "./main-sync-budget.js";
@@ -62,7 +62,7 @@ type Classified = { offender: Offender } | { read: () => boolean } | null;
 
 /** Classify one candidate while retaining the existing producer, private input and report checks; nothing is read here. */
 function classifyUntrackedPath(root: string, file: string, ignored: boolean, headSha: string, reportOutputs: ReadonlySet<string>,
-  artifactRoot: string | null): Classified {
+  artifactRoot: string | null, leftover: ((file: string) => boolean) | null): Classified {
   if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) return null;
   if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) return null;
   if (isPlanFile(root, file)) {
@@ -80,6 +80,11 @@ function classifyUntrackedPath(root: string, file: string, ignored: boolean, hea
   if (ignored && file === GENERATED_BIOME_PATH) return { read: () => { verifyGeneratedBiomeInput(root, headSha); return true; } };
   // A name in the generated-input family is checked against its producer contract wherever it sits.
   if (file.split("/").at(-1)?.startsWith(GENERATED_BIOME_PATH)) return { offender: { input: `unsupported generated-input path ${file}` } };
+  // The inventory alone refuses an undeclared ignored executable a run left in its scope (AC-91); main sync's
+  // validation inputs (`committedInputs`) pass it, since an ignored file is never one.
+  if (ignored && leftover?.(file) && EXECUTABLE_INPUT.test(file)) {
+    return { offender: { message: `Undeclared git-ignored run output is a blocking input: ${file}. Declare it as a recipe report output, or have its test or build command clean it` } };
+  }
   // A git-ignored file is never a validation input: only an untracked one can differ from HEAD.
   if (!ignored && EXECUTABLE_INPUT.test(file)) return { offender: { input: `uncommitted executable ${file}` } };
   return null;
@@ -136,12 +141,13 @@ function inspectInventory(root: string, completion: "standalone" | "origin") {
   // Both listings are classified first, so one refusal reports every offender; files are read only after none.
   const reads: (() => boolean)[] = [];
   const artifactRoot = artifactRootOf(root);
+  const leftover = completion === "standalone" ? runLeftoverScope(root) : null;
   for (const ignored of [false, true]) {
     const args = ["ls-files", "--others", "--exclude-standard", "-z", ...(ignored ? ["--ignored"] : [])];
     for (const file of readGitInventory(root, args).split("\0").filter(Boolean)) {
       if (blocking.has(file) || [...invalidPrivateRoots.keys()].some(parent => file.startsWith(parent + "/"))) continue;
       untracked.push(file);
-      const classified = classifyUntrackedPath(root, file, ignored, before.headSha, reportOutputs, artifactRoot);
+      const classified = classifyUntrackedPath(root, file, ignored, before.headSha, reportOutputs, artifactRoot, leftover);
       if (classified && "offender" in classified) blocking.set(file, classified.offender);
       else if (classified) reads.push(classified.read);
     }

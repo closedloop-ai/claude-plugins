@@ -168,8 +168,7 @@ test('validate refuses Codex, a short commit and a lane with shell control befor
   assert.doesNotThrow(() => validationBrief(validationRequest()));
 });
 
-/** A validation of two named jobs of a committed workflow, in a checkout without the shipped workflow runner. */
-function workflowRequest(t) {
+test('ISS-14374 cloud validation resolves named CI lanes from the immutable workflow instead of accepting caller shell', (t) => {
   const worktree = checkout(t);
   const workflowPath = '.github/workflows/ci.yml';
   const workflow = `name: CI
@@ -198,18 +197,11 @@ jobs:
     sha256: createHash('sha256').update(workflow).digest('hex') };
   const request = { ...validationRequest(worktree), commit, laneSource,
     lanes: [{ name: 'node-tests' }, { name: 'vibe-eval-t0' }] };
-  return { worktree, commit, laneSource, request };
-}
-
-test('ISS-14374 cloud validation resolves named CI lanes from the immutable workflow instead of accepting caller shell', (t) => {
-  const { commit, laneSource, request } = workflowRequest(t);
   const resolved = validationLanes(request);
   assert.deepEqual(resolved.lanes.map((lane) => lane.name), ['node-tests', 'vibe-eval-t0']);
   assert.match(resolved.lanes[0].command, /bash scripts\/run-node-tests\.sh/);
   assert.match(resolved.lanes[1].command, /claude plugin validate plugins\/vibe/);
-  // Team-lead ruling, 2026-11-25: without the shipped runner in the commit the brief refuses by name, where it used to
-  // have the agent apply these recipes itself, as root and without the package repair.
-  assert.throws(() => validationBrief(request), /^Error: CLOUD_WORKFLOW_BRIEF_UNAVAILABLE: workflow lanes run only through the shipped runner, and commit [0-9a-f]{40} has no plugins\/vibe\/lib\/vibe\/scripts\/cloud-workflow-plan\.mjs$/);
+  assert.throws(() => validationBrief(request), /^Error: CLOUD_WORKFLOW_BRIEF_UNAVAILABLE: workflow lanes run only through the shipped runner, and commit [0-9a-f]{40} has no plugins\/vibe\/lib\/vibe\/scripts\/cloud-workflow-plan\.mjs; validate this commit through its managed pnpm lanes instead: /, 'without the shipped runner in the commit the brief refuses by name and points to the managed pnpm lanes (team-lead rulings, 2026-11-25)');
   const parsed = parseValidationResult(resultLine({ commit,
     provenance: { host: 'vm', remote: 'true', origin: 'https://github.com/closedloop-ai/claude-plugins', commit },
     lanes: [{ name: 'node-tests', exitCode: 0 }, { name: 'vibe-eval-t0', exitCode: 0 }] }), request);
@@ -220,16 +212,6 @@ test('ISS-14374 cloud validation resolves named CI lanes from the immutable work
   assert.throws(() => validateValidationRequest({ ...request, lanes: [{ name: 'node-tests', command: 'bash anything.sh' }] }), /caller commands are refused/);
   assert.throws(() => validateValidationRequest({ ...request, laneSource: { ...laneSource, sha256: '0'.repeat(64) } }), /SHA-256 differs/);
   assert.throws(() => validateValidationRequest({ ...request, lanes: [{ name: 'not-a-job' }] }), /missing or ambiguous/);
-});
-
-test('AC-68 a workflow validation the brief refuses ends before the queue hold, the proof push or any launch', async (t) => {
-  const { worktree, request } = workflowRequest(t);
-  const home = homeOf(worktree);
-  const { calls, remote } = fakeRemote(resultLine());
-  await assert.rejects(validateCommit({ ...request, cloudProof: true }, { remote, sleep: async () => {}, home, proofGit: () => { calls.push({ action: 'proof git' }); return ''; } }),
-    /^Error: CLOUD_WORKFLOW_BRIEF_UNAVAILABLE: /);
-  assert.deepEqual(calls, [], 'no routine, run or proof push');
-  assert.equal(existsSync(path.join(home, '.codex/vibe/cloud/validation-queues')), false, "the account's validation slot was never taken");
 });
 
 test('a validation result reported for another commit is refused', async (t) => {
