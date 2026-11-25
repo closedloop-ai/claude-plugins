@@ -621,20 +621,20 @@ export async function abandonDispatch(request, { confirm = false, home = os.home
   return abandoned;
 }
 
-/** End a validation that will not be read: its receipt is abandoned and recorded routines are swept. A launch that wrote no receipt releases its queue reservation by request key. */
+/** End a validation that will not be read: its receipt is abandoned, its queue reservation is released by request key once its launcher is gone, and with a receipt recorded routines are swept. */
 export async function abandonValidation(request, { confirm = false, home = os.homedir(), remote = cliRemote(request.worktree), executor = chromeRemoval(), stderr } = {}) {
   validateValidationRequest(request);
   const key = sha256(JSON.stringify(request)), base = validationReceiptPath(request, key);
   const file = request.lanes?.some(lane => lane.name === "cloud-capabilities")
     ? boundProbeReceipt(base, validationLanes(request).lanes, readLedger(home), resolveClaudeEnvironment(request)) : base;
-  if (!existsSync(file)) return releaseValidationReservation({ home, key, confirm, unconfirmed: (plan) => unconfirmed("abandon", plan), markRun: (runId) => markRun(home, runId, "abandoned", DEFAULT_WALL_MS) });
-  const receipt = JSON.parse(readFileSync(file, "utf8"));
-  const abandoned = TERMINAL.has(receipt.status) ? receipt : { ...receipt, status: "abandoned", finishedAt: new Date().toISOString() };
-  if (!confirm) return unconfirmed("abandon", { receipt: file, from: receipt.status ?? null, to: abandoned.status, sweepsRoutines: true });
-  writeFileSync(file, `${JSON.stringify(abandoned, null, 2)}\n`, { mode: 0o600 });
-  if (abandoned.status === "abandoned") await markRun(home, abandoned.runId ?? abandoned.taskId, "abandoned", DEFAULT_WALL_MS);
+  const receipt = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
+  const abandoned = receipt && (TERMINAL.has(receipt.status) ? receipt : { ...receipt, status: "abandoned", finishedAt: new Date().toISOString() });
+  const result = await releaseValidationReservation({ home, key, confirm, unconfirmed: (plan) => unconfirmed("abandon", plan), markRun: (runId) => markRun(home, runId, "abandoned", DEFAULT_WALL_MS),
+    receipt: abandoned && { plan: { receipt: file, from: receipt.status ?? null, to: abandoned.status, sweepsRoutines: true }, runId: abandoned.status === "abandoned" ? abandoned.runId ?? abandoned.taskId : null,
+      write: () => writeFileSync(file, `${JSON.stringify(abandoned, null, 2)}\n`, { mode: 0o600 }) } });
+  if (!confirm || !abandoned) return result;
   await sweepRemovals({ home, remote, worktree: request.worktree, executor, ...(stderr ? { stderr } : {}) });
-  return abandoned;
+  return result.released ? { ...abandoned, released: result.released, active: result.active } : abandoned;
 }
 
 /** The routine ledger, an adoption of the standing routine, a retirement, or a `get` proof pass over queued removals. */
