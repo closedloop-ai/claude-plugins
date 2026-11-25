@@ -158,35 +158,47 @@ function entryView(entry) {
 }
 
 /**
- * Release the queue reservation of a request whose launch wrote no receipt, found by its request key in any
- * account's queue. A launcher that is still alive keeps it. Without confirm it reports the entry and changes nothing.
- * An acknowledged run the reservation recorded is marked abandoned in the routine ledger through `markRun`, as the
- * receipt path marks its run; the release itself is the person's way out when the provider never ends that run.
+ * Abandon's one release step for a request, with or without its receipt: the request's queue reservation, found by its
+ * request key in any account's queue, is released once its launcher is gone. A launcher that is still alive keeps it:
+ * without a receipt abandon refuses, and with one abandon still marks the receipt. `receipt` is null when the launch
+ * wrote none, else `{ plan, write, runId }`: the dry run's receipt change, its synchronous write, done under the queue
+ * lock so no resume or release interleaves, and the run id it ends (null for a terminal receipt). Without confirm it
+ * reports the plan and changes nothing. Every run this abandon ends is marked abandoned in the routine ledger through
+ * `markRun`; the release is the person's way out when the provider never ends or lists that run.
  */
-export async function releaseValidationReservation({ home, key, confirm = false, unconfirmed, markRun, identityOf = readProcessIdentity }) {
+export async function releaseValidationReservation({ home, key, receipt = null, confirm = false, unconfirmed, markRun, identityOf = readProcessIdentity }) {
   const queues = queuesDir(home);
   const file = (existsSync(queues) ? readdirSync(queues) : []).map((name) => path.join(queues, name, "queue.json"))
     .find((candidate) => existsSync(candidate) && readQueue(candidate).active?.key === key);
-  if (!file) throw new Error("no cloud task exists to poll and no queue reservation holds this request");
-  const refuseLive = (entry) => {
-    if (launcherAlive(entry, identityOf)) throw new Error(`cloud validation launcher ${entry.pid} still holds this reservation; stop it before abandoning`);
+  if (!file && !receipt) throw new Error("no cloud task exists to poll and no queue reservation holds this request");
+  const live = (entry) => {
+    if (!launcherAlive(entry, identityOf)) return false;
+    if (!receipt) throw new Error(`cloud validation launcher ${entry.pid} still holds this reservation; stop it before abandoning`);
+    return true;
   };
+  // The runs this abandon ends: a receipt it abandons names its run, normally the one the reservation recorded too; a
+  // terminal receipt's run has ended already, so nothing is marked.
+  const ends = (entry) => [...new Set(receipt ? (receipt.runId ? [receipt.runId, entry?.launch?.runId] : []) : [entry?.launch?.runId])].filter(Boolean);
   if (!confirm) {
-    const active = readQueue(file).active;
-    refuseLive(active);
-    return unconfirmed({ queue: file, active: entryView(active), releases: active.token, ...(active.launch?.runId ? { marksRunAbandoned: active.launch.runId } : {}) });
+    const held = file ? readQueue(file).active : null;
+    const kept = held?.key === key && live(held);
+    const release = held?.key === key && !kept ? { queue: file, active: entryView(held), releases: held.token,
+      ...(held.launch?.runId && ends(held).includes(held.launch.runId) ? { marksRunAbandoned: held.launch.runId } : {}) } : {};
+    return unconfirmed({ ...receipt?.plan, ...release, ...(kept ? { keepsReservation: held.token } : {}) });
   }
-  const released = await updateQueue(file, (state) => {
-    if (state.active?.key !== key) throw new Error("the queue reservation changed during abandon; rerun abandon");
-    refuseLive(state.active);
-    const entry = state.active;
-    state.abandoned = [...state.abandoned, abandonedRecord(entry, "abandoned locally; its launch wrote no receipt")].slice(-200);
+  const released = !file ? (receipt.write(), null) : await updateQueue(file, (state) => {
+    const entry = state.active?.key === key ? state.active : null;
+    if (!entry && !receipt) throw new Error("the queue reservation changed during abandon; rerun abandon");
+    const kept = entry !== null && live(entry);
+    receipt?.write();
+    if (!entry || kept) return null;
+    state.abandoned = [...state.abandoned, abandonedRecord(entry, receipt ? "abandoned locally with its receipt" : "abandoned locally; its launch wrote no receipt")].slice(-200);
     state.active = null;
     return entry;
   });
   // After the queue lock is released: a launch takes the routine lock, then the queue lock.
-  if (released.launch?.runId) await markRun(released.launch.runId);
-  return { status: "abandoned", queue: file, released: entryView(released), active: entryView(readQueue(file).active) };
+  for (const runId of ends(released)) await markRun(runId);
+  return { status: "abandoned", queue: file ?? null, released: entryView(released), active: file ? entryView(readQueue(file).active) : null };
 }
 
 const LIST_RUNS_PAGES = 10;
@@ -239,8 +251,11 @@ function locateLaunch(launch, remote) {
   return null;
 }
 
-// An inventory cut at LIST_RUNS_PAGES is read, not refused: runs are listed newest first, and while a reservation
-// holds the account no other validation launches. Any other thrown provider read leaves the run unreadable.
+// An inventory cut at LIST_RUNS_PAGES is read, not refused, so a lost launch is still reclaimed past its window on a
+// standing routine whose run history outgrew the limit. Runs are listed newest first and no other validation launches
+// while a reservation holds the account, but dispatch runs on the same standing routine outside the queue, so enough
+// newer dispatch runs can push a launch that did happen past the limit; that rare launch is then reclaimed while it may
+// still run. Any other thrown provider read leaves the run unreadable.
 const unproven = (error) => error instanceof IncompleteRunInventory ? "unknown" : "unreadable";
 
 /**

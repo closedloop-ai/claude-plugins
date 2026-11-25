@@ -183,7 +183,8 @@ test("a lost provider acknowledgement releases the next queued request through i
   assert.equal(regularJson(f.receipt("lost")).runId,"launched");
 });
 
-test("local abandonment holds capacity until the exact provider run ends", t=>{
+// A reservation that abandon released is gone; one it kept for a live launcher whose launcher then exited is read as below.
+test("ISS-14476 DT-162R recovery of a locally abandoned receipt whose reservation still holds answers from the exact provider run", t=>{
   const f=fixture(t), entry={key:"one",receipt:f.receipt("one")};
   writeAtomic(entry.receipt,{status:"abandoned",runId:"first",routineId:"standing"});
   for(const [status,want] of [["running","active"],["completed","terminal"],["cancelled","terminal"]]){
@@ -192,7 +193,7 @@ test("local abandonment holds capacity until the exact provider run ends", t=>{
   }
 });
 
-test("queue retains a locally abandoned active run until the provider confirms termination",async t=>{
+test("ISS-14476 DT-162R another request waits behind a locally abandoned run whose reservation no abandon released until the provider confirms termination",async t=>{
   const f=fixture(t);
   await f.execute("active",async ({launching})=>{
     await launching();
@@ -580,4 +581,76 @@ test("ISS-14476 DT-152R DT-158R abandon releases a receipt-less reservation that
   assert.deepEqual(queueState(f.home).abandoned.at(-1), { key, reason: "abandoned locally; its launch wrote no receipt", sessionId: "cse_acknowledged" });
   assert.equal(readLedger(f.home).runs[0].status, "abandoned", "the routine ledger marks the run abandoned, as the receipt path does");
   assert.equal(existsSync(receipt), false, "the release writes no receipt");
+});
+
+/**
+ * A validation request whose acknowledged run lost its launcher (the reservation holds runId, pid null), with its routine
+ * ledger row, after another request's real recovery wrote the run's receipt and timed out while the provider listed nothing.
+ */
+async function recoveredLostRun(t) {
+  const f = adoptionFixture(t);
+  const key = sha256(JSON.stringify(f.request));
+  const receipt = gitDirReceipt(f.request, key);
+  let clock = 0;
+  const admit = (requestKey, file, action, options = {}) => withCloudValidationAdmission({ home: f.home, account: "verified-fixture-account", key: requestKey,
+    receipt: file, report: () => {}, now: () => clock, wait: async (ms) => { clock += ms; }, launchWindowMs: 60_000, sleepMs: 10_000, timeoutMs: 20_000, ...options }, action);
+  const launch = { ...LAUNCH, startedAt: new Date(0).toISOString() };
+  await assert.rejects(admit(key, receipt, async ({ launching }) => {
+    await launching(launch);
+    await launching({ ...launch, runId: "run-lost", sessionId: "cse_lost" });
+    throw Object.assign(new Error("routine ledger write failed"), { launchUncertain: true });
+  }), /ledger write failed/);
+  writeAtomic(ledgerPath(f.home), { ...readLedger(f.home), runs: [{ ...launch, runId: "run-lost", sessionId: "cse_lost", requestKey: key, status: "started" }] });
+  clock += 60 * 60_000;
+  const other = path.join(f.root, "other-request.json");
+  const recover = (entry) => recoverValidationReservation(entry, { ledger: readLedger(f.home), remote: () => ({ data: [] }) });
+  const next = (action) => admit("other-request", other, action, { recover });
+  await assert.rejects(next(() => assert.fail("admitted while the gone launcher's reservation holds")), { code: "CLOUD_VALIDATION_QUEUE_TIMEOUT" });
+  const stuck = queueState(f.home).active;
+  assert.deepEqual([stuck.key, stuck.pid, stuck.launch.runId, regularJson(receipt).status, regularJson(receipt).runId], [key, null, "run-lost", "running", "run-lost"],
+    "another request's recovery wrote the acknowledged run's receipt and the reservation still holds the account");
+  const options = (confirm) => ({ confirm, home: f.home, remote: () => ({ data: [] }), executor: NO_EXECUTOR, stderr: () => {} });
+  return { f, key, receipt, stuck, next, abandon: (confirm = false) => abandonValidation(f.request, options(confirm)) };
+}
+
+test("ISS-14476 DT-161R an acknowledged run with a receipt that the provider no longer lists, then abandon, leaves the queue active at null", async (t) => {
+  const { f, key, receipt, stuck, next, abandon } = await recoveredLostRun(t);
+  const asked = await abandon();
+  assert.deepEqual([asked.confirmRequired, resolved(asked.wouldChange.receipt), asked.wouldChange.from, asked.wouldChange.to, asked.wouldChange.releases, asked.wouldChange.marksRunAbandoned],
+    [true, resolved(receipt), "running", "abandoned", stuck.token, "run-lost"]);
+  assert.deepEqual([queueState(f.home).active.token, regularJson(receipt).status, readLedger(f.home).runs[0].status], [stuck.token, "running", "started"], "without --confirm nothing changes");
+  const done = await abandon(true);
+  assert.equal(queueState(f.home).active, null, "abandon on the receipt path releases this request's reservation");
+  assert.deepEqual([done.status, done.runId, done.released.token, done.active], ["abandoned", "run-lost", stuck.token, null]);
+  assert.deepEqual(queueState(f.home).abandoned.at(-1), { key, reason: "abandoned locally with its receipt", sessionId: "cse_lost" });
+  assert.deepEqual([regularJson(receipt).status, readLedger(f.home).runs[0].status], ["abandoned", "abandoned"], "the receipt and the routine ledger record the abandon");
+  assert.equal(await next(() => "admitted"), "admitted", "the next request is admitted while the provider still lists nothing");
+});
+
+test("ISS-14476 DT-162R abandon with a receipt marks it while a live launcher keeps the reservation, and abandon again once that launcher is gone releases it", async (t) => {
+  const { f, key, receipt, stuck, next, abandon } = await recoveredLostRun(t);
+  writeAtomic(queueFile(f.home), { ...queueState(f.home), active: { ...stuck, pid: process.pid, identity: readProcessIdentity(process.pid) } });
+  const asked = await abandon();
+  assert.deepEqual([asked.wouldChange.to, asked.wouldChange.keepsReservation, asked.wouldChange.releases], ["abandoned", stuck.token, undefined], "a live launcher's reservation is not offered for release");
+  const marked = await abandon(true);
+  assert.deepEqual([marked.status, marked.released, queueState(f.home).active.token], ["abandoned", undefined, stuck.token], "a live launcher keeps its reservation");
+  assert.deepEqual([regularJson(receipt).status, readLedger(f.home).runs[0].status, queueState(f.home).abandoned], ["abandoned", "abandoned", []]);
+  // That launcher exits with its receipt abandoned: another request holds behind the run until the provider ends it.
+  writeAtomic(queueFile(f.home), { ...queueState(f.home), active: stuck });
+  await assert.rejects(next(() => assert.fail("admitted behind a locally abandoned run")), { code: "CLOUD_VALIDATION_QUEUE_TIMEOUT" });
+  const done = await abandon(true);
+  assert.deepEqual([done.status, done.released.token, queueState(f.home).active], ["abandoned", stuck.token, null], "abandon again releases the gone launcher's reservation");
+  assert.deepEqual(queueState(f.home).abandoned.at(-1), { key, reason: "abandoned locally with its receipt", sessionId: "cse_lost" });
+  assert.equal(await next(() => "admitted"), "admitted");
+});
+
+test("ISS-14476 DT-163R abandon with a terminal receipt keeps its end state, releases the gone launcher's reservation and marks no run abandoned", async (t) => {
+  const { f, key, receipt, stuck, abandon } = await recoveredLostRun(t);
+  writeAtomic(receipt, { ...regularJson(receipt), status: "completed" });
+  const asked = await abandon();
+  assert.deepEqual([asked.wouldChange.to, asked.wouldChange.releases, asked.wouldChange.marksRunAbandoned], ["completed", stuck.token, undefined]);
+  const done = await abandon(true);
+  assert.deepEqual([done.status, done.released.token, queueState(f.home).active], ["completed", stuck.token, null]);
+  assert.deepEqual(queueState(f.home).abandoned.at(-1), { key, reason: "abandoned locally with its receipt", sessionId: "cse_lost" });
+  assert.deepEqual([regularJson(receipt).status, readLedger(f.home).runs[0].status], ["completed", "started"], "a run that ended is not marked abandoned");
 });
