@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSy
 import path from "node:path";
 import test from "node:test";
 import { git, makeHome } from "../../../../vibe/skills/vibe/scripts/test-fixtures.mjs";
-import { canonicalGitTimestamp, cloudHostEnvironment, laneGroupSpawn, pinnedPnpmVersion, runLaneGroup, prepareHostChromium, reserveCloudPorts, runCloudHostPlan, hostLanesLine, hostPhaseLanes, hostResultLines, hostTimeLine, mergeHostPhases, runHostReporter, validationHostActor, writeHostRunFiles } from "./cloud-validation-host.mjs";
+import { canonicalGitTimestamp, cloudHostEnvironment, laneGroupSpawn, pinnedPnpmVersion, probeCloudHostRuntime, runLaneGroup, prepareHostChromium, reserveCloudPorts, runCloudHostPlan, hostLanesLine, hostPhaseLanes, hostResultLines, hostTimeLine, mergeHostPhases, runHostReporter, validationHostActor, writeHostRunFiles } from "./cloud-validation-host.mjs";
 import { installPnpmHelpFixture } from "./pnpm-help-test-fixture.mjs";
 
 installPnpmHelpFixture();
@@ -200,6 +200,20 @@ test("AC-101 the lane supervisor runs as the runner and only the lane child take
   assert.deepEqual(argv.slice(argv.indexOf("--") + 1), ["1000", "200", "65534", "65533", "pnpm", "--filter", "api", "test"]);
   const [, own] = laneGroupSpawn("node", ["a.cjs"], { cwd: "/checkout" }, { timeout: 1000, grace: 200 });
   assert.deepEqual(own.slice(own.indexOf("--") + 1), ["1000", "200", "", "", "node", "a.cjs"], "no actor identity means none is set");
+});
+
+test("AC-101 the host probe runs its actor checks with node from the actor's PATH, never the runner's own binary (nonRoot false in cse_0197q288)", (t) => {
+  const f = makeHome("host-probe-"); t.after(f.cleanup);
+  const directory = path.join(f.root, "state"); mkdirSync(directory);
+  const calls = [];
+  const runtime = probeCloudHostRuntime(directory, f.root, (command, args, options) => { calls.push({ command, args, options }); return { exitCode: 0, stdoutTail: "", stderrTail: "" }; });
+  const actor = calls.filter(({ options }) => options?.uid !== undefined);
+  assert.ok(actor.some(({ command }) => command === "pnpm"), "the probe ran its actor checks");
+  for (const { command, args } of actor) assert.ok(command !== process.execPath && !args.includes(process.execPath), `${command} ${args.join(" ")} runs as the actor without the runner's binary`);
+  assert.deepEqual([calls[0].command, calls[0].args.length], ["node", 2], "the non-root check runs node from the actor's PATH");
+  const control = calls.find(({ command }) => command === "unshare");
+  assert.equal(control.args[control.args.indexOf("control-lane") + 1], "node", "the control namespace check execs node from the actor's PATH");
+  assert.equal(runtime.checks.nonRoot, true);
 });
 
 test("AC-101 the lane child itself takes the requested actor uid: refused as non-root, the actor's uid as root (ADV2-1)", () => {

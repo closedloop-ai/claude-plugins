@@ -667,9 +667,11 @@ export function probeCloudHostRuntime(directory, checkout = process.cwd(), run =
     if (process.getuid() === 0) ownTree(sandbox, actor);
     const environment = cloudHostEnvironment(process.env, sandbox, path.join(sandbox, "control"));
     const options = { cwd: sandbox, env: environment, ...actor, timeout: 120_000 };
-    details.nonRoot = run(process.execPath, [child, marker], options);
+    // The actor finds node on its PATH, as every lane does: the runner's own binary can sit in root's closed home
+    // (the cloud setup puts Node 24 in $HOME/.node24), which the actor cannot execute.
+    details.nonRoot = run("node", [child, marker], options);
     runtime.nonRoot = details.nonRoot.exitCode === 0;
-    const [binary,argv] = inControlNamespace(process.execPath,["-e","const net=require('node:net');const s=net.createServer();s.listen(0,'127.0.0.1',()=>s.close());"]);
+    const [binary,argv] = inControlNamespace("node",["-e","const net=require('node:net');const s=net.createServer();s.listen(0,'127.0.0.1',()=>s.close());"]);
     details.controlNamespace = run(binary,argv,options);
     runtime.controlNamespace = runtime.nonRoot && details.controlNamespace.exitCode === 0;
     const leases = [];
