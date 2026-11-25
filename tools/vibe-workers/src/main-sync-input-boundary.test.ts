@@ -105,7 +105,7 @@ describe("production committed-input privacy and origin boundaries", () => {
     for (const file of paths) value.write(file, "{}");
     let refusal: unknown;
     try { inspectInputInventory(value.worktree); } catch (error) { refusal = error; }
-    const message = String((refusal as Error | undefined)?.message);
+    const message = refusal instanceof Error ? refusal.message : "";
     expect(Buffer.byteLength(message)).toBeLessThanOrEqual(2048);
     const shown = paths.filter((file) => message.includes(file));
     expect(shown.length).toBeGreaterThan(0);

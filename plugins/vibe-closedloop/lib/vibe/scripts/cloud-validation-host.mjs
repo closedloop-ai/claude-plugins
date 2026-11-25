@@ -133,9 +133,9 @@ export function cloudHostEnvironment(current, home, registry) {
 // The host's own registry trust and proxy settings (r18: without them the first registry fetch failed in 1 s, where
 // r17's bootstrap with them took 37 s). The managed host's root setup keeps them and its non-root actor never receives
 // them (team-lead, 2026-11-24, attempt six). A workflow lane's steps all run as the actor, installs included, so they
-// receive them (cloud-workflow-runner.mjs). uv reads the system trust store only under UV_NATIVE_TLS or
+// receive them, proxy URLs without userinfo (cloud-workflow-runner.mjs stepNetworkEnvironment). uv reads the system trust store only under UV_NATIVE_TLS or
 // UV_SYSTEM_CERTS, which the cloud sets (r24's `uv sync` warned about UV_NATIVE_TLS).
-const HOST_NETWORK = ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO",
+export const HOST_NETWORK = ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO",
   "NODE_USE_SYSTEM_CA", "UV_NATIVE_TLS", "UV_SYSTEM_CERTS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"];
 
 /** The host's own registry trust and proxy settings from `current`, and nothing else. */
@@ -688,13 +688,25 @@ export function probeCloudHostRuntime(directory, checkout = process.cwd(), run =
     if (process.getuid() === 0) ownTree(sandbox, actor);
     details.workspace = run("pnpm", ["--filter", "vibe-runtime-workspace", "build"], options);
     runtime.workspace = details.workspace.exitCode === 0 && existsSync(path.join(sample, "dist.js"));
-    const playwright = ["--package=playwright@" + BROWSER_VERSION, "dlx", "playwright"];
+    // chromium1254 is the setup's browser revision alone; chromium is the actor's headless launch of it.
     details.chromiumInstall = run("test", ["-x", HEADLESS_SHELL], options);
-    if (details.chromiumInstall.exitCode === 0) {
-      details.chromiumLaunch = run("pnpm", [...playwright, "screenshot", "--browser=chromium", "data:text/html,probe", path.join(sandbox, "probe.png")], options);
-      runtime.chromium = details.chromiumLaunch.exitCode === 0;
+    runtime.chromium1254 = details.chromiumInstall.exitCode === 0;
+    if (runtime.chromium1254) {
+      // Root fetches the pinned Playwright with the host's network settings, as root setup installs a lane's
+      // dependencies; the actor never receives them and launches the installed copy offline, as every browser lane
+      // does. An actor `pnpm dlx` in this fresh home always needed the registry (chromium false in cse_0197q288).
+      const browser = path.join(sandbox, "browser");
+      mkdirSync(browser);
+      writeFileSync(path.join(browser, "package.json"), '{"name":"vibe-runtime-browser","private":true}');
+      details.chromiumFetch = run("pnpm", ["add", "--ignore-workspace", "playwright@" + BROWSER_VERSION],
+        { cwd: browser, env: rootSetupEnvironment(environment, process.env, browser), timeout: 120_000 });
+      if (process.getuid() === 0) ownTree(sandbox, actor);
+      if (details.chromiumFetch.exitCode === 0) {
+        details.chromiumLaunch = run("pnpm", ["exec", "playwright", "screenshot", "--browser=chromium", "data:text/html,probe", path.join(sandbox, "probe.png")],
+          { ...options, cwd: browser });
+        runtime.chromium = details.chromiumLaunch.exitCode === 0;
+      }
     }
-    runtime.chromium1254 = runtime.chromium;
     details.gitUtc = run("git", ["log", "-1", "--format=%ad", "--date=iso-strict-local"], { cwd: checkout, env: environment });
     try { runtime.gitUtc = details.gitUtc.exitCode === 0 && Boolean(canonicalGitTimestamp(details.gitUtc.stdoutTail.trim())); }
     catch { /* Preserve the failed exact UTC probe. */ }

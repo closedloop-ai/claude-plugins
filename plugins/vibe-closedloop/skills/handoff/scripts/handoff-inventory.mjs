@@ -110,7 +110,7 @@ import { readRetiredTests, wholeRetiredTestPaths } from "../../vibe/scripts/reti
 import { sessionPlanEvidencePaths } from "../../vibe/scripts/session-plan.mjs";
 import { pathCitationAuthority } from "./path-citations.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
-import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
+import { readMainSyncProvenance, runLeftovers } from "../../vibe/scripts/dist/main-sync.mjs";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
 import { unexplainedLockfileEntries } from "./lockfile-manifest.mjs";
 import { classifyHandoffPath, DEFAULT_PATH_POLICY, DEFAULT_POLICY_SOURCE, PathDisposition } from "./path-classifier.mjs";
@@ -306,6 +306,8 @@ const result = withStableSource(worktree, (source) => {
   const deferredToHandoff = values.phase === "build" ? diffRules.blocking.filter((finding) => HANDOFF_ONLY_RULES.has(finding.rule)) : [];
   const diffRulesBlocking = diffRules.blocking.filter((finding) => !deferredToHandoff.includes(finding));
   const decisionTables = decisionTableProblems(worktree);
+  // Item 144 (AC-91): an undeclared git-ignored executable a run left in the recipe's run scope; main sync passes it.
+  const leftovers = runLeftovers(worktree);
 
   const blocking = {
     forbiddenPaths: !pathPolicyProblem && forbidden.length === 0 && outsideAllowed.length === 0 && unexplainedLockfile.length === 0,
@@ -316,6 +318,7 @@ const result = withStableSource(worktree, (source) => {
     ...(values.phase === "build" ? {} : { decisionTablesCurrent: decisionTables.length === 0 }),
     ...(storybookSchemeUnreadable ? { storybookSchemeRecognized: false } : {}),
     ...(trackedLocalPlans.length ? { localPlansUntracked: false } : {}),
+    ...(leftovers.length ? { runLeftoversCleared: false } : {}),
     ...(prototype ? { prototypePublicationCurrent: publicationProblem === undefined } : {}),
     ...(mainSync?.pendingMerge ? { mainSyncMergeCommitted: false } : {}),
     ...(prFacts?.prBodyProblems ? { prBody: prFacts.prBodyProblems.length === 0 } : {}),
@@ -344,6 +347,8 @@ const result = withStableSource(worktree, (source) => {
     localFixes,
     localPlans,
     trackedLocalPlans,
+    ...(leftovers.length ? { runLeftovers: { paths: leftovers,
+      fix: "Declare each as a recipe report output, or have its test or build command clean it" } } : {}),
     forbidden,
     outsideAllowed,
     pathCitations,

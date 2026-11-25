@@ -29,8 +29,9 @@ async function bootstrap() {
   } catch(error) {fs.rmSync(dir,{recursive:true,force:true});throw error;}
 }
 
-// The refusal of a workflow-file validation whose commit cannot run the shipped runner. Only workflow-file lanes reach
-// it: a pnpm command lane or a managed-host lane is briefed without the runner.
+// The refusal of a workflow-file validation whose commit cannot run the shipped runner, or whose result is a legacy eval
+// artifact the runner cannot report. Only workflow-file lanes reach it: a pnpm command lane or a managed-host lane is
+// briefed without the runner.
 export const WORKFLOW_BRIEF_UNAVAILABLE = "CLOUD_WORKFLOW_BRIEF_UNAVAILABLE";
 const MANAGED_PNPM_ROUTE = "validate this commit through its managed pnpm lanes instead: lanes [{name, command}] whose command is a pnpm script, with no workflow file";
 
@@ -40,9 +41,10 @@ const MANAGED_PNPM_ROUTE = "validate this commit through its managed pnpm lanes 
  * launch: the agent never runs workflow steps itself as root without the package repair (team-lead rulings,
  * 2026-11-25: refuse with a named error rather than fall back to root, and point to the managed pnpm lanes).
  */
-export function compactWorkflowBrief(request,lanes,key,readCommitted) {
+export function compactWorkflowBrief(request,lanes,key,readCommitted,legacyArtifact=false) {
   const root=toolingRoot+"/lib/vibe/scripts", hash=createHash("sha256");
   const refuse=why=>{throw new Error(`${WORKFLOW_BRIEF_UNAVAILABLE}: workflow lanes run only through the shipped runner, and ${why}; ${MANAGED_PNPM_ROUTE}`);};
+  if (legacyArtifact) refuse("the runner reports only machine outcomes, never a legacy result artifact (a path and branch with no kind)");
   for (const name of modules) {
     const installed=readFileSync(new URL(name,import.meta.url));
     let subject;

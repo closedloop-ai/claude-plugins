@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import { LaunchPrecheckError } from "./claude-preflight.js";
 
 /**
@@ -20,8 +21,9 @@ export function sharedHostGuardProblem(settings: ReadonlyArray<{ file: string; v
   if (!shared) return null;
   const switches = new Map<string, { on: unknown; file: string }>();
   for (const { file, value } of settings) {
-    if (!value || typeof value !== "object") continue;
-    const record = value as Record<string, unknown>;
+    const parsed = z.record(z.unknown()).safeParse(value);
+    if (!parsed.success) continue;
+    const record = parsed.data;
     if (record.disableAllHooks === true) {
       return `${file} sets disableAllHooks, so vibe's guards would not run on this shared fleet host; remove it before launching`;
     }
@@ -39,7 +41,10 @@ export function sharedHostGuardProblem(settings: ReadonlyArray<{ file: string; v
 export function checkSharedHostGuards(worktree: string, { env = process.env, home = homedir() } = {}): void {
   const files = [join(home, ".claude", "settings.json"), join(worktree, ".claude", "settings.json"), join(worktree, ".claude", "settings.local.json")];
   const settings = files.filter((file) => existsSync(file)).map((file) => {
-    try { return { file, value: JSON.parse(readFileSync(file, "utf8")) as unknown }; } catch { return { file, value: null }; }
+    try {
+      const value: unknown = JSON.parse(readFileSync(file, "utf8"));
+      return { file, value };
+    } catch { return { file, value: null }; }
   });
   const problem = sharedHostGuardProblem(settings, existsSync(fleetSlotRoot(env, home)));
   if (problem) throw new LaunchPrecheckError("GUARDS_DISABLED", problem);

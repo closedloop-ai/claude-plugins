@@ -63,9 +63,13 @@ export function reportOutputsFor(root: string): ReadonlySet<string> {
 /**
  * Where the inventory treats an undeclared git-ignored executable as a run leftover (AC-91): under the owner of a
  * report the recipe itself declares, or in any directory named like that report's run directory. A generic report
- * declares neither, so a repository without a recipe has no leftover scope.
+ * declares neither, so a repository without a recipe has no leftover scope. A path the recipe declares generated
+ * (`recipes.cleanup.generated`, the outputs owned cleanup also accepts) is never a leftover.
  */
 export function runLeftoverScope(root: string): (file: string) => boolean {
+  const cleanup = z.object({ generated: z.array(z.string()).default([]) }).passthrough()
+    .parse(providerDataOr<unknown>(sessionBinding(root), "recipes", "cleanup", {}));
+  const generated = cleanup.generated.map((source) => new RegExp(source));
   const owners = new Set<string>(), runs = new Set<string>();
   for (const report of mainSyncRecipe(root).reportOutputs) {
     const run = posix.dirname(report), owner = posix.dirname(run);
@@ -73,7 +77,8 @@ export function runLeftoverScope(root: string): (file: string) => boolean {
     runs.add(posix.basename(run));
     if (owner !== ".") owners.add(`${owner}/`);
   }
-  return (file) => [...owners].some((owner) => file.startsWith(owner)) || file.split("/").slice(0, -1).some((segment) => runs.has(segment));
+  return (file) => !generated.some((pattern) => pattern.test(file))
+    && ([...owners].some((owner) => file.startsWith(owner)) || file.split("/").slice(0, -1).some((segment) => runs.has(segment)));
 }
 
 /** The recipe's bootstrap, else the install the repository's lockfile asks for, else none. */

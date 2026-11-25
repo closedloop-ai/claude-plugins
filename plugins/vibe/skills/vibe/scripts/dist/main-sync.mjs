@@ -225180,6 +225180,8 @@ function reportOutputsFor(root) {
   return /* @__PURE__ */ new Set([...GENERIC_REPORT_OUTPUTS, ...mainSyncRecipe(root).reportOutputs]);
 }
 function runLeftoverScope(root) {
+  const cleanup = external_exports.object({ generated: external_exports.array(external_exports.string()).default([]) }).passthrough().parse(providerDataOr2(sessionBinding2(root), "recipes", "cleanup", {}));
+  const generated = cleanup.generated.map((source) => new RegExp(source));
   const owners = /* @__PURE__ */ new Set(), runs = /* @__PURE__ */ new Set();
   for (const report of mainSyncRecipe(root).reportOutputs) {
     const run = posix.dirname(report), owner = posix.dirname(run);
@@ -225187,7 +225189,7 @@ function runLeftoverScope(root) {
     runs.add(posix.basename(run));
     if (owner !== ".") owners.add(`${owner}/`);
   }
-  return (file) => [...owners].some((owner) => file.startsWith(owner)) || file.split("/").slice(0, -1).some((segment) => runs.has(segment));
+  return (file) => !generated.some((pattern) => pattern.test(file)) && ([...owners].some((owner) => file.startsWith(owner)) || file.split("/").slice(0, -1).some((segment) => runs.has(segment)));
 }
 function bootstrapFor(root, checkout = root) {
   const declared = mainSyncRecipe(root).bootstrap;
@@ -228318,7 +228320,17 @@ function committedInputs(root) {
 function inspectInputInventory(root) {
   return inspectInventory(root, "standalone").inventory;
 }
-function classifyUntrackedPath(root, file, ignored, headSha, reportOutputs, artifactRoot, leftover) {
+function runLeftovers(root) {
+  const inScope = runLeftoverScope(root);
+  const reportOutputs = reportOutputsFor(root);
+  const artifactRoot = artifactRootOf(root);
+  const headSha = git(root, ["rev-parse", "HEAD"]).trim();
+  return readGitInventory(root, ["ls-files", "--others", "--exclude-standard", "-z", "--ignored"]).split("\0").filter((file) => {
+    const classified = file && inScope(file) ? classifyUntrackedPath(root, file, true, headSha, reportOutputs, artifactRoot) : null;
+    return classified !== null && "unclaimed" in classified;
+  }).sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+}
+function classifyUntrackedPath(root, file, ignored, headSha, reportOutputs, artifactRoot) {
   if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) return null;
   if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) return null;
   if (isPlanFile(root, file)) {
@@ -228341,11 +228353,8 @@ function classifyUntrackedPath(root, file, ignored, headSha, reportOutputs, arti
     return true;
   } };
   if (file.split("/").at(-1)?.startsWith(GENERATED_BIOME_PATH)) return { offender: { input: `unsupported generated-input path ${file}` } };
-  if (ignored && leftover?.(file) && EXECUTABLE_INPUT.test(file)) {
-    return { offender: { message: `Undeclared git-ignored run output is a blocking input: ${file}. Declare it as a recipe report output, or have its test or build command clean it` } };
-  }
   if (!ignored && EXECUTABLE_INPUT.test(file)) return { offender: { input: `uncommitted executable ${file}` } };
-  return null;
+  return ignored && EXECUTABLE_INPUT.test(file) ? { unclaimed: true } : null;
 }
 var BLOCKING_REPORT = "vibe-main-sync-blocking-inputs.json";
 var MAX_REFUSAL_BYTES = 2048;
@@ -228392,15 +228401,14 @@ function inspectInventory(root, completion) {
   const untracked = [];
   const reads = [];
   const artifactRoot = artifactRootOf(root);
-  const leftover = completion === "standalone" ? runLeftoverScope(root) : null;
   for (const ignored of [false, true]) {
     const args = ["ls-files", "--others", "--exclude-standard", "-z", ...ignored ? ["--ignored"] : []];
     for (const file of readGitInventory(root, args).split("\0").filter(Boolean)) {
       if (blocking.has(file) || [...invalidPrivateRoots.keys()].some((parent) => file.startsWith(parent + "/"))) continue;
       untracked.push(file);
-      const classified = classifyUntrackedPath(root, file, ignored, before.headSha, reportOutputs, artifactRoot, leftover);
+      const classified = classifyUntrackedPath(root, file, ignored, before.headSha, reportOutputs, artifactRoot);
       if (classified && "offender" in classified) blocking.set(file, classified.offender);
-      else if (classified) reads.push(classified.read);
+      else if (classified && "read" in classified) reads.push(classified.read);
     }
   }
   const producers = inputProducers(root).filter((producer) => {
@@ -229247,6 +229255,7 @@ export {
   readMainSyncProvenance,
   readMainSyncRemoteInput,
   recordRemoteMainSync,
+  runLeftovers,
   validateMainSync,
   workflowLaneDefinitions
 };

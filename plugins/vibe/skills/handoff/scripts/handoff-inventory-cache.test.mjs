@@ -237,3 +237,27 @@ test("a ticketed override admits an inventory whose only failure is diff rules, 
   assert.match(inventoryGateProblem({ ...blocked, diffRules: { blocking: [] } }, true), /did not pass/, "a diff-rules failure with no named finding is not overridable");
   assert.match(inventoryGateProblem({ ...blocked, blocking: { ...passing, prBody: false } }, true), /did not pass/, "the body check is never overridden");
 });
+
+// GR11-B1: item 144's leftover check lives in the inventory alone; main sync's own inputs pass ignored files (#446).
+test("AC-91 the inventory refuses an undeclared ignored Desktop run output, and a cached inventory never hides it", (t) => {
+  const fixture = setup(t, "leftover");
+  const exclude = path.resolve(fixture.worktree, git(fixture.worktree, ["rev-parse", "--git-common-dir"], fixture.home), "info", "exclude");
+  mkdirSync(path.dirname(exclude), { recursive: true });
+  writeFileSync(exclude, "test-results-e2e/\n", { flag: "a" });
+  const clean = inventory(fixture);
+  assert.equal(clean.json.inventoryCache, "miss");
+  assert.equal(Object.hasOwn(clean.json.blocking, "runLeftoversCleared"), false, "no leftover, no gate");
+  assert.equal(Object.hasOwn(clean.json, "runLeftovers"), false);
+  const leftover = "apps/desktop/test-results-e2e/leftover.json";
+  mkdirSync(path.join(fixture.worktree, path.dirname(leftover)), { recursive: true });
+  writeFileSync(path.join(fixture.worktree, leftover), "{}\n");
+  // A declared report in the same run directory is never a leftover.
+  writeFileSync(path.join(fixture.worktree, "apps/desktop/test-results-e2e/.last-run.json"), "{}\n");
+  const refused = inventory(fixture);
+  assert.equal(refused.json.inventoryCache, "hit", "an ignored file leaves the cached inventory's key unchanged");
+  assert.equal(refused.status, 1);
+  assert.equal(refused.json.ok, false);
+  assert.equal(refused.json.blocking.runLeftoversCleared, false);
+  assert.deepEqual(refused.json.runLeftovers, { paths: [leftover],
+    fix: "Declare each as a recipe report output, or have its test or build command clean it" });
+});

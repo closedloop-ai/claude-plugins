@@ -29,6 +29,7 @@ export { MainSyncError };
 export { workflowLaneDefinitions } from "./main-sync-ci.js";
 export { pathFilteredPullRequestWorkflows } from "./pull-request-workflows.js";
 export { mainSyncFailure } from "./main-sync-failure.js";
+export { runLeftovers } from "./main-sync-checks.js";
 
 /** Reuses bounded stdin input rather than source authority or success claims supplied in argv/task text. */
 export async function readMainSyncInput(worktree: string, stream: NodeJS.ReadableStream = process.stdin) {

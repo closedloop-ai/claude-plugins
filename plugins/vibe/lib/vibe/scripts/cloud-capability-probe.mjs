@@ -40,7 +40,9 @@ export async function measureLaneTools(command = run) {
   const flags = {};
   for (const [name, binary, args, version] of probes) {
     const result = await command(binary, args, 10);
-    flags[name] = result.result === "YES" && version.test(result.output.trim());
+    // The capture merges stderr, where uv prints environment deprecation warnings ahead of the version line.
+    const output = result.output.split("\n").filter((line) => !/^warning: /.test(line)).join("\n").trim();
+    flags[name] = result.result === "YES" && version.test(output);
   }
   return flags;
 }

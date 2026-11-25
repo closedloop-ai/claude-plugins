@@ -154,12 +154,12 @@ test("AC-68 the compact brief runs each workflow lane through the shipped runner
 test("AC-68 workflow lanes whose commit lacks the shipped runner, or holds other bytes, are refused by name, never briefed for the agent to run as root; command lanes still brief",t=>{
   const f=makeHome("compact-refused-");t.after(f.cleanup);
   const workflow="on: pull_request\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo lane\n";
-  const brief=(files,lanes=[{name:"check"}],source=true)=>{
+  const outcomes={kind:"validation-outcomes",branch:"vibe-validation-results/refused",path:".vibe-validation-outcomes-55667788.json"};
+  const brief=(files,lanes=[{name:"check"}],source=true,resultArtifact=outcomes)=>{
     const worktree=mkdtempSync(path.join(f.root,"checkout-"));
     makeCheckout({...f,checkout:worktree,remoteUrl:"https://github.com/example/widgets.git",files:{[workflowPath]:workflow,...files}});
     const commit=git(worktree,["rev-parse","HEAD"],f.home);
-    return validationBrief({provider:"claude",repository:"example/widgets",commit,worktree,branch:"main",model:"fixture-model",lanes,
-      resultArtifact:{kind:"validation-outcomes",branch:"vibe-validation-results/refused",path:".vibe-validation-outcomes-55667788.json"},
+    return validationBrief({provider:"claude",repository:"example/widgets",commit,worktree,branch:"main",model:"fixture-model",lanes,resultArtifact,
       ...(source?{laneSource:{kind:"github-workflow",path:workflowPath,sha256:checksum(workflow),commit}}:{})});
   };
   const shipped=Object.fromEntries(fixtureFiles.map(name=>[tools+"/"+name,readFileSync(path.join(root,tools,name),"utf8")]));
@@ -171,6 +171,11 @@ test("AC-68 workflow lanes whose commit lacks the shipped runner, or holds other
   assert.throws(()=>compactWorkflowBrief({commit:"c".repeat(40)},[],"key",()=>{throw new Error("missing");}),new RegExp(`^Error: ${WORKFLOW_BRIEF_UNAVAILABLE}: `),
     "the brief builder itself refuses; it never returns a fallback");
   assert.match(brief(shipped),/node "\$p\/cloud-workflow-runner\.mjs" <index>/,"the same request with the shipped tools briefs");
+  // ADV-R11-1: a legacy eval artifact (a path and branch, no kind) has no runner route, so even the shipped tools refuse.
+  const legacy={branch:"vibe-eval-results/refused",path:"eval-results/refused.json"};
+  assert.throws(()=>brief(shipped,[{name:"check"}],true,legacy),new RegExp(`^Error: ${WORKFLOW_BRIEF_UNAVAILABLE}: workflow lanes run only through the shipped runner, and the runner reports only machine outcomes, never a legacy result artifact \\(a path and branch with no kind\\); ${managedRoute}$`),
+    "a workflow lane with a legacy result artifact");
+  assert.match(brief({},[{name:"check",command:"node --test"}],false,legacy),/- check: node --test/,"a command lane with a legacy result artifact still briefs");
   assert.match(brief({},[{name:"check",command:"node --test"}],false),/- check: node --test/,"a command lane needs no runner and still briefs");
 });
 
@@ -192,6 +197,10 @@ test("AC-68 a pnpm lane or a managed-host lane never gets the workflow refusal, 
     "a workflow lane on the managed host":validationBrief(request([{name:"check"}],true),managed),
   };
   for (const [name,brief] of Object.entries(briefs)) assert.doesNotMatch(brief,/CLOUD_WORKFLOW_BRIEF_UNAVAILABLE|cloud-workflow-runner/,name);
+  // ADV-R11-2: the host runner runs the managed workflow lane; the agent is never told to perform its steps beside it.
+  assert.match(briefs["a workflow lane on the managed host"],/This request uses the verified non-root lane runner/,"the managed host runs the lane");
+  assert.doesNotMatch(briefs["a workflow lane on the managed host"],/immutable recipes|perform its committed setup\/action steps|run its committed run steps/,
+    "the managed workflow brief never asks the agent to perform the recipe's steps");
   assert.match(briefs["a pnpm lane"],/- typecheck: pnpm --filter widgets typecheck/,"the pnpm lane is briefed as its own command");
 });
 

@@ -21,6 +21,7 @@ import { pathGateTests } from "./path-gates.mjs";
 import { checkComparators, checkDuplicateHelpers, checkOrphanedTypeMembers, checkParserLayoutProof, checkRangeParamCopies, checkRenderedCopyAssertions, checkStoragePrefixCopies, checkUnusedExports } from "./review-gap-rules.mjs";
 import { checkDisplayNameSqlOwners, checkOrphanedHookNames, checkOrphanedModules, checkRetainedContractComments, checkTieBreakerFixtureReach } from "./removal-review-rules.mjs";
 import { checkStoryStateCoverage } from "./story-coverage-rules.mjs";
+import { checkActivityCapture, checkLinkDeletes, checkMigrations, checkTransactions, SQL_CREATE_TABLE } from "./storage-write-rules.mjs";
 import { checkCommentRules, citationPattern, commentBody } from "./comment-rules.mjs";
 import { sharedComponentTests } from "./shared-consumers.mjs";
 import { checkSpecChanges } from "./spec-rules.mjs";
@@ -42,15 +43,6 @@ import { vibeCore } from "../../../shared/vibe-core.mjs";
 const { git } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 const { providerDataOr, sessionBinding, ticketReference } = await vibeCore("lib/vibe/scripts/provider.mjs");
 
-const SQL_TABLE_TOUCH = /\b(?:CREATE\s+(?:UNIQUE\s+)?INDEX\b[^;]*?\bON\s+(?:ONLY\s+)?|ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?|(?<!\bON\s{1,10})UPDATE\s+)"?(\w+)"?/gi;
-const SQL_CREATE_TABLE = /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"?(\w+)"?/gi;
-const SQL_UPDATE_STATEMENT = /(?<!\bON\s{1,10})\bUPDATE\s+"?(\w+)"?[^;]*;/gi;
-const ARTIFACT_WRITE = /\.artifact\.(?:update|updateMany|upsert)\(|\bUPDATE\s+"?artifacts"?\s/i;
-const CAPTURED_FIELD = /\b(?:status|priority|assigneeId|approverId|projectId|title|dueDate)\s*:|"(?:status|priority|assignee_id|approver_id|project_id|title|due_date)"\s*=/;
-const CAPTURE_CALL = /\bcapture[A-Z]\w*\(/;
-const TX_OPEN = /withDb\.tx\(/g;
-const TX_WRITE = /\btx\.(?:\w+\.(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\(|\$executeRaw)/;
-const RESULT_ERR_RETURN = /\breturn\s+(?:Result\.)?err\(/;
 const BATCH_LIMIT_SIGNAL = /\b(?:BATCH|BULK)[A-Z0-9_]*LIMIT\b|\b(?:batch|bulk)\s+limit\b/i;
 const SET_TRANSFORM_SIGNAL = /\b(?:collapse|dedupe|deduplicate|normaliz|distinct|unique)[A-Za-z0-9_]*\b/i;
 // A collection of ids on the transform line or the two added lines after it (a wrapped call): `selectedIds`,
@@ -59,8 +51,6 @@ const SET_TRANSFORM_SIGNAL = /\b(?:collapse|dedupe|deduplicate|normaliz|distinct
 const ID_COLLECTION_SIGNAL = /[a-z0-9_](?:Ids|IDs|UUIDs|Uuids)\b|\b(?:ids|uuids|IDs|UUIDs|selection)\b/;
 const TRANSACTION_SCALE_RECORD = /^\s*(?:[-*]\s+)?Transaction scale:\s*(\S+):\s*limit\s+\d+;\s*duration\s+\d+(?:\.\d+)?ms;\s*timeout\s+\d+ms;\s*ambient timeout\s+(?:honored|ignored);\s*lock hold\s+\d+(?:\.\d+)?ms;\s*test\s+(\S+)\s*$/im;
 const INPUT_SET_RECORD = /^\s*(?:[-*]\s+)?Input set:\s*(\S+):(?=[^\n]*\border permutations\b)(?=[^\n]*\bcase\b)(?=[^\n]*\bduplicates\b)(?=[^\n]*\bwhitespace\b)[^\n]*;\s*test\s+(\S+)\s*$/gim;
-const LINK_DELETE = /\.artifactLink\.deleteMany\(|\bDELETE\s+FROM\s+"?artifact_links"?/i;
-const LINK_EDGE_KEYS = [/\bsourceId\b|\bsource_id\b/, /\btargetId\b|\btarget_id\b/, /\blinkType\b|\blink_type\b/];
 const SYNC_TABLE = /outbox|sync/i;
 const HAND_ROLLED_BACKOFF = /\*\*\s*\(?\s*\w*(?:attempt|retry|retries|n)\b/i;
 const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*)/;
@@ -81,7 +71,6 @@ const FORBIDDEN_REFERENCE = /^(?:AGENTS|CLAUDE|AGENTS\.override)\.md$/;
 const STORY_ID_WORD = /[A-Z]{2,}(?=[A-Z][a-z]|\b|\d)|[A-Z]?[a-z]+|[A-Z]|\d+/g;
 const HARNESS_NAME = /harness|adapter/i;
 const EXPECT_CALL = /\bexpect\(/;
-const WINDOW = 25;
 const COPY_FILE = /\.[jt]sx$/;
 const UI_PATH = /\.(?:[jt]sx|css|scss|sass|less|html?|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|eot|mp4|webm|og[gv]|mp3|wav)$/i;
 const COPY_LITERALS = [
@@ -201,7 +190,11 @@ export function evaluateDiff(changedFiles, changeLog, repo, phase = "pull-reques
     add("shared-path", file.path, file.added[0]?.line ?? 1, "changes a shared read or write path without recorded evidence that existing callers are unchanged", "record `Shared path: <path>: unchanged for existing callers; evidence: <test or missing test entry with legacy fixtures>` or `...: changed; ruling: <human source>`");
   }
   const fileFindings = (group, file, source, check) => {
-    const compute = () => { const outcomes = []; check((rule, file, line, problem, fix) => outcomes.push({ rule, file, line, problem, fix })); return outcomes; };
+    const compute = () => {
+      const outcomes = [];
+      check((rule, file, line, problem, fix) => outcomes.push({ rule, file, line, problem, fix }));
+      return outcomes;
+    };
     blocking.push(...(fileRuleCache ? fileRuleCache.findings(group, file, source, compute) : compute()));
   };
   for (const file of live.filter((entry) => SCRIPT_FILE.test(entry.path) && !isTestFile(entry.path))) {
@@ -420,98 +413,6 @@ function checkSharedCapabilityOwners(files, changeLog, repo, add, { slugSource }
         const line = file.added.find((entry) => entry.line >= imported.start && entry.line <= imported.end)?.line ?? imported.start;
         add("shared-capability-owner", file.path, line, `${name} is composed directly by ${composers.length} page-level adapters instead of one shared parent`, `move ${name} into one shared parent and make every consumer inherit it; only an explicit ruling for separate compositions may record \`Shared capability exception: ${name}: <ticket ruling or operator ruling>\``);
       }
-    }
-  }
-}
-
-function checkMigrations(files, repo, logged, add, requiredChecks) {
-  const { migrations } = repo.rules;
-  let touched = false;
-  for (const file of files) {
-    const match = migrations.server?.exec(file.path);
-    if (!match && !migrations.desktop?.test(file.path)) {
-      continue;
-    }
-    touched = true;
-    if (!match || file.status !== "A") {
-      continue;
-    }
-    const sql = repo.head(file.path) ?? "";
-    const created = new Set([...sql.matchAll(SQL_CREATE_TABLE)].map((found) => found[1]));
-    const existing = new Set([...sql.matchAll(SQL_TABLE_TOUCH)].map((found) => found[1]).filter((table) => !created.has(table)));
-    for (const table of existing) {
-      if (!logged(`Migration precedent: ${table}:`)) {
-        add("migration-precedent", file.path, 1, `changes existing table ${table} without a recorded lock-strategy precedent`, `copy the last three migrations on ${table} and record \`Migration precedent: ${table}: <folders>\``);
-      }
-    }
-    for (const update of sql.matchAll(SQL_UPDATE_STATEMENT)) {
-      if (!/\bWHERE\b/i.test(update[0]) && !logged(`Migration precedent: ${update[1]}:`)) {
-        add("migration-backfill", file.path, 1, `full-table UPDATE of ${update[1]} in a schema migration`, `move or bound the backfill as ${update[1]}'s precedent does, and record \`Migration precedent: ${update[1]}: <folders>\``);
-      }
-    }
-  }
-  if (touched) {
-    requiredChecks.push(...migrations.checks.map(({ command, reason }) => ({ command, reason })));
-  }
-}
-
-function headWindow(head, line) {
-  return head.split("\n").slice(line - 1, line - 1 + WINDOW).join("\n");
-}
-
-function checkActivityCapture(file, head, logged, add, { fix }) {
-  if (CAPTURE_CALL.test(head) || logged("Activity capture:", file.path)) {
-    return;
-  }
-  for (const entry of file.added) {
-    if (ARTIFACT_WRITE.test(entry.text) && CAPTURED_FIELD.test(headWindow(head, entry.line))) {
-      add("activity-capture", file.path, entry.line, "writes a captured artifact field with no capture call in the file", fix);
-    }
-  }
-}
-
-/** Line ranges (1-based, inclusive) of each `withDb.tx(` callback body in `head`. */
-export function transactionBodies(head) {
-  const bodies = [];
-  const lineAt = lineIndex(head);
-  for (const open of head.matchAll(TX_OPEN)) {
-    const start = head.indexOf("{", open.index);
-    if (start < 0) {
-      continue;
-    }
-    let depth = 0;
-    for (let index = start; index < head.length; index += 1) {
-      depth += head[index] === "{" ? 1 : head[index] === "}" ? -1 : 0;
-      if (depth === 0) {
-        bodies.push([lineAt(start), lineAt(index)]);
-        break;
-      }
-    }
-  }
-  return bodies;
-}
-
-function checkTransactions(file, head, add) {
-  const lines = head.split("\n");
-  const added = new Set(file.added.map((entry) => entry.line));
-  for (const [first, last] of transactionBodies(head)) {
-    let wroteAt = 0;
-    for (let line = first; line <= last; line += 1) {
-      const text = lines[line - 1] ?? "";
-      if (TX_WRITE.test(text)) {
-        wroteAt ||= line;
-      } else if (wroteAt && RESULT_ERR_RETURN.test(text) && (added.has(line) || added.has(wroteAt))) {
-        add("tx-result-after-write", file.path, line, `returns an error after the write at line ${wroteAt}, so the transaction commits a partial change`, "validate before the first write, or throw so withDb.tx rolls back");
-      }
-    }
-  }
-}
-
-function checkLinkDeletes(file, head, add) {
-  for (const entry of file.added.filter((item) => LINK_DELETE.test(item.text))) {
-    const window = headWindow(head, entry.line);
-    if (!LINK_EDGE_KEYS.every((key) => key.test(window))) {
-      add("artifact-link-delete", file.path, entry.line, "deletes artifact links not scoped to sourceId, targetId and linkType", "delete only the exact edge the write replaces");
     }
   }
 }
@@ -928,7 +829,10 @@ export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), i
   repo.tableRows = sessionTableRows(worktree);
   repo.currentHead = () => git(worktree, ["rev-parse", "HEAD"]);
   repo.receiptDir = path.dirname(logFile);
-  repo.surfaceProofs = () => { const evidence = path.join(repo.receiptDir, "vibe-pr-evidence.json"); return existsSync(evidence) ? JSON.parse(readFileSync(evidence, "utf8")) : null; };
+  repo.surfaceProofs = () => {
+    const evidence = path.join(repo.receiptDir, "vibe-pr-evidence.json");
+    return existsSync(evidence) ? JSON.parse(readFileSync(evidence, "utf8")) : null;
+  };
   return evaluateDiff(files, log, repo, phase, fileRuleCache);
 }
 

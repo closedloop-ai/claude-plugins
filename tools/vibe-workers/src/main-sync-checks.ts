@@ -57,12 +57,33 @@ export function inspectInputInventory(root: string) {
   return inspectInventory(root, "standalone").inventory;
 }
 
-/** What one untracked or ignored path is: a blocking offender, a read deferred until no path blocks, or neither. */
-type Classified = { offender: Offender } | { read: () => boolean } | null;
+/**
+ * Item 144's run leftover check (AC-91), for the handoff inventory alone: each undeclared git-ignored executable a run
+ * left in the recipe's run scope, in byte order. Main sync's own inputs, preparation and recheck pass every ignored file
+ * (#446), since an ignored file is never a validation input.
+ */
+export function runLeftovers(root: string): string[] {
+  const inScope = runLeftoverScope(root);
+  const reportOutputs = reportOutputsFor(root);
+  const artifactRoot = artifactRootOf(root);
+  const headSha = git(root, ["rev-parse", "HEAD"]).trim();
+  return readGitInventory(root, ["ls-files", "--others", "--exclude-standard", "-z", "--ignored"]).split("\0")
+    .filter((file) => {
+      const classified = file && inScope(file) ? classifyUntrackedPath(root, file, true, headSha, reportOutputs, artifactRoot) : null;
+      return classified !== null && "unclaimed" in classified;
+    })
+    .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+}
+
+/**
+ * What one untracked or ignored path is: a blocking offender, a read deferred until no path blocks, an ignored
+ * executable no rule claims, or nothing to check.
+ */
+type Classified = { offender: Offender } | { read: () => boolean } | { unclaimed: true } | null;
 
 /** Classify one candidate while retaining the existing producer, private input and report checks; nothing is read here. */
 function classifyUntrackedPath(root: string, file: string, ignored: boolean, headSha: string, reportOutputs: ReadonlySet<string>,
-  artifactRoot: string | null, leftover: ((file: string) => boolean) | null): Classified {
+  artifactRoot: string | null): Classified {
   if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) return null;
   if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) return null;
   if (isPlanFile(root, file)) {
@@ -80,14 +101,10 @@ function classifyUntrackedPath(root: string, file: string, ignored: boolean, hea
   if (ignored && file === GENERATED_BIOME_PATH) return { read: () => { verifyGeneratedBiomeInput(root, headSha); return true; } };
   // A name in the generated-input family is checked against its producer contract wherever it sits.
   if (file.split("/").at(-1)?.startsWith(GENERATED_BIOME_PATH)) return { offender: { input: `unsupported generated-input path ${file}` } };
-  // The inventory alone refuses an undeclared ignored executable a run left in its scope (AC-91); main sync's
-  // validation inputs (`committedInputs`) pass it, since an ignored file is never one.
-  if (ignored && leftover?.(file) && EXECUTABLE_INPUT.test(file)) {
-    return { offender: { message: `Undeclared git-ignored run output is a blocking input: ${file}. Declare it as a recipe report output, or have its test or build command clean it` } };
-  }
   // A git-ignored file is never a validation input: only an untracked one can differ from HEAD.
   if (!ignored && EXECUTABLE_INPUT.test(file)) return { offender: { input: `uncommitted executable ${file}` } };
-  return null;
+  // Main sync passes it; the inventory's run leftover check reads it.
+  return ignored && EXECUTABLE_INPUT.test(file) ? { unclaimed: true } : null;
 }
 
 const BLOCKING_REPORT = "vibe-main-sync-blocking-inputs.json";
@@ -141,15 +158,14 @@ function inspectInventory(root: string, completion: "standalone" | "origin") {
   // Both listings are classified first, so one refusal reports every offender; files are read only after none.
   const reads: (() => boolean)[] = [];
   const artifactRoot = artifactRootOf(root);
-  const leftover = completion === "standalone" ? runLeftoverScope(root) : null;
   for (const ignored of [false, true]) {
     const args = ["ls-files", "--others", "--exclude-standard", "-z", ...(ignored ? ["--ignored"] : [])];
     for (const file of readGitInventory(root, args).split("\0").filter(Boolean)) {
       if (blocking.has(file) || [...invalidPrivateRoots.keys()].some(parent => file.startsWith(parent + "/"))) continue;
       untracked.push(file);
-      const classified = classifyUntrackedPath(root, file, ignored, before.headSha, reportOutputs, artifactRoot, leftover);
+      const classified = classifyUntrackedPath(root, file, ignored, before.headSha, reportOutputs, artifactRoot);
       if (classified && "offender" in classified) blocking.set(file, classified.offender);
-      else if (classified) reads.push(classified.read);
+      else if (classified && "read" in classified) reads.push(classified.read);
     }
   }
   const producers = inputProducers(root).filter(producer => {

@@ -6,11 +6,11 @@
 // the private directory prepareWorkflowPlan wrote (lanes.json, lane-<index>.json and reporter-spec).
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cloudHostEnvironment, hostNetworkEnvironment, ownTree, PACKAGE_REPAIR_FILE, runLaneGroup, runsAsScript, validationHostActor } from "./cloud-validation-host.mjs";
+import { cloudHostEnvironment, HOST_NETWORK, hostNetworkEnvironment, ownTree, PACKAGE_REPAIR_FILE, runLaneGroup, runsAsScript, validationHostActor } from "./cloud-validation-host.mjs";
 
 export const WORKFLOW_NOT_RUN = "CLOUD_WORKFLOW_NOT_RUN";
 // The managed host's per-lane limit, for a job that sets none.
@@ -29,6 +29,9 @@ const ACTIONS = new Map([
 // (so an entry still being written, named with ".new", is never read) and stops working for everyone if one fails to
 // parse, so each entry passes `visudo -c` before it takes its name.
 export const SUDOERS_DIRECTORY = "/etc/sudoers.d";
+// A lane's entry, named for the runner process that wrote it; a pending one ends in ".new".
+const LANE_ENTRY = /^vibe-workflow-lane-([1-9]\d*)-[0-9a-f]{8}(?:\.new)?$/;
+const RELEASE_SIGNALS = ["SIGTERM", "SIGINT"];
 
 class Refusal extends Error {}
 const refuse = (reason) => { throw new Refusal(reason); };
@@ -72,24 +75,52 @@ function visudoCheck(file) {
  * the actor's sudo fails (no sudo, no include of the directory, a "no new privileges" flag), the lane is refused by name
  * and no step runs: a lane never falls back to root.
  */
-export function grantActorSudo({ actor, run, cwd, env, directory = SUDOERS_DIRECTORY, check = visudoCheck }) {
+export function grantActorSudo({ actor, run, cwd, env, directory = SUDOERS_DIRECTORY, check = visudoCheck, alive = processAlive, signals = process }) {
   const unavailable = (why) => refuse(`root setup: the actor's passwordless sudo is unavailable: ${why}`);
   if (!existsSync(directory)) unavailable(`${directory} does not exist`);
+  // A runner killed before its release left its entry, and the next lane's grant removes it (ADV-R11-4).
+  for (const name of readdirSync(directory)) {
+    const pid = Number(LANE_ENTRY.exec(name)?.[1]);
+    if (pid > 1 && pid !== process.pid && !alive(pid)) rmSync(path.join(directory, name), { force: true });
+  }
   const entry = path.join(directory, `vibe-workflow-lane-${process.pid}-${randomBytes(4).toString("hex")}`), pending = `${entry}.new`;
   try {
-    writeFileSync(pending, `#${actor.uid} ALL=(ALL:ALL) NOPASSWD: ALL\n`, { flag: "wx", mode: 0o440 });
+    // sudo resets a command's environment, so the actor's sudo keeps the host's CA and proxy settings its step has.
+    writeFileSync(pending, actorSudoers(actor.uid), { flag: "wx", mode: 0o440 });
     chmodSync(pending, 0o440);
     const checked = check(pending);
     if (checked.exitCode !== 0) unavailable(`visudo refused the entry: ${checked.detail}`);
     renameSync(pending, entry);
   } finally { rmSync(pending, { force: true }); }
-  const release = () => rmSync(entry, { force: true });
+  // A SIGTERM or SIGINT removes the grant before the runner exits; Node runs the handler once a running step returns.
+  function released(signal) { release(); process.exit(128 + os.constants.signals[signal]); }
+  function release() {
+    rmSync(entry, { force: true });
+    for (const signal of RELEASE_SIGNALS) signals.off(signal, released);
+  }
+  for (const signal of RELEASE_SIGNALS) signals.on(signal, released);
   const proof = run("sudo", ["-n", "true"], { cwd, env, ...actor, stdio: ["ignore", "pipe", "pipe"] }, { timeout: 60_000 });
   if (proof.exitCode !== 0) {
     release();
     unavailable(`the actor's sudo -n true exited ${proof.exitCode ?? "without a code"}: ${oneLine(proof.stderrTail || proof.diagnosis)}`);
   }
   return release;
+}
+
+/** The actor's sudoers entry: passwordless sudo, keeping the host's CA and proxy settings through sudo's reset. */
+export function actorSudoers(uid) {
+  return `#${uid} ALL=(ALL:ALL) NOPASSWD: ALL\nDefaults:#${uid} env_keep += "${HOST_NETWORK.join(" ")}"\n`;
+}
+
+/** Whether a process lives, by a probe that sends no signal; one this process may not signal (EPERM) lives. */
+function processAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; }
+}
+
+/** A step's CA and proxy settings, its proxy URLs without userinfo: no proxy credential reaches commit code (V11-5). */
+export function stepNetworkEnvironment(current) {
+  return Object.fromEntries(Object.entries(hostNetworkEnvironment(current)).map(([key, value]) =>
+    [key, /^https?_proxy$/i.test(key) ? value.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/?#]*@/i, "$1") : value]));
 }
 
 /** A job or step condition for a pull request validation; one with no status function implies success(), as in CI. */
@@ -231,8 +262,8 @@ function runLane({ checkout, commit, definition, work, base = null, uid, gid, en
   const github = { CI: "true", GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request", GITHUB_BASE_REF: base ?? "",
     GITHUB_WORKSPACE: clone, RUNNER_OS: "Linux", RUNNER_TEMP: path.join(home, "runner-temp") };
   // Every step is the actor's, installs included, so the actor reaches the registries with the host's own network
-  // settings, as GitHub's runner user does (its sudo could read them anyway).
-  const host = { ...cloudHostEnvironment(environment, home, home), ...hostNetworkEnvironment(environment) };
+  // settings, as GitHub's runner user does, its sudo keeps them, and a proxy URL's userinfo never reaches a step.
+  const host = { ...cloudHostEnvironment(environment, home, home), ...stepNetworkEnvironment(environment) };
   const env = { ...strings(workflow.env), ...strings(job.env) };
   const bins = [];
   const deadline = now() + (job["timeout-minutes"] ?? JOB_MINUTES) * 60_000;

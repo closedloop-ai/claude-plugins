@@ -811,7 +811,7 @@ export function validationBrief(request, managedHost = null, provedBranch = null
   const branch = provedBranch ?? request.branch;
   const legacyArtifact = artifact && !outcomeArtifact(request);
   const subject = {...request,repository:requireRepository(request)};
-  const compact = resolved.laneSource && !managedHost && !legacyArtifact ? compactWorkflowBrief(subject,resolved.lanes,requestKey,file=>committedFile(request.worktree,request.commit,file)) : null;
+  const compact = resolved.laneSource && !managedHost ? compactWorkflowBrief(subject,resolved.lanes,requestKey,file=>committedFile(request.worktree,request.commit,file),legacyArtifact) : null;
   const finish = legacyArtifact
     ? [
       `The full eval result must exist at \`${artifact.path}\`. It is the only tracked file this validation may change. Refuse if it is missing, malformed JSON, or named auth.json.`,
@@ -824,9 +824,6 @@ export function validationBrief(request, managedHost = null, provedBranch = null
     `Check out the exact commit: run \`git fetch origin refs/heads/${branch}\`, then \`git checkout --detach ${request.commit}\`, then confirm \`git rev-parse HEAD\` prints ${request.commit}. If it does not, run no lane and report the commit you have.`,
     `After checkout, run \`${PROVENANCE_COMMAND}\` as one call, exactly as written, and keep its four lines.`,
     ...(managedHost || compact ? [] : [installInstruction(request)]),
-    ...(resolved.laneSource && !compact ? [
-      `The lanes below are immutable recipes read from ${resolved.laneSource.path} at ${resolved.laneSource.commit} (SHA-256 ${resolved.laneSource.sha256}), not caller shell. For each recipe, apply its workflow/job environment, defaults, matrix row, working directories and conditions; perform its committed setup/action steps, then run its committed run steps in order. Refuse rather than substitute or omit an unsupported step.`,
-    ] : []),
     compact?.start ?? (managedHost ? cloudHostInstruction(managedHost, { lanes: resolved.lanes, commit: request.commit, reporter: legacyArtifact ? null : hostReporter(subject, resolved.lanes, requestKey) })
       : "Run each lane once, in order, from the repository root, and record its exit code. A failing lane does not stop the others:\n" + resolved.lanes.map((lane) => `- ${lane.name}: ${lane.cloudFrozen ?? lane.cloudE2E ?? lane.command}`).join("\n")),
     ...(resolved.lanes.some((lane) => lane.capabilityProbe || lane.cloudFrozen) ? [

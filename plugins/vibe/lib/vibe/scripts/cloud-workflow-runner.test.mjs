@@ -183,6 +183,10 @@ test("AC-68 a refused grant runs no step, a lane refused after the grant still r
   assert.deepEqual(own, { calls: 2, events: [], error: null }, "a non-root runner runs every step as itself and grants nothing");
 });
 
+// ADV-R11-3: sudo resets a command's environment, so the entry keeps the host's CA and proxy names through it.
+const ENTRY_65534 = "#65534 ALL=(ALL:ALL) NOPASSWD: ALL\nDefaults:#65534 env_keep += \"NODE_EXTRA_CA_CERTS SSL_CERT_FILE SSL_CERT_DIR REQUESTS_CA_BUNDLE " +
+  "CURL_CA_BUNDLE GIT_SSL_CAINFO NODE_USE_SYSTEM_CA UV_NATIVE_TLS UV_SYSTEM_CERTS HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy\"\n";
+
 test("AC-68 the grant: one checked 0440 entry per lane for the actor's uid, proved by the actor's own sudo -n true, removed by its release, and refused by name when anything fails", (t) => {
   const f = makeHome("sudoers-grant-");
   t.after(f.cleanup);
@@ -192,12 +196,15 @@ test("AC-68 the grant: one checked 0440 entry per lane for the actor's uid, prov
   const checked = [], ran = [];
   const check = (file) => { checked.push([path.basename(file), readFileSync(file, "utf8"), statSync(file).mode & 0o777]); return { exitCode: 0, detail: "" }; };
   const run = (command, args, options) => { ran.push([command, args, options.uid, options.gid, readdirSync(directory)]); return PASS; };
+  const listeners = () => ["SIGTERM", "SIGINT"].map((signal) => process.listenerCount(signal));
+  const before = listeners();
   const release = grantActorSudo({ actor, run, cwd: f.root, env: { PATH: "/usr/bin:/bin" }, directory, check });
+  assert.deepEqual(listeners(), before.map((count) => count + 1), "the grant releases itself on SIGTERM and SIGINT");
   const [entry] = readdirSync(directory);
   assert.match(entry, /^vibe-workflow-lane-\d+-[0-9a-f]{8}$/, "a name with no dot, which sudo reads");
-  assert.equal(readFileSync(path.join(directory, entry), "utf8"), "#65534 ALL=(ALL:ALL) NOPASSWD: ALL\n");
+  assert.equal(readFileSync(path.join(directory, entry), "utf8"), ENTRY_65534);
   assert.equal(statSync(path.join(directory, entry)).mode & 0o777, 0o440);
-  assert.deepEqual(checked, [[`${entry}.new`, "#65534 ALL=(ALL:ALL) NOPASSWD: ALL\n", 0o440]], "visudo checks the entry under a name sudo skips, before it takes its own");
+  assert.deepEqual(checked, [[`${entry}.new`, ENTRY_65534, 0o440]], "visudo checks the entry under a name sudo skips, before it takes its own");
   assert.deepEqual(ran, [["sudo", ["-n", "true"], 65534, 65534, [entry]]], "the actor's own sudo -n true proves the installed entry");
   const second = grantActorSudo({ actor, run, cwd: f.root, env: {}, directory, check });
   assert.equal(readdirSync(directory).length, 2, "each lane has its own entry");
@@ -205,6 +212,7 @@ test("AC-68 the grant: one checked 0440 entry per lane for the actor's uid, prov
   assert.equal(readdirSync(directory).length, 1, "one lane's release leaves another lane's grant");
   second();
   assert.deepEqual(readdirSync(directory), []);
+  assert.deepEqual(listeners(), before, "a released grant leaves no signal handler");
   const unavailable = /^Error: root setup: the actor's passwordless sudo is unavailable: /;
   assert.throws(() => grantActorSudo({ actor, run, cwd: f.root, env: {}, directory, check: () => ({ exitCode: 1, detail: "parse error" }) }),
     new RegExp(unavailable.source + "visudo refused the entry: parse error$"));
@@ -214,6 +222,27 @@ test("AC-68 the grant: one checked 0440 entry per lane for the actor's uid, prov
   assert.deepEqual(readdirSync(directory), [], "a refused grant leaves no entry and no pending file");
   assert.throws(() => grantActorSudo({ actor, run, cwd: f.root, env: {}, directory: path.join(f.root, "missing"), check }),
     new RegExp(unavailable.source + ".*missing does not exist$"));
+  assert.deepEqual(listeners(), before, "a refused grant leaves no signal handler");
+});
+
+test("AC-68 a grant first removes each lane entry whose runner is gone, and keeps a live runner's, pid 1's and any other file (ADV-R11-4)", (t) => {
+  const f = makeHome("sudoers-sweep-");
+  t.after(f.cleanup);
+  const directory = path.join(f.root, "sudoers.d");
+  mkdirSync(directory);
+  const planted = ["vibe-workflow-lane-4242-0badf00d", "vibe-workflow-lane-4242-0badf00d.new", "vibe-workflow-lane-4343-c0ffee00",
+    "vibe-workflow-lane-1-00000001", `vibe-workflow-lane-${process.pid}-00000002`, "vibe-workflow-lane-0424-00000003", "vibe-workflow-lane-x-00000004", "other"];
+  for (const name of planted) writeFileSync(path.join(directory, name), "");
+  const probed = [];
+  const alive = (pid) => { probed.push(pid); return pid === 4343; };
+  const release = grantActorSudo({ actor: { uid: 65534, gid: 65534 }, run: () => PASS, cwd: f.root, env: {}, directory, alive,
+    check: () => ({ exitCode: 0, detail: "" }) });
+  const granted = readdirSync(directory).filter((name) => !planted.includes(name));
+  assert.equal(granted.length, 1, "this lane's own entry");
+  assert.deepEqual(readdirSync(directory).filter((name) => planted.includes(name)).sort(), ["other", "vibe-workflow-lane-0424-00000003",
+    "vibe-workflow-lane-1-00000001", "vibe-workflow-lane-4343-c0ffee00", `vibe-workflow-lane-${process.pid}-00000002`, "vibe-workflow-lane-x-00000004"].sort());
+  assert.deepEqual(probed.sort(), [4242, 4242, 4343], "only a runner pid above 1, never this runner's, is probed");
+  release();
 });
 
 test("AC-68 setup-node and setup-uv install the host's tools into the lane, first on its PATH, and refuse a version the host lacks", (t) => {
@@ -326,12 +355,14 @@ test("AC-68 the runner command: every segment of a chained step runs as the acto
   const asRoot = process.getuid() === 0, actor = asRoot ? "65534" : String(process.getuid());
   const chained = 'echo "a $(id -u)"; echo "b $(id -u)" || true\nfalse || echo "c $(id -u)"\necho x | { read -r _; echo "d $(id -u)"; }\necho "e $(echo inner | (id -u))"';
   // Only a root runner grants sudo; a non-root host's own sudo is not the runner's to prove.
-  const sudo = asRoot ? [{ run: 'echo "sudo $(sudo -n id -u)"; sudo -n true && echo "after $(id -u)"' }] : [];
-  const { runner, leftover } = runnerCommand(f, [job([{ uses: "actions/checkout@v4" }, { run: chained }, ...sudo])]);
+  // As root the real sudoers entry also keeps the step's proxy, without its userinfo, through sudo (ADV-R11-3, V11-5).
+  const sudo = asRoot ? [{ run: 'echo "sudo $(sudo -n id -u)"; sudo -n true && echo "after $(id -u)"; echo "kept $(sudo -n printenv HTTPS_PROXY)"' }] : [];
+  const { runner, leftover } = runnerCommand(f, [job([{ uses: "actions/checkout@v4" }, { run: chained }, ...sudo])], null,
+    asRoot ? { HTTPS_PROXY: "http://user:secret@proxy.invalid:3128" } : {});
   const ran = runner("0");
   assert.equal(ran.status, 0, ran.stderr);
-  assert.deepEqual(ran.stdout.split("\n").filter((line) => /^[a-e] |^sudo |^after /.test(line)),
-    [`a ${actor}`, `b ${actor}`, `c ${actor}`, `d ${actor}`, `e ${actor}`, ...(asRoot ? ["sudo 0", "after 65534"] : [])],
+  assert.deepEqual(ran.stdout.split("\n").filter((line) => /^[a-e] |^sudo |^after |^kept /.test(line)),
+    [`a ${actor}`, `b ${actor}`, `c ${actor}`, `d ${actor}`, `e ${actor}`, ...(asRoot ? ["sudo 0", "after 65534", "kept http://proxy.invalid:3128"] : [])],
     "';', '||', '|', a subshell and '$(...)' all run as the actor; as root, sudo reaches root and the next command is the actor again");
   if (asRoot) assert.equal(readFileSync(leftover, "utf8"), "", "the lane's sudoers entry is removed when the lane ends");
 });
@@ -397,6 +428,21 @@ test("AC-68 a workflow step's environment carries the host's CA and proxy settin
     sudo: (grant) => { grants.push(grant.env); return () => {}; }, run: () => PASS });
   assert.equal(grants.length, 1, "a root runner proves the actor's sudo once");
   carriesOnlyCaAndProxy(grants[0], "the actor's sudo -n true");
+});
+
+test("AC-68 a step's proxy URLs and the actor's sudo proof never carry a proxy URL's userinfo (V11-5)", (t) => {
+  const f = lane(t), envs = [];
+  const proxies = { HTTP_PROXY: "http://user:secret@proxy.invalid:3128", HTTPS_PROXY: "https://tokenvalue@proxy.invalid:3129/",
+    http_proxy: "http://proxy.invalid:3128", https_proxy: "HTTP://name:pass@proxy.invalid", NO_PROXY: "localhost,127.0.0.1" };
+  runWorkflowLane({ checkout: f.checkout, commit: f.commit, work: f.work, definition: job([{ run: "true" }]), uid: 0, gid: 0,
+    environment: { PATH: "/usr/bin:/bin", ...proxies }, provision: () => {}, log: () => {},
+    sudo: (grant) => { envs.push(grant.env); return () => {}; }, run: (command, args, options) => { envs.push(options.env); return PASS; } });
+  assert.equal(envs.length, 2, "the actor's sudo proof and the one step");
+  for (const env of envs) {
+    assert.deepEqual([env.HTTP_PROXY, env.HTTPS_PROXY, env.http_proxy, env.https_proxy, env.NO_PROXY],
+      ["http://proxy.invalid:3128", "https://proxy.invalid:3129/", "http://proxy.invalid:3128", "HTTP://proxy.invalid", "localhost,127.0.0.1"]);
+    assert.deepEqual(Object.entries(env).filter(([, value]) => /secret|tokenvalue|name:pass/.test(String(value))).map(([name]) => name), []);
+  }
 });
 
 test("AC-68 every lane step runs under umask 022 as on GitHub's runner, whatever the agent's shell sets, and the caller's umask comes back", (t) => {

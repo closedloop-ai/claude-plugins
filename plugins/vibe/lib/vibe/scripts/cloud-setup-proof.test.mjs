@@ -92,6 +92,12 @@ test("AC-102 measures selected executables and exact required language versions;
   for (const state of ["install ok installed\ninstall ok unpacked", "install ok unpacked\ninstall ok unpacked", "install ok installed"]) {
     assert.equal((await observe([state, ...stdout.slice(1)])).zsh, false, state);
   }
+  // ISS-14476 cse_0197q288: the cloud sets UV_NATIVE_TLS, so uv prints its deprecation warning on the merged capture
+  // ahead of the interpreter's version; the warning is not the version line, and a warning alone is no version.
+  const warning = "warning: The `UV_NATIVE_TLS` environment variable is deprecated and will be removed in a future release. Use `UV_SYSTEM_CERTS` instead.";
+  assert.equal((await observe([stdout[0], stdout[1], `${warning}\nPython 3.13.14`, ...stdout.slice(3)])).python313, true);
+  assert.equal((await observe([stdout[0], stdout[1], `${warning}\nPython 3.12.0`, ...stdout.slice(3)])).python313, false);
+  assert.equal((await observe([stdout[0], stdout[1], warning, ...stdout.slice(3)])).python313, false);
 });
 
 test("ISS-14476 setup finishes interrupted dpkg configuration with no prompt, installs zsh unless both packages are configured, and fails loudly", (t) => {

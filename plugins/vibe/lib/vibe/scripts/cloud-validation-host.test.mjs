@@ -216,6 +216,43 @@ test("AC-101 the host probe runs its actor checks with node from the actor's PAT
   assert.equal(runtime.checks.nonRoot, true);
 });
 
+test("AC-101 the host probe fetches the pinned Playwright as root with the host network and the actor launches it offline; chromium1254 is the revision alone (chromium false in cse_0197q288)", (t) => {
+  const f = makeHome("host-browser-"); t.after(f.cleanup);
+  const directory = path.join(f.root, "state"); mkdirSync(directory);
+  const proxy = process.env.HTTPS_PROXY;
+  process.env.HTTPS_PROXY = "http://proxy.invalid:3128";
+  t.after(() => { if (proxy === undefined) delete process.env.HTTPS_PROXY; else process.env.HTTPS_PROXY = proxy; });
+  const probe = (exits) => {
+    const calls = [];
+    const runtime = probeCloudHostRuntime(directory, f.root, (command, args, options) => {
+      calls.push({ command, args, options });
+      return { exitCode: exits(command, args), stdoutTail: "", stderrTail: "" };
+    });
+    return { calls, checks: runtime.checks };
+  };
+  const passing = probe(() => 0);
+  assert.equal(passing.calls.some(({ args }) => args.includes("dlx")), false, "no actor command fetches from the registry");
+  const fetch = passing.calls.find(({ command, args }) => command === "pnpm" && args[0] === "add");
+  assert.deepEqual(fetch.args, ["add", "--ignore-workspace", "playwright@1.65.0"]);
+  assert.equal(fetch.options.uid, undefined, "the fetch runs as the runner, never the actor");
+  assert.equal(fetch.options.env.HTTPS_PROXY, "http://proxy.invalid:3128", "the fetch has the host's network settings");
+  const launch = passing.calls.find(({ command, args }) => command === "pnpm" && args[0] === "exec");
+  assert.deepEqual(launch.args.slice(0, 4), ["exec", "playwright", "screenshot", "--browser=chromium"]);
+  assert.equal(launch.options.cwd, fetch.options.cwd, "the actor launches the copy root fetched");
+  assert.notEqual(launch.options.uid, undefined, "the launch runs as the actor");
+  assert.equal(launch.options.env.HTTPS_PROXY, undefined, "the actor never receives the host's network settings");
+  assert.ok(passing.calls.indexOf(fetch) < passing.calls.indexOf(launch));
+  assert.deepEqual([passing.checks.chromium1254, passing.checks.chromium], [true, true]);
+  const missing = probe((command) => command === "test" ? 1 : 0);
+  assert.deepEqual([missing.checks.chromium1254, missing.checks.chromium], [false, false], "a missing revision measures neither");
+  assert.equal(missing.calls.some(({ args }) => args[0] === "add" || args[0] === "exec"), false, "nothing is fetched for a missing revision");
+  const unlaunched = probe((command, args) => args[0] === "exec" ? 1 : 0);
+  assert.deepEqual([unlaunched.checks.chromium1254, unlaunched.checks.chromium], [true, false], "an installed revision the actor cannot launch");
+  const unfetched = probe((command, args) => args[0] === "add" ? 1 : 0);
+  assert.deepEqual([unfetched.checks.chromium1254, unfetched.checks.chromium], [true, false], "a failed fetch is no launch");
+  assert.equal(unfetched.calls.some(({ args }) => args[0] === "exec"), false);
+});
+
 test("AC-101 the lane child itself takes the requested actor uid: refused as non-root, the actor's uid as root (ADV2-1)", () => {
   const reportUid = ["-e", "process.stdout.write(String(process.getuid()))"];
   const options = { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] };

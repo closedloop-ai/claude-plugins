@@ -5958,8 +5958,9 @@ function sharedHostGuardProblem(settings, shared) {
   if (!shared) return null;
   const switches = /* @__PURE__ */ new Map();
   for (const { file, value } of settings) {
-    if (!value || typeof value !== "object") continue;
-    const record = value;
+    const parsed = external_exports.record(external_exports.unknown()).safeParse(value);
+    if (!parsed.success) continue;
+    const record = parsed.data;
     if (record.disableAllHooks === true) {
       return `${file} sets disableAllHooks, so vibe's guards would not run on this shared fleet host; remove it before launching`;
     }
@@ -5976,7 +5977,8 @@ function checkSharedHostGuards(worktree, { env = process.env, home = homedir2() 
   const files = [join10(home, ".claude", "settings.json"), join10(worktree, ".claude", "settings.json"), join10(worktree, ".claude", "settings.local.json")];
   const settings = files.filter((file) => existsSync9(file)).map((file) => {
     try {
-      return { file, value: JSON.parse(readFileSync9(file, "utf8")) };
+      const value = JSON.parse(readFileSync9(file, "utf8"));
+      return { file, value };
     } catch {
       return { file, value: null };
     }
