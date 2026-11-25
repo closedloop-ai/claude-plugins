@@ -197,12 +197,17 @@ export function orphans(ledger, alive = isAlive, identityOf = readIdentity) {
     .filter((helper) => helper.pids.length > 0);
 }
 
-/** Live recorded identity still pending; a reused PID is foreign, while an unreadable one refuses cleanup. */
+/**
+ * Live recorded identity still pending; a reused PID is foreign, while an unreadable one refuses cleanup.
+ * A process that exits between the liveness probe and the identity read is gone, not unreadable: a stopped
+ * helper's killed child was reported ALIVE once its reaping fell in that window (a loaded root run).
+ */
 export function pendingRecordedProcess(target, alive = isAlive, identityOf = readIdentity) {
   if (!alive(target.pid)) return false;
   if (!target.identity) return true;
   const current = identityOf(target.pid);
-  return !current || current === target.identity;
+  if (!current) return alive(target.pid);
+  return current === target.identity;
 }
 
 /** Pending private e2e cleanup records remain visible until their owned resource reconciliation succeeds. */
