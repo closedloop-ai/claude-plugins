@@ -310,8 +310,8 @@ function pauseSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 
 /**
  * Use the signed-in Claude client's RemoteTrigger tool. Create requires an intent already recorded in the routine ledger.
  * A loaded machine can time out the local `claude -p` (spawnSync ETIMEDOUT); an idempotent action is then sent again
- * after a pause, at most twice, and the last timeout is thrown as CLOUD_CALL_TIMEOUT. A timeout after the stream
- * already holds the one tool result is read as that result, so a run the provider accepted keeps its run and session ids.
+ * after a pause, at most twice, and the last timeout is thrown as CLOUD_CALL_TIMEOUT. A `run` whose stream already
+ * holds its one tool result at the timeout is read as that result, so a run the provider accepted keeps its run and session ids.
  */
 export function remoteTrigger(action, payload, { pause = pauseSync, ...options } = {}) {
   const retried = RETRIED_ACTIONS.has(action);
@@ -337,7 +337,7 @@ function remoteTriggerOnce(action, payload, { run = runCommand, cwd, intent, hom
   const executed = frames?.executed ?? [];
   const last = executed.at(-1);
   const diagnostic = triggerDiagnostic(result, terminal, last);
-  if (result.error?.code === "ETIMEDOUT" && (executed.length !== 1 || !last?.raw.trim())) {
+  if (result.error?.code === "ETIMEDOUT" && (action !== "run" || executed.length !== 1 || !last?.raw.trim())) {
     throw Object.assign(new Error(`Claude RemoteTrigger ${action} timed out on this machine after ${timeout / 1000} s (${diagnostic})`), { code: CloudCallError.Timeout });
   }
   const details = diagnostic ? ` (${diagnostic})` : "";
@@ -621,13 +621,13 @@ export async function abandonDispatch(request, { confirm = false, home = os.home
   return abandoned;
 }
 
-/** End a validation that will not be read: its receipt is abandoned and recorded routines are swept. A launch that wrote no receipt releases its queue reservation by request key. */
+/** End a validation that will not be read: its receipt is abandoned and recorded routines are swept. A launch that wrote no receipt is abandoned through its queue reservation, found by request key. */
 export async function abandonValidation(request, { confirm = false, home = os.homedir(), remote = cliRemote(request.worktree), executor = chromeRemoval(), stderr } = {}) {
   validateValidationRequest(request);
   const key = sha256(JSON.stringify(request)), base = validationReceiptPath(request, key);
   const file = request.lanes?.some(lane => lane.name === "cloud-capabilities")
     ? boundProbeReceipt(base, validationLanes(request).lanes, readLedger(home), resolveClaudeEnvironment(request)) : base;
-  if (!existsSync(file)) return releaseValidationReservation({ home, key, confirm, unconfirmed: (plan) => unconfirmed("abandon", plan) });
+  if (!existsSync(file)) return releaseValidationReservation({ home, key, confirm, unconfirmed: (plan) => unconfirmed("abandon", plan), markRun: (runId) => markRun(home, runId, "abandoned", DEFAULT_WALL_MS) });
   const receipt = JSON.parse(readFileSync(file, "utf8"));
   const abandoned = TERMINAL.has(receipt.status) ? receipt : { ...receipt, status: "abandoned", finishedAt: new Date().toISOString() };
   if (!confirm) return unconfirmed("abandon", { receipt: file, from: receipt.status ?? null, to: abandoned.status, sweepsRoutines: true });

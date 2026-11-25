@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { capturedJson } from "./captured-json.mjs";
@@ -9,8 +9,9 @@ import { readProcessIdentity } from "../../../shared/process-identity.mjs";
 import { recoverValidationReservation, withCloudValidationAdmission } from "./cloud-validation-admission.mjs";
 import { ledgerPath, NO_EXECUTOR, readLedger } from "./cloud-routines.mjs";
 import {machineTestReport} from "./cloud-outcome-test-fixture.mjs";
-import { abandonValidation, remoteTrigger, sha256, validateCommit } from "./cloud-worker.mjs";
+import { abandonValidation, pollTask, remoteTrigger, sha256, validateCommit } from "./cloud-worker.mjs";
 import { regularJson, writeAtomic } from "./owned-state.mjs";
+import { queueFile, queueState } from "./cloud-validation-queue-test-fixture.mjs";
 
 function fixture(t) {
   const f = makeHome("vibe-cloud-validation-admission-");
@@ -23,15 +24,6 @@ function fixture(t) {
   }, action);
   return { home: f.home, receipt, lines, execute };
 }
-
-/** The one account queue a test home holds. */
-function queueFile(home) {
-  const queues = path.join(home, ".codex", "vibe", "cloud", "validation-queues");
-  const dirs = readdirSync(queues);
-  assert.equal(dirs.length, 1, "one account queue");
-  return path.join(queues, dirs[0], "queue.json");
-}
-const queueState = (home) => regularJson(queueFile(home));
 
 /** A validation request for a fresh fixture checkout, with the routine service the tests drive. */
 function adoptionFixture(t) {
@@ -337,10 +329,9 @@ test("ISS-14476 DT-153R a launching reservation whose launcher is alive is waite
   assert.equal(await live, "live launcher finished");
 });
 
-test("ISS-14476 DT-154R another request marks a gone launcher's acknowledged run abandoned and holds the account until the provider ends it", async (t) => {
+test("ISS-14476 DT-157R another request never marks a gone launcher's acknowledged run abandoned and holds the account at any age until the provider ends it", async (t) => {
   const f = fixture(t);
   let clock = 0;
-  let status = "running";
   const timed = { now: () => clock, wait: async (ms) => { clock += ms; }, launchWindowMs: 60_000, sleepMs: 10_000, timeoutMs: 20_000 };
   const launch = { ...LAUNCH, startedAt: new Date(0).toISOString() };
   await assert.rejects(f.execute("lost", async ({ launching }) => {
@@ -348,15 +339,49 @@ test("ISS-14476 DT-154R another request marks a gone launcher's acknowledged run
     await launching({ ...launch, runId: "run-lost", sessionId: "cse_lost" });
     throw Object.assign(new Error("routine ledger write failed"), { launchUncertain: true });
   }, timed), /ledger write failed/);
-  assert.deepEqual([queueState(f.home).active.launch.runId, queueState(f.home).active.launch.sessionId], ["run-lost", "cse_lost"]);
-  clock += 60_000;
-  const recover = (entry) => recoverValidationReservation(entry, { ledger: { runs: [] },
-    remote: () => ({ data: [{ id: "run-lost", session_id: "cse_lost", status }] }) });
-  await assert.rejects(f.execute("next", () => assert.fail("admitted while the provider still ran the abandoned run"), { ...timed, recover }), { code: "CLOUD_VALIDATION_QUEUE_TIMEOUT" });
-  const marked = regularJson(f.receipt("lost"));
-  assert.deepEqual([marked.status, marked.runId, marked.sessionId, marked.requestDigest], ["abandoned", "run-lost", "cse_lost", "lost"]);
-  status = "completed";
+  const stuck = queueState(f.home).active;
+  assert.deepEqual([stuck.launch.runId, stuck.launch.sessionId, stuck.pid], ["run-lost", "cse_lost", null]);
+  clock += 60 * 60_000;
+  let provider;
+  const recover = (entry) => recoverValidationReservation(entry, { ledger: { runs: [] }, remote: () => provider() });
+  const unreadable = () => { throw new Error("RemoteTrigger list_runs failed: HTTP 500"); };
+  for (const [name, answer] of [["reports it running", () => ({ data: [{ id: "run-lost", session_id: "cse_lost", status: "running" }] })],
+    ["does not list it", () => ({ data: [] })], ["cannot be read", unreadable]]) {
+    provider = answer;
+    await assert.rejects(f.execute("next", () => assert.fail(`admitted while the provider ${name}`), { ...timed, recover }), { code: "CLOUD_VALIDATION_QUEUE_TIMEOUT" }, name);
+    assert.equal(queueState(f.home).active.token, stuck.token, `the gone launcher's reservation holds while the provider ${name}`);
+    const receipt = regularJson(f.receipt("lost"));
+    assert.deepEqual([receipt.status, receipt.runId, receipt.sessionId, receipt.requestDigest], ["running", "run-lost", "cse_lost", "lost"], `its receipt stays running while the provider ${name}`);
+  }
+  assert.deepEqual(queueState(f.home).abandoned, [], "an acknowledged run is never reclaimed");
+  provider = () => ({ data: [{ id: "run-lost", session_id: "cse_lost", status: "completed" }] });
   assert.equal(await f.execute("next", () => "admitted", { ...timed, recover }), "admitted");
+});
+
+test("ISS-14476 DT-156R a gone launcher's unacknowledged launch holds at any age while the provider cannot be read, and is reclaimed past its window once every read proves nothing", async (t) => {
+  const f = fixture(t);
+  let clock = 0;
+  const timed = { now: () => clock, wait: async (ms) => { clock += ms; }, launchWindowMs: 60_000, sleepMs: 10_000, timeoutMs: 20_000 };
+  await assert.rejects(f.execute("lost", async ({ launching }) => {
+    await launching({ ...LAUNCH, startedAt: new Date(0).toISOString() });
+    throw lostLaunch("Claude RemoteTrigger run timed out on this machine after 90 s");
+  }, timed), /timed out/);
+  clock += 60 * 60_000;
+  let readable = false;
+  const remote = (action) => {
+    if (!readable) throw new Error(`RemoteTrigger ${action} failed: HTTP 500`);
+    if (action === "list_runs") return { data: [{ id: "other", session_id: "cse_other", status: "completed" }] };
+    if (action === "get_run_log") return { log: "[2026-11-25T00:00:00Z] assistant: VIBE_VALIDATION_LAUNCH another-launch" };
+    assert.fail(action);
+  };
+  const recover = (entry) => recoverValidationReservation(entry, { ledger: { runs: [] }, remote });
+  await assert.rejects(f.execute("next", () => assert.fail("admitted while the provider could not be read"), { ...timed, recover }), { code: "CLOUD_VALIDATION_QUEUE_TIMEOUT" });
+  await assert.rejects(f.execute("lost", () => assert.fail("the identical request launched again while the provider could not be read"), { ...timed, recover }), { code: "CLOUD_VALIDATION_QUEUE_TIMEOUT" });
+  assert.deepEqual([queueState(f.home).active.key, queueState(f.home).abandoned], ["lost", []]);
+  readable = true;
+  assert.equal(await f.execute("next", () => "admitted", { ...timed, recover }), "admitted");
+  assert.deepEqual(queueState(f.home).abandoned, [{ key: "lost", reason: "launcher exited during launch; no provider run was proven" }], "a reclaimed launch carries no run or session id");
+  assert.equal(existsSync(f.receipt("lost")), false);
 });
 
 test("ISS-14476 DT-150R DT-151R the identical request adopts the run its gone launcher's reservation recorded, so the provider runs it once", async (t) => {
@@ -443,10 +468,37 @@ test("ISS-14476 DT-151R a RemoteTrigger run whose local claude times out after t
     "a second call still unanswered at the timeout is not an execution, as in an untimed call");
 });
 
-test("ISS-14476 DT-152R abandon releases the queue reservation of a request whose launch wrote no receipt, by its request key", async (t) => {
+test("ISS-14476 DT-155R a timeout after one tool result stays CLOUD_CALL_TIMEOUT for every action but run, with its retries and the poll's resume hint", async () => {
+  const oneResult = (input) => [
+    { type: "assistant", message: { content: [{ type: "tool_use", name: "RemoteTrigger", id: "one", input }] } },
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "one", content: 'HTTP 200\n{"data":[{"id":"run-x","status":"running"}]}' }] } },
+  ].map((event) => JSON.stringify(event)).join("\n");
+  const timedOut = (input, counted) => () => { counted.calls++; return { status: null, signal: "SIGTERM", stderr: "", stdout: oneResult(input),
+    error: Object.assign(new Error("spawnSync claude ETIMEDOUT"), { code: "ETIMEDOUT" }) }; };
+  const payloads = [["list_runs", { trigger_id: "trig_x" }, 3], ["get_run_log", { session_id: "cse_x" }, 3], ["update", { trigger_id: "trig_x", body: {} }, 3],
+    ["get", { trigger_id: "trig_x" }, 1], ["list", {}, 1]];
+  for (const [action, payload, calls] of payloads) {
+    const counted = { calls: 0 };
+    assert.throws(() => remoteTrigger(action, payload, { run: timedOut({ action, ...payload }, counted), pause: () => {} }), { code: "CLOUD_CALL_TIMEOUT" }, action);
+    assert.equal(counted.calls, calls, `${action} is called ${calls} time(s)`);
+  }
+  const counted = { calls: 0 };
+  const remote = (action, payload) => remoteTrigger(action, payload, { run: timedOut({ action, ...payload }, counted), pause: () => {} });
+  await assert.rejects(pollTask({ provider: "claude", routineId: "trig_x", runId: "run-x", startedAt: new Date().toISOString() }, { repository: "closedloop-ai/claude-plugins" },
+    { remote, sleep: async () => {} }), { code: "CLOUD_POLL_TIMEOUT", message: /run run-x may still be running in the cloud\. To resume, run the same cloud-worker\.mjs command/ });
+  assert.equal(counted.calls, 3);
+});
+
+/** The validation receipt `validate` and `abandon` read for this request: in the checkout's Git directory, named by commit and request key. */
+const gitDirReceipt = (request, key) => path.join(request.worktree, ".git", `cloud-validate-${request.commit.slice(0, 12)}-${key.slice(0, 12)}.json`);
+/** A file path with its directory resolved, so a temporary directory's symlinked and real forms compare equal. */
+const resolved = (file) => path.join(realpathSync(path.dirname(file)), path.basename(file));
+
+test("ISS-14476 DT-152R DT-159R abandon releases the queue reservation of a request whose launch wrote no receipt, by its request key, and writes no receipt", async (t) => {
   const f = adoptionFixture(t);
   const key = sha256(JSON.stringify(f.request));
-  const admit = (action) => withCloudValidationAdmission({ home: f.home, account: "verified-fixture-account", key, receipt: path.join(f.root, "never-written.json"),
+  const receipt = gitDirReceipt(f.request, key);
+  const admit = (action) => withCloudValidationAdmission({ home: f.home, account: "verified-fixture-account", key, receipt,
     timeoutMs: 3000, sleepMs: 5, recover: () => "unknown", report: () => {} }, action);
   await assert.rejects(admit(async ({ launching }) => {
     await launching({ ...LAUNCH, startedAt: new Date().toISOString() });
@@ -455,10 +507,11 @@ test("ISS-14476 DT-152R abandon releases the queue reservation of a request whos
   const stuck = queueState(f.home).active;
   const asked = await abandonValidation(f.request, { home: f.home });
   assert.equal(asked.confirmRequired, true);
-  assert.deepEqual([asked.wouldChange.active.token, asked.wouldChange.active.key, asked.wouldChange.active.phase], [stuck.token, key, "launching"]);
+  assert.deepEqual([asked.wouldChange.active.token, asked.wouldChange.active.key, asked.wouldChange.active.phase, asked.wouldChange.releases], [stuck.token, key, "launching", stuck.token]);
   assert.equal(queueState(f.home).active.token, stuck.token, "without --confirm nothing changes");
   const done = await abandonValidation(f.request, { confirm: true, home: f.home });
   assert.deepEqual([done.status, done.released.token, done.active], ["abandoned", stuck.token, null]);
+  assert.equal(existsSync(receipt), false, "abandon of a launch no provider run acknowledged writes no receipt, so the request can launch again");
   assert.equal(queueState(f.home).active, null);
   assert.deepEqual(queueState(f.home).abandoned.at(-1), { key, reason: "abandoned locally; its launch wrote no receipt" });
   await assert.rejects(abandonValidation(f.request, { confirm: true, home: f.home }), /no cloud task exists to poll and no queue reservation holds this request/);
@@ -466,21 +519,39 @@ test("ISS-14476 DT-152R abandon releases the queue reservation of a request whos
   writeAtomic(queueFile(f.home), { ...queueState(f.home), active: { ...stuck, pid: process.pid, identity: readProcessIdentity(process.pid) } });
   await assert.rejects(abandonValidation(f.request, { confirm: true, home: f.home }), /still holds this reservation/);
   assert.equal(queueState(f.home).active.token, stuck.token);
-  assert.equal(existsSync(path.join(f.root, "never-written.json")), false);
+  // The path checked above is the receipt abandon reads: once it exists, abandon takes the receipt path.
+  writeAtomic(receipt, { status: "running", requestDigest: key });
+  assert.equal(resolved((await abandonValidation(f.request, { home: f.home })).wouldChange.receipt), resolved(receipt));
 });
 
-test("ISS-14476 DT-152R abandon releases a receipt-less reservation that recorded an acknowledged run at once and keeps its session id", async (t) => {
+test("ISS-14476 DT-158R abandon of a receipt-less reservation that recorded an acknowledged run abandons that run as a receipt is and holds the account until the provider ends it", async (t) => {
   const f = adoptionFixture(t);
   const key = sha256(JSON.stringify(f.request));
+  const receipt = gitDirReceipt(f.request, key);
   const launch = { ...LAUNCH, startedAt: new Date().toISOString() };
-  await assert.rejects(withCloudValidationAdmission({ home: f.home, account: "verified-fixture-account", key, receipt: path.join(f.root, "never-written.json"),
+  await assert.rejects(withCloudValidationAdmission({ home: f.home, account: "verified-fixture-account", key, receipt, metadata: { commit: f.request.commit, laneKeys: ["unit-1"] },
     timeoutMs: 3000, sleepMs: 5, recover: () => "unknown", report: () => {} }, async ({ launching }) => {
     await launching(launch);
     await launching({ ...launch, runId: "run-acknowledged", sessionId: "cse_acknowledged" });
     throw Object.assign(new Error("routine ledger write failed"), { launchUncertain: true });
   }), /ledger write failed/);
-  assert.equal(queueState(f.home).active.launch.sessionId, "cse_acknowledged");
+  const stuck = queueState(f.home).active;
+  // The routine ledger row the launch wrote before its reservation could not be finished.
+  writeAtomic(ledgerPath(f.home), { ...readLedger(f.home), runs: [{ runId: "run-acknowledged", sessionId: "cse_acknowledged", routineId: "standing", requestKey: key, status: "started" }] });
+  const asked = await abandonValidation(f.request, { home: f.home });
+  assert.deepEqual([asked.confirmRequired, asked.wouldChange.abandonsRun, resolved(asked.wouldChange.receipt)], [true, "run-acknowledged", resolved(receipt)]);
+  assert.equal(existsSync(receipt), false, "without --confirm nothing changes");
   const done = await abandonValidation(f.request, { confirm: true, home: f.home });
-  assert.deepEqual([done.status, done.released.launch.runId, done.active], ["abandoned", "run-acknowledged", null]);
-  assert.deepEqual(queueState(f.home).abandoned.at(-1), { key, reason: "abandoned locally; its launch wrote no receipt", sessionId: "cse_acknowledged" });
+  assert.deepEqual([done.status, done.holdsUntilProviderEnds.token, done.active.token], ["abandoned", stuck.token, stuck.token]);
+  const written = regularJson(receipt);
+  assert.deepEqual([written.status, written.provider, written.runId, written.taskId, written.sessionId, written.routineId, written.requestDigest, written.laneKeys],
+    ["abandoned", "claude", "run-acknowledged", "run-acknowledged", "cse_acknowledged", "standing", key, ["unit-1"]]);
+  assert.equal(readLedger(f.home).runs[0].status, "abandoned", "the routine ledger marks the run abandoned, as the receipt path does");
+  assert.deepEqual([queueState(f.home).active.token, queueState(f.home).abandoned], [stuck.token, []], "the reservation still holds the account");
+  let status = "running";
+  const next = (action) => withCloudValidationAdmission({ home: f.home, account: "verified-fixture-account", key: "next", receipt: path.join(f.root, "next.json"), timeoutMs: 200, sleepMs: 5,
+    recover: (entry) => recoverValidationReservation(entry, { ledger: { runs: [] }, remote: () => ({ data: [{ id: "run-acknowledged", status }] }) }), report: () => {} }, action);
+  await assert.rejects(next(() => assert.fail("admitted while the provider still ran the abandoned run")), { code: "CLOUD_VALIDATION_QUEUE_TIMEOUT" });
+  status = "completed";
+  assert.equal(await next(() => "admitted"), "admitted");
 });

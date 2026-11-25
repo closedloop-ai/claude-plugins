@@ -8,11 +8,13 @@ import { regularJson, writeAtomic } from "./owned-state.mjs";
 
 // A standing routine owns its configuration and its current provider run until the run is terminal.
 export const CLOUD_VALIDATION_CAPACITY = 1;
-// An accepted run logs its launch marker within minutes. Past this window a launch whose launcher is gone and
-// whose run nothing proves is reclaimed, so the account's queue never waits on it forever.
+// An accepted run logs its launch marker within minutes. Past this window a launch whose launcher is gone, that no
+// provider run acknowledged and that every provider read proved absent is reclaimed, so the queue never waits on it forever.
 export const LAUNCH_WINDOW_MS = 10 * 60 * 1000;
 const BUSY = "CLOUD_VALIDATION_QUEUE_TIMEOUT";
 const TERMINAL = new Set(["completed", "failed", "canceled", "cancelled", "archived"]);
+// Recovery's answers when the provider proves nothing: every read succeeded, or a read threw.
+const UNPROVEN = new Set(["unknown", "unreadable"]);
 
 function identityKey(account) {
   return createHash("sha256").update(account).digest("hex");
@@ -46,8 +48,9 @@ function launcherAlive(entry, identityOf) {
   return Boolean(entry?.pid) && processIdentityStatus(entry.pid, entry.identity, { identityOf }) !== "dead";
 }
 
-function abandonedRecord(entry, reason) {
-  return { key: entry.key, reason, ...(entry.launch?.sessionId ? { sessionId: entry.launch.sessionId } : {}) };
+/** A run's validation receipt as recovery and abandon write it from the reservation that recorded the run. */
+function launchReceipt(entry, run, status) {
+  return { ...entry.metadata, ...run, provider: "claude", taskId: run.runId, status, requestDigest: entry.key };
 }
 
 /** Serialize local admission state for one pinned Claude account and preserve an interrupted running reservation. */
@@ -97,18 +100,15 @@ export async function withCloudValidationAdmission({ home, account, key, receipt
       if (active && !alive(active)) {
         const disposition = active.phase === "reserved" ? "terminal" : await recover(active);
         const launch = active.phase === "launching";
-        // Past its window nothing will ever prove or end a gone launcher's launch except the provider itself.
-        const settled = launch && !(now() - Date.parse(active.launchingAt ?? active.launch?.startedAt) < launchWindowMs);
         const recorded = existsSync(active.receipt) ? regularJson(active.receipt) : null;
+        // A run the provider acknowledged, or a receipt, holds the account until the provider ends it, however old.
+        // Only a launch with neither, past its window, whose every provider read proved nothing, is reclaimed.
+        const reclaim = launch && !active.launch?.runId && recorded === null && disposition === "unknown" &&
+          !(now() - Date.parse(active.launchingAt ?? active.launch?.startedAt) < launchWindowMs);
         const identical = !drainUnbound && active.key === key && active.receipt === receipt;
-        // The identical request adopts the run its receipt names, active or launched but not yet listed by the provider.
+        // The identical request adopts the run its receipt names, active or launched but not yet listed or readable.
         const resume = identical && recorded?.status !== "abandoned" &&
-          (disposition === "active" || (launch && disposition === "unknown" && recorded !== null));
-        // Another request marks a settled launch's run abandoned; it holds the account while the provider reports it active.
-        if (settled && !identical && disposition !== "terminal" && recorded && !TERMINAL.has(recorded.status) && recorded.status !== "abandoned") {
-          writeAtomic(active.receipt, { ...recorded, status: "abandoned", finishedAt: new Date(now()).toISOString() });
-        }
-        const reclaim = settled && disposition === "unknown" && !resume;
+          (disposition === "active" || (launch && UNPROVEN.has(disposition) && recorded !== null));
         if (disposition === "terminal" || resume || reclaim) await update((state) => {
           if (state.active?.token !== active.token) return;
           if (resume) {
@@ -117,7 +117,7 @@ export async function withCloudValidationAdmission({ home, account, key, receipt
             selected = true;
             return;
           }
-          if (reclaim) state.abandoned = [...state.abandoned, abandonedRecord(active, "launcher exited during launch; no provider run was proven")].slice(-200);
+          if (reclaim) state.abandoned = [...state.abandoned, { key: active.key, reason: "launcher exited during launch; no provider run was proven" }].slice(-200);
           state.active = null;
         });
       }
@@ -159,10 +159,12 @@ function entryView(entry) {
 }
 
 /**
- * Release the queue reservation of a request whose launch wrote no receipt, found by its request key in any
+ * Abandon the queue reservation of a request whose launch wrote no receipt, found by its request key in any
  * account's queue. A launcher that is still alive keeps it. Without confirm it reports the entry and changes nothing.
+ * A reservation with no acknowledged run is released at once. One that recorded an acknowledged run is abandoned as a
+ * receipt is: its receipt is written abandoned, `markRun` marks the run, and the reservation holds until the provider ends it.
  */
-export async function releaseValidationReservation({ home, key, confirm = false, unconfirmed, identityOf = readProcessIdentity }) {
+export async function releaseValidationReservation({ home, key, confirm = false, unconfirmed, markRun, identityOf = readProcessIdentity }) {
   const queues = queuesDir(home);
   const file = (existsSync(queues) ? readdirSync(queues) : []).map((name) => path.join(queues, name, "queue.json"))
     .find((candidate) => existsSync(candidate) && readQueue(candidate).active?.key === key);
@@ -173,17 +175,28 @@ export async function releaseValidationReservation({ home, key, confirm = false,
   if (!confirm) {
     const active = readQueue(file).active;
     refuseLive(active);
-    return unconfirmed({ queue: file, active: entryView(active), releases: active.token });
+    const plan = active.launch?.runId ? { abandonsRun: active.launch.runId, receipt: active.receipt } : { releases: active.token };
+    return unconfirmed({ queue: file, active: entryView(active), ...plan });
   }
-  const released = await updateQueue(file, (state) => {
+  const entry = await updateQueue(file, (state) => {
     if (state.active?.key !== key) throw new Error("the queue reservation changed during abandon; rerun abandon");
     refuseLive(state.active);
-    const entry = state.active;
-    state.abandoned = [...state.abandoned, abandonedRecord(entry, "abandoned locally; its launch wrote no receipt")].slice(-200);
+    const current = state.active;
+    if (current.launch?.runId) {
+      const recorded = existsSync(current.receipt) ? regularJson(current.receipt) : null;
+      if (!TERMINAL.has(recorded?.status) && recorded?.status !== "abandoned") {
+        writeAtomic(current.receipt, { ...(recorded ?? launchReceipt(current, current.launch, "abandoned")), status: "abandoned", finishedAt: new Date().toISOString() });
+      }
+      return current;
+    }
+    state.abandoned = [...state.abandoned, { key, reason: "abandoned locally; its launch wrote no receipt" }].slice(-200);
     state.active = null;
-    return entry;
+    return current;
   });
-  return { status: "abandoned", queue: file, released: entryView(released), active: entryView(readQueue(file).active) };
+  // The routine ledger is marked after the queue lock is released: a launch takes the routine lock, then the queue lock.
+  if (!entry.launch?.runId) return { status: "abandoned", queue: file, released: entryView(entry), active: entryView(readQueue(file).active) };
+  await markRun(entry.launch.runId);
+  return { status: "abandoned", queue: file, receipt: entry.receipt, holdsUntilProviderEnds: entryView(entry), active: entryView(readQueue(file).active) };
 }
 
 const LIST_RUNS_PAGES = 10;
@@ -236,7 +249,11 @@ function locateLaunch(launch, remote) {
   return null;
 }
 
-/** Reconcile a known reservation from its exact local receipt or code-owned routine run entry. */
+/**
+ * Reconcile a known reservation from its exact local receipt or code-owned routine run entry: `active` or `terminal`
+ * from the provider's listing of the run, `unknown` when every read succeeded and proved nothing, `unreadable` when a
+ * provider read threw.
+ */
 export function recoverValidationReservation(entry, { ledger, remote }) {
   const receipt = existsSync(entry.receipt) ? regularJson(entry.receipt) : null;
   if (receipt && TERMINAL.has(receipt.status)) return "terminal";
@@ -244,15 +261,14 @@ export function recoverValidationReservation(entry, { ledger, remote }) {
   // The reservation records an acknowledged run before the ledger row and the receipt are written.
   if (!run && entry.launch?.runId) run = entry.launch;
   if (!run) {
-    try { run = locateLaunch(entry.launch,remote); } catch { return "unknown"; }
+    try { run = locateLaunch(entry.launch,remote); } catch { return "unreadable"; }
   }
   if (!run?.routineId || !run.runId) return "unknown";
-  if (!receipt) writeAtomic(entry.receipt, { ...entry.metadata, ...run, provider: "claude", taskId: run.runId,
-    status: "running", requestDigest: entry.key });
+  if (!receipt) writeAtomic(entry.receipt, launchReceipt(entry, run, "running"));
   try {
     const observed = findRun(remote, run.routineId, run.runId);
     if (!observed) return "unknown";
     if (TERMINAL.has(observed.status) || (observed.status === "active" && observed.worker_status === "idle")) return "terminal";
     return "active";
-  } catch { return "unknown"; }
+  } catch { return "unreadable"; }
 }
