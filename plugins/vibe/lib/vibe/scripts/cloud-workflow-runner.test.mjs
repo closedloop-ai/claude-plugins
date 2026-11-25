@@ -295,9 +295,10 @@ test("AC-68 a fetch-depth 0 checkout refuses the lane when the cloud checkout is
 
 // The runner command over a plan directory holding these lane definitions, as the agent runs it:
 // `node "$p/cloud-workflow-runner.mjs" <index> >$d/<index>.stdout 2>$d/<index>.stderr`, so both streams are files opened
-// write-only. With `umask`, the shell that starts it sets that umask first. As root, it runs with a private
-// /etc/sudoers.d (privateSudoers), whose entries after the lane land in `leftover`.
-function runnerCommand(f, definitions, umask = null) {
+// write-only. With `umask`, the shell that starts it sets that umask first. `env` adds to the runner's own environment,
+// as the cloud agent's shell would. As root, it runs with a private /etc/sudoers.d (privateSudoers), whose entries
+// after the lane land in `leftover`.
+function runnerCommand(f, definitions, umask = null, env = {}) {
   const plan = path.join(f.checkout, ".git", "vibe-workflow-fixture");
   mkdirSync(plan);
   for (const name of ["cloud-workflow-runner.mjs", "cloud-validation-host.mjs"]) cpSync(path.join(here, name), path.join(plan, name));
@@ -311,7 +312,7 @@ function runnerCommand(f, definitions, umask = null) {
     const [out, err] = ["stdout", "stderr"].map((name) => path.join(f.root, `${args.join("-") || "none"}.${name}`));
     const fds = [openSync(out, "w"), openSync(err, "w")];
     const command = [process.execPath, path.join(plan, "cloud-workflow-runner.mjs"), ...args];
-    const options = { cwd: f.checkout, env: { PATH: process.env.PATH, TMPDIR: temporary }, stdio: ["ignore", ...fds] };
+    const options = { cwd: f.checkout, env: { ...env, PATH: process.env.PATH, TMPDIR: temporary }, stdio: ["ignore", ...fds] };
     try {
       const child = spawnSync(...privateSudoers(...(umask === null ? [command[0], command.slice(1)] : ["sh", ["-c", `umask ${umask}; exec "$@"`, "sh", ...command]]), leftover), options);
       return { status: child.status, stdout: readFileSync(out, "utf8"), stderr: readFileSync(err, "utf8") };
@@ -353,6 +354,49 @@ test("AC-68 the runner command runs one planned lane, removes its private copy, 
   assert.equal(pullRequestBase(f.checkout), "main", "the base branch is the one the checkout's origin names");
   git(f.checkout, ["remote", "set-head", "origin", "--delete"], f.home);
   assert.equal(pullRequestBase(f.checkout), null);
+});
+
+// The host's CA trust and proxy settings, every one a step receives (team-lead, 2026-11-25: "The host's CA bundle and
+// proxy settings aren't credentials, and lanes must reach registries ... workflow steps get CA and proxy only, nothing secret").
+const CA_AND_PROXY = { NODE_EXTRA_CA_CERTS: "/etc/ssl/certs/ca-certificates.crt", SSL_CERT_FILE: "/etc/ssl/certs/ca-certificates.crt",
+  SSL_CERT_DIR: "/etc/ssl/certs", REQUESTS_CA_BUNDLE: "/etc/ssl/certs/ca-certificates.crt", CURL_CA_BUNDLE: "/etc/ssl/certs/ca-certificates.crt",
+  GIT_SSL_CAINFO: "/etc/ssl/certs/ca-certificates.crt", NODE_USE_SYSTEM_CA: "1", UV_NATIVE_TLS: "true", UV_SYSTEM_CERTS: "true",
+  HTTP_PROXY: "http://proxy.invalid:3128", HTTPS_PROXY: "http://proxy.invalid:3128", NO_PROXY: "localhost,127.0.0.1",
+  http_proxy: "http://proxy.invalid:3128", https_proxy: "http://proxy.invalid:3128", no_proxy: "localhost,127.0.0.1" };
+// Credentials a cloud host can hold. Each value is unique, so a copy under any other name is found too.
+const CREDENTIALS = Object.fromEntries(["GITHUB_TOKEN", "GH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "NPM_TOKEN", "NODE_AUTH_TOKEN",
+  "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS", "DOCKER_AUTH_CONFIG", "SSH_AUTH_SOCK", "GIT_ASKPASS"]
+  .map((name) => [name, `credential-fixture-${name.toLowerCase()}`]));
+// Every name a step's environment may hold: the lane's standard settings, GitHub's runner variables, the CA and proxy
+// settings, the three a shell exports itself, and the text encoding macOS adds to every process.
+const STEP_NAMES = ["PATH", "HOME", "PLAYWRIGHT_BROWSERS_PATH", "XDG_CACHE_HOME", "PNPM_HOME", "TZ", "LC_ALL", "CONTROL_REGISTRY_DIR",
+  "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "CI", "GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_BASE_REF", "GITHUB_WORKSPACE",
+  "RUNNER_OS", "RUNNER_TEMP", ...Object.keys(CA_AND_PROXY), "PWD", "SHLVL", "_", ...(process.platform === "darwin" ? ["__CF_USER_TEXT_ENCODING"] : [])];
+
+function carriesOnlyCaAndProxy(env, where) {
+  for (const [name, value] of Object.entries(CA_AND_PROXY)) assert.equal(env[name], value, `${where} carries the host's ${name}`);
+  assert.deepEqual(Object.keys(CREDENTIALS).filter((name) => Object.hasOwn(env, name)), [], `${where} carries no credential variable`);
+  assert.deepEqual(Object.entries(env).filter(([, value]) => Object.values(CREDENTIALS).some((secret) => String(value).includes(secret))).map(([name]) => name), [],
+    `${where} holds no credential value under any name`);
+}
+
+test("AC-68 a workflow step's environment carries the host's CA and proxy settings and no credential variables, and so does the actor's sudo proof", (t) => {
+  const f = lane(t);
+  const dump = `node -e 'process.stdout.write("STEP_ENV " + JSON.stringify(process.env) + "\\n")'`;
+  const { runner } = runnerCommand(f, [job([{ uses: "actions/checkout@v4" }, { run: dump }])], null, { ...CA_AND_PROXY, ...CREDENTIALS });
+  const ran = runner("0");
+  assert.equal(ran.status, 0, ran.stderr);
+  const line = ran.stdout.split("\n").find((entry) => entry.startsWith("STEP_ENV "));
+  assert.ok(line, "the step ran and printed its environment");
+  const env = JSON.parse(line.slice("STEP_ENV ".length));
+  carriesOnlyCaAndProxy(env, "the step");
+  assert.deepEqual(Object.keys(env).filter((name) => !STEP_NAMES.includes(name)), [], "nothing else from the runner's environment reaches the step");
+  const other = lane(t), grants = [];
+  runWorkflowLane({ checkout: other.checkout, commit: other.commit, work: other.work, definition: job([{ run: "true" }]), uid: 0, gid: 0,
+    environment: { PATH: "/usr/bin:/bin", ...CA_AND_PROXY, ...CREDENTIALS }, provision: () => {}, log: () => {},
+    sudo: (grant) => { grants.push(grant.env); return () => {}; }, run: () => PASS });
+  assert.equal(grants.length, 1, "a root runner proves the actor's sudo once");
+  carriesOnlyCaAndProxy(grants[0], "the actor's sudo -n true");
 });
 
 test("AC-68 every lane step runs under umask 022 as on GitHub's runner, whatever the agent's shell sets, and the caller's umask comes back", (t) => {

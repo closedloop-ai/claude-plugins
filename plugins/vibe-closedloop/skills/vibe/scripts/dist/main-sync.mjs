@@ -8496,9 +8496,9 @@ var require_parse = __commonJS({
                 const idx = prev.value.lastIndexOf("[");
                 const pre = prev.value.slice(0, idx);
                 const rest2 = prev.value.slice(idx + 2);
-                const posix = POSIX_REGEX_SOURCE[rest2];
-                if (posix) {
-                  prev.value = pre + posix;
+                const posix2 = POSIX_REGEX_SOURCE[rest2];
+                if (posix2) {
+                  prev.value = pre + posix2;
                   state.backtrack = true;
                   advance();
                   if (!bos.output && tokens.indexOf(prev) === 1) {
@@ -9015,7 +9015,7 @@ var require_picomatch = __commonJS({
         throw new TypeError("Expected pattern to be a non-empty string");
       }
       const opts = options || {};
-      const posix = opts.windows;
+      const posix2 = opts.windows;
       const regex = isState ? picomatch4.compileRe(glob, options) : picomatch4.makeRe(glob, options, false, true);
       const state = regex.state;
       delete regex.state;
@@ -9025,8 +9025,8 @@ var require_picomatch = __commonJS({
         isIgnored = picomatch4(opts.ignore, ignoreOpts, returnState);
       }
       const matcher = (input, returnObject = false) => {
-        const { isMatch, match, output } = picomatch4.test(input, regex, options, { glob, posix });
-        const result = { glob, state, regex, posix, input, output, match, isMatch };
+        const { isMatch, match, output } = picomatch4.test(input, regex, options, { glob, posix: posix2 });
+        const result = { glob, state, regex, posix: posix2, input, output, match, isMatch };
         if (typeof opts.onResult === "function") {
           opts.onResult(result);
         }
@@ -9051,7 +9051,7 @@ var require_picomatch = __commonJS({
       }
       return matcher;
     };
-    picomatch4.test = (input, regex, options, { glob, posix } = {}) => {
+    picomatch4.test = (input, regex, options, { glob, posix: posix2 } = {}) => {
       if (typeof input !== "string") {
         throw new TypeError("Expected input to be a string");
       }
@@ -9059,7 +9059,7 @@ var require_picomatch = __commonJS({
         return { isMatch: false, output: "" };
       }
       const opts = options || {};
-      const format = opts.format || (posix ? utils.toPosixSlashes : null);
+      const format = opts.format || (posix2 ? utils.toPosixSlashes : null);
       let match = input === glob;
       let output = match && format ? format(input) : input;
       if (match === false) {
@@ -9068,16 +9068,16 @@ var require_picomatch = __commonJS({
       }
       if (match === false || opts.capture === true) {
         if (opts.matchBase === true || opts.basename === true) {
-          match = picomatch4.matchBase(input, regex, options, posix);
+          match = picomatch4.matchBase(input, regex, options, posix2);
         } else {
           match = regex.exec(output);
         }
       }
       return { isMatch: Boolean(match), match, output };
     };
-    picomatch4.matchBase = (input, glob, options, posix = options && options.windows) => {
+    picomatch4.matchBase = (input, glob, options, posix2 = options && options.windows) => {
       const regex = glob instanceof RegExp ? glob : picomatch4.makeRe(glob, options);
-      return regex.test(utils.basename(input, { windows: posix }));
+      return regex.test(utils.basename(input, { windows: posix2 }));
     };
     picomatch4.isMatch = (str, patterns, options) => picomatch4(patterns, options)(str);
     picomatch4.parse = (pattern, options) => {
@@ -225117,7 +225117,7 @@ function ownerMismatches(actual, context, root) {
 
 // src/main-sync-recipe.ts
 import { existsSync as existsSync4, readFileSync as readFileSync6 } from "node:fs";
-import { join as join5 } from "node:path";
+import { join as join5, posix } from "node:path";
 
 // vibe-core:lib/vibe/scripts/repository-commands.mjs
 var module6 = await vibeCore("lib/vibe/scripts/repository-commands.mjs");
@@ -225178,6 +225178,16 @@ var RECIPE_CACHE_LIMIT = 16;
 var recipes = /* @__PURE__ */ new Map();
 function reportOutputsFor(root) {
   return /* @__PURE__ */ new Set([...GENERIC_REPORT_OUTPUTS, ...mainSyncRecipe(root).reportOutputs]);
+}
+function runLeftoverScope(root) {
+  const owners = /* @__PURE__ */ new Set(), runs = /* @__PURE__ */ new Set();
+  for (const report of mainSyncRecipe(root).reportOutputs) {
+    const run = posix.dirname(report), owner = posix.dirname(run);
+    if (run === ".") continue;
+    runs.add(posix.basename(run));
+    if (owner !== ".") owners.add(`${owner}/`);
+  }
+  return (file) => [...owners].some((owner) => file.startsWith(owner)) || file.split("/").slice(0, -1).some((segment) => runs.has(segment));
 }
 function bootstrapFor(root, checkout = root) {
   const declared = mainSyncRecipe(root).bootstrap;
@@ -228308,7 +228318,7 @@ function committedInputs(root) {
 function inspectInputInventory(root) {
   return inspectInventory(root, "standalone").inventory;
 }
-function classifyUntrackedPath(root, file, ignored, headSha, reportOutputs, artifactRoot) {
+function classifyUntrackedPath(root, file, ignored, headSha, reportOutputs, artifactRoot, leftover) {
   if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) return null;
   if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) return null;
   if (isPlanFile(root, file)) {
@@ -228331,6 +228341,9 @@ function classifyUntrackedPath(root, file, ignored, headSha, reportOutputs, arti
     return true;
   } };
   if (file.split("/").at(-1)?.startsWith(GENERATED_BIOME_PATH)) return { offender: { input: `unsupported generated-input path ${file}` } };
+  if (ignored && leftover?.(file) && EXECUTABLE_INPUT.test(file)) {
+    return { offender: { message: `Undeclared git-ignored run output is a blocking input: ${file}. Declare it as a recipe report output, or have its test or build command clean it` } };
+  }
   if (!ignored && EXECUTABLE_INPUT.test(file)) return { offender: { input: `uncommitted executable ${file}` } };
   return null;
 }
@@ -228379,12 +228392,13 @@ function inspectInventory(root, completion) {
   const untracked = [];
   const reads = [];
   const artifactRoot = artifactRootOf(root);
+  const leftover = completion === "standalone" ? runLeftoverScope(root) : null;
   for (const ignored of [false, true]) {
     const args = ["ls-files", "--others", "--exclude-standard", "-z", ...ignored ? ["--ignored"] : []];
     for (const file of readGitInventory(root, args).split("\0").filter(Boolean)) {
       if (blocking.has(file) || [...invalidPrivateRoots.keys()].some((parent) => file.startsWith(parent + "/"))) continue;
       untracked.push(file);
-      const classified = classifyUntrackedPath(root, file, ignored, before.headSha, reportOutputs, artifactRoot);
+      const classified = classifyUntrackedPath(root, file, ignored, before.headSha, reportOutputs, artifactRoot, leftover);
       if (classified && "offender" in classified) blocking.set(file, classified.offender);
       else if (classified) reads.push(classified.read);
     }

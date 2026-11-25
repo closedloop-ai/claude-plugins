@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { inspectInputInventory } from "./main-sync-checks.js";
+import { committedInputs, inspectInputInventory } from "./main-sync-checks.js";
 import { producerFor } from "./main-sync-input-catalog.js";
 import { syncFixture } from "./main-sync-test-fixtures.js";
 
@@ -41,16 +41,24 @@ describe("AC-91 real Desktop run outputs at main-sync inventory", () => {
     for (const file of GENERATED_SOURCES) expect(producerFor(value.worktree, file)?.roots, file).toContain(file);
   });
 
-  // Main's ISS-14689 AC2 (#446) made no git-ignored file a validation input, so an ignored run directory never blocks;
-  // the same undeclared executables, untracked and unignored, still do.
-  it("AC-91 refuses an undeclared Desktop or other-app results executable while it is unignored, and never once it is ignored (ISS-14689 AC2)", () => {
-    const value = desktopRun(["apps/desktop/test-results-e2e/leftover.json", "apps/web/test-results-e2e/.last-run.json"]);
-    expect(() => inspectInputInventory(value.worktree)).not.toThrow();
-    const unignored = ["apps/desktop/leftover.json", "apps/web/.last-run.json"];
-    for (const file of unignored) value.write(file, "{}");
-    expect(() => inspectInputInventory(value.worktree))
-      .toThrow(/^Committed validation inputs differ from HEAD: uncommitted executable apps\/desktop\/leftover\.json; uncommitted executable apps\/web\/\.last-run\.json$/);
+  it("AC-91 still refuses an undeclared executable in a Desktop run directory or another app's results file", () => {
+    const extra = ["apps/desktop/test-results-e2e/leftover.json", "apps/web/test-results-e2e/.last-run.json"];
+    const value = desktopRun(extra);
+    expect(() => inspectInputInventory(value.worktree)).toThrow(/blocking input/);
     const rows = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync-blocking-inputs.json"), "utf8")).paths;
-    expect(rows.map((row: { path: string }) => row.path)).toEqual(unignored);
+    expect(rows.map((row: { path: string }) => row.path)).toEqual(extra.sort());
+  });
+
+  it("AC-91 refuses an undeclared ignored executable a Desktop run leaked under its app directory, outside any run directory", () => {
+    const value = desktopRun(["apps/desktop/.local/state/gh/hosts.yml"]);
+    expect(() => inspectInputInventory(value.worktree)).toThrow(/^Undeclared git-ignored run output is a blocking input: apps\/desktop\/\.local\/state\/gh\/hosts\.yml\. /);
+  });
+
+  // Two gates (team-lead ruling, 2026-11-25): main sync's validation inputs never include a git-ignored file
+  // (ISS-14689 AC2), while the inventory still refuses an undeclared ignored run output as a leftover.
+  it("AC-91 main sync's committed validation inputs pass an ignored Desktop leftover that the inventory refuses (ISS-14689 AC2)", () => {
+    const value = desktopRun(["apps/desktop/test-results-e2e/leftover.json"]);
+    expect(() => inspectInputInventory(value.worktree)).toThrow(/^Undeclared git-ignored run output is a blocking input: apps\/desktop\/test-results-e2e\/leftover\.json\. /);
+    expect(committedInputs(value.worktree).headSha).toBe(value.git(["rev-parse", "HEAD"]));
   });
 });

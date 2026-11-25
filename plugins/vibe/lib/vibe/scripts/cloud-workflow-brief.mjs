@@ -29,18 +29,20 @@ async function bootstrap() {
   } catch(error) {fs.rmSync(dir,{recursive:true,force:true});throw error;}
 }
 
-// The refusal of a workflow validation whose commit cannot run the shipped runner.
+// The refusal of a workflow-file validation whose commit cannot run the shipped runner. Only workflow-file lanes reach
+// it: a pnpm command lane or a managed-host lane is briefed without the runner.
 export const WORKFLOW_BRIEF_UNAVAILABLE = "CLOUD_WORKFLOW_BRIEF_UNAVAILABLE";
+const MANAGED_PNPM_ROUTE = "validate this commit through its managed pnpm lanes instead: lanes [{name, command}] whose command is a pnpm script, with no workflow file";
 
 /**
  * Workflow lanes run only through the shipped runner, from the subject commit's own copy of these tools, checked byte
  * for byte against the installed ones. A commit that lacks one, or holds other bytes, is refused by name before any
- * launch: the agent never runs workflow steps itself as root without the package repair (team-lead, 2026-11-25:
- * "a silent root fallback is the defect").
+ * launch: the agent never runs workflow steps itself as root without the package repair (team-lead rulings,
+ * 2026-11-25: refuse with a named error rather than fall back to root, and point to the managed pnpm lanes).
  */
 export function compactWorkflowBrief(request,lanes,key,readCommitted) {
   const root=toolingRoot+"/lib/vibe/scripts", hash=createHash("sha256");
-  const refuse=why=>{throw new Error(`${WORKFLOW_BRIEF_UNAVAILABLE}: workflow lanes run only through the shipped runner, and ${why}`);};
+  const refuse=why=>{throw new Error(`${WORKFLOW_BRIEF_UNAVAILABLE}: workflow lanes run only through the shipped runner, and ${why}; ${MANAGED_PNPM_ROUTE}`);};
   for (const name of modules) {
     const installed=readFileSync(new URL(name,import.meta.url));
     let subject;
