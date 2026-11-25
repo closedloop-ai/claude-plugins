@@ -592,7 +592,7 @@ async function recoveredLostRun(t) {
   const key = sha256(JSON.stringify(f.request));
   const receipt = gitDirReceipt(f.request, key);
   let clock = 0;
-  const admit = (requestKey, file, action, options = {}) => withCloudValidationAdmission({ home: f.home, account: "verified-fixture-account", key: requestKey,
+  const admit = (requestKey, file, action, options = {}) => withCloudValidationAdmission({ home: f.home, account: "unbound-validation", key: requestKey,
     receipt: file, report: () => {}, now: () => clock, wait: async (ms) => { clock += ms; }, launchWindowMs: 60_000, sleepMs: 10_000, timeoutMs: 20_000, ...options }, action);
   const launch = { ...LAUNCH, startedAt: new Date(0).toISOString() };
   await assert.rejects(admit(key, receipt, async ({ launching }) => {
@@ -653,4 +653,27 @@ test("ISS-14476 DT-163R abandon with a terminal receipt keeps its end state, rel
   assert.deepEqual([done.status, done.released.token, queueState(f.home).active], ["completed", stuck.token, null]);
   assert.deepEqual(queueState(f.home).abandoned.at(-1), { key, reason: "abandoned locally with its receipt", sessionId: "cse_lost" });
   assert.deepEqual([regularJson(receipt).status, readLedger(f.home).runs[0].status], ["completed", "started"], "a run that ended is not marked abandoned");
+});
+
+test("ISS-14476 DT-165R abandon, then an identical rerun, leaves the queue active at null", async (t) => {
+  const { f, receipt, next, abandon } = await recoveredLostRun(t);
+  await abandon(true);
+  assert.equal(queueState(f.home).active, null);
+  const remote = (action) => action === "list_runs" ? { data: [] } : assert.fail(`the identical rerun called ${action}`);
+  await assert.rejects(validateCommit(f.request, { remote, home: f.home, executor: NO_EXECUTOR, sleep: async () => {} }), /cloud validation already ended: abandoned/);
+  assert.equal(queueState(f.home).active, null, "the identical rerun refused as already ended and left the account free");
+  assert.equal(regularJson(receipt).status, "abandoned");
+  assert.equal(await next(() => "admitted"), "admitted", "another request is admitted after the rerun while the provider still lists nothing");
+});
+
+test("ISS-14476 DT-165R a request that launched, or polled a receipt abandoned during its poll, still holds the account on exit", async (t) => {
+  const f = fixture(t);
+  writeAtomic(f.receipt("polled"), { status: "running", routineId: "standing", runId: "run-polled" });
+  await f.execute("polled", async () => { writeAtomic(f.receipt("polled"), { ...regularJson(f.receipt("polled")), status: "abandoned" }); });
+  assert.deepEqual([queueState(f.home).active?.key, queueState(f.home).active?.phase, queueState(f.home).active?.pid], ["polled", "running", null],
+    "a poll whose receipt was abandoned during it holds until the provider ends the run");
+  writeAtomic(f.receipt("relaunched"), { status: "abandoned", routineId: "standing", runId: "run-old" });
+  await f.execute("relaunched", async ({ launching }) => { await launching(); });
+  assert.deepEqual([queueState(f.home).active?.key, queueState(f.home).active?.phase, queueState(f.home).active?.pid], ["relaunched", "running", null],
+    "a request that launched holds although its receipt still says abandoned");
 });

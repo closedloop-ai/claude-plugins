@@ -81,6 +81,8 @@ export async function withCloudValidationAdmission({ home, account, key, receipt
   });
   let selected = false;
   let unresolved = false;
+  // Admitted onto a receipt the person already abandoned: such a request refuses before any launch, so it holds nothing.
+  let abandonedBefore = false;
   try {
     while (!selected) {
       signal?.throwIfAborted();
@@ -91,6 +93,7 @@ export async function withCloudValidationAdmission({ home, account, key, receipt
         if (!state.active && state.queued[0]?.token === owner.token) {
           state.queued.shift();
           state.active = { ...owner, phase: "reserved" };
+          abandonedBefore = existsSync(receipt) && regularJson(receipt)?.status === "abandoned";
           selected = true;
         }
         return state.active;
@@ -143,7 +146,10 @@ export async function withCloudValidationAdmission({ home, account, key, receipt
       if (state.active?.token !== owner.token) return;
       if (drainUnbound) { state.active = null; return; }
       const latest = existsSync(receipt) ? regularJson(receipt) : null;
-      if (latest && !TERMINAL.has(latest.status)) Object.assign(state.active, { phase: "running", pid: null, identity: null });
+      // A request that never launched and still finds the receipt abandoned leaves the account free; one that launched,
+      // or polled a run whose receipt was abandoned during its poll, holds until the provider ends that run.
+      const refused = abandonedBefore && state.active.phase === "reserved" && latest?.status === "abandoned";
+      if (latest && !TERMINAL.has(latest.status) && !refused) Object.assign(state.active, { phase: "running", pid: null, identity: null });
       else if (!latest && unresolved && state.active.phase === "launching") Object.assign(state.active, { pid: null, identity: null });
       else state.active = null;
     });
