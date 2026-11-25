@@ -132,9 +132,10 @@ export function cloudHostEnvironment(current, home, registry) {
 
 // The host's own registry trust and proxy settings. Root setup is the host's environment setup and keeps them (r18:
 // without them root's first registry fetch failed in 1 s, where r17's root bootstrap with them took 37 s); the
-// non-root actor never receives them (team-lead, 2026-11-24, attempt six).
+// non-root actor never receives them (team-lead, 2026-11-24, attempt six). uv reads the system trust store only
+// under UV_NATIVE_TLS or UV_SYSTEM_CERTS, which the cloud sets (r24's `uv sync` warned about UV_NATIVE_TLS).
 const HOST_NETWORK = ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO",
-  "NODE_USE_SYSTEM_CA", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"];
+  "NODE_USE_SYSTEM_CA", "UV_NATIVE_TLS", "UV_SYSTEM_CERTS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"];
 
 /** The environment of a root setup command: the actor's standard environment plus the host's own network settings. */
 export function rootSetupEnvironment(env, current, checkout) {
@@ -155,6 +156,41 @@ export function pinnedPnpmVersion(checkout) {
   try { manifest = JSON.parse(readFileSync(path.join(checkout, "package.json"), "utf8")); } catch { return null; }
   const pin = typeof manifest?.packageManager === "string" ? manifest.packageManager : "";
   return /^pnpm@(\d+\.\d+\.\d+(?:-[\w.]+)?)(?:\+.+)?$/.exec(pin)?.[1] ?? null;
+}
+
+// One package repair for the environment's setup template and for root setup before any validation lane (team-lead,
+// 2026-11-25: "so a stale cached image self-heals on every validate whether or not the environment script was
+// re-pasted"). A cached image can hold packages dpkg unpacked but never configured: r24 left zsh and zsh-common there
+// at a conffile prompt with no input, and CI's own zsh install then exited 100. The repair finishes any interrupted
+// configuration without a prompt, keeping existing conffiles, then requires that no package is left partly installed.
+// cloud-env-setup.sh holds these exact lines (cloud-setup-proof.test.mjs); `$SUDO` is empty as root.
+const PARTLY_INSTALLED = `  partly() {
+    dpkg-query -W -f='\${Status} \${binary:Package}\\n' \\
+      | awk 'NF && ($2 != "ok" || ($3 != "installed" && $3 != "config-files" && $3 != "not-installed")) { print $4 ":" $3 }'
+  }
+`;
+export const PACKAGE_REPAIR = `${PARTLY_INSTALLED}  dpkg-query -W >/dev/null || { echo "dpkg-query failed" >&2; exit 1; }
+  $SUDO env DEBIAN_FRONTEND=noninteractive dpkg --force-confdef \\
+    --force-confold --configure -a </dev/null \\
+    || { echo "dpkg --configure -a failed" >&2; exit 1; }
+  [ -z "$(partly)" ] \\
+    || { echo "dpkg left packages partly installed: $(partly | tr '\\n' ' ')" >&2; exit 1; }
+`;
+// Where a workflow validation's plan records the repair, for every lane it runs.
+export const PACKAGE_REPAIR_FILE = "package-repair.json";
+
+/**
+ * Run PACKAGE_REPAIR as root on a host with a dpkg database, or return null when there is none to repair here. The
+ * result names the packages that were partly installed before it ran, so a validation shows what a stale image held.
+ */
+export function repairHostPackages({ environment = process.env, uid = process.getuid?.(), database = "/var/lib/dpkg/status", run = execFile } = {}) {
+  if (uid !== 0 || !existsSync(database)) return null;
+  // dpkg requires ldconfig and start-stop-daemon on PATH.
+  const options = { env: { PATH: `${environment.PATH ?? "/usr/bin:/bin"}:/usr/local/sbin:/usr/sbin:/sbin`, SUDO: "" }, timeout: 300_000 };
+  const before = run("sh", ["-c", `${PARTLY_INSTALLED}  partly`], options);
+  const repaired = run("sh", ["-c", PACKAGE_REPAIR], options);
+  return { exitCode: repaired.exitCode, partlyInstalled: before.exitCode === 0 ? before.stdoutTail.split("\n").filter(Boolean) : null,
+    detail: repaired.exitCode === 0 ? "" : setupFailureDetail(repaired) };
 }
 
 function processResult(child) {
@@ -376,7 +412,8 @@ export function cloudTypecheckArgv(argv, read) {
   return [...literal,...argv.slice(index+1)];
 }
 
-function ownTree(root, actor) {
+/** Hand a tree root setup wrote to the actor, links included, so its commands own what they run in. */
+export function ownTree(root, actor) {
   lchownSync(root, actor.uid, actor.gid);
   if (lstatSync(root).isDirectory()) for (const entry of readdirSync(root)) ownTree(path.join(root, entry), actor);
 }
@@ -395,7 +432,7 @@ function skipped(name, why) { return { name, exitCode: null, notRun: why, stdout
  */
 export function runCloudHostPlan({ checkout, directory, lanes, uid, gid, environment = process.env,
   contract, run = execFile, provision = ownTree, allocate = reserveCloudPorts, browser = prepareHostChromium, leaseDirectory,
-  provisioned = false, onLane = () => {}, now = Date.now, laneLimits,
+  provisioned = false, onLane = () => {}, now = Date.now, laneLimits, repair = run === execFile ? repairHostPackages : () => null,
 }) {
   const actor = validationHostActor({ uid, gid });
   const root = realpathSync(checkout);
@@ -422,6 +459,15 @@ export function runCloudHostPlan({ checkout, directory, lanes, uid, gid, environ
   }
   if (asRoot && (contract?.data?.recipes?.cloudValidation?.rootServices ?? []).length) {
     onLane({ name: "root services", exitCode: prerequisiteFailure ? 1 : 0 }, (now() - servicesStarted) / 1000);
+  }
+  // The package repair the workflow path runs, once as root before any lane. One that finds nothing to finish stays out
+  // of the lane list.
+  if (asRoot && !provisioned && !prerequisiteFailure) {
+    const started = now(), repaired = repair();
+    if (repaired && repaired.exitCode !== 0) { prerequisiteFailure = "root setup: package repair"; prerequisiteDetail = repaired.detail; }
+    if (repaired && (repaired.exitCode !== 0 || repaired.partlyInstalled?.length)) {
+      onLane({ name: "root package repair", exitCode: repaired.exitCode }, (now() - started) / 1000);
+    }
   }
   // Root setup also fetches the checkout's pinned pnpm into the actor's home, so no actor command self-installs it
   // (team-lead, 2026-11-24, attempt six); the actor then owns what it wrote.
@@ -672,7 +718,15 @@ export function mergeHostPhases(plan, setupResults, runRequested) {
 export const hostTimeLine = (result, seconds) =>
   "CLOUD_HOST_LANE_TIME " + JSON.stringify({ name: result.name, exitCode: result.exitCode ?? null, seconds: Math.round(seconds) });
 
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/**
+ * Whether this process runs `moduleUrl` as its script. Under `node -e` the first argument is data, which the workflow
+ * bootstrap passes and which is no path, so a module it imports must not resolve it (ENAMETOOLONG in its plan step).
+ */
+export function runsAsScript(moduleUrl, entry = process.argv[1]) {
+  try { return Boolean(entry) && realpathSync(entry) === fileURLToPath(moduleUrl); } catch { return false; }
+}
+
+if (runsAsScript(import.meta.url)) {
   const runner = fileURLToPath(import.meta.url);
   const phase = process.argv[2] === "lanes" ? "lanes" : "setup";
   let output = "";

@@ -4,11 +4,33 @@
     SUDO=sudo
   fi
 
-  # zsh (CI's node-tests lane)
-  if ! command -v zsh >/dev/null 2>&1; then
-    $SUDO apt-get update || echo "apt update failed"
-    $SUDO apt-get install -y zsh || echo "zsh install failed"
+  # zsh (CI's node-tests lane). In a cached environment, dpkg stopped at a
+  # conffile prompt with no input and left zsh and zsh-common unpacked but not
+  # configured, a state `command -v zsh` accepts. The package repair (the
+  # same lines as PACKAGE_REPAIR in cloud-validation-host.mjs, which cloud
+  # validation also runs before any lane) finishes any interrupted
+  # configuration keeping existing conffiles and requires no package partly
+  # installed; then zsh and zsh-common must both be configured.
+  ZSH_OK="$(printf 'install ok installed\ninstall ok installed')"
+  zsh_state() { dpkg-query -W -f='${Status}\n' zsh zsh-common 2>/dev/null; }
+  partly() {
+    dpkg-query -W -f='${Status} ${binary:Package}\n' \
+      | awk 'NF && ($2 != "ok" || ($3 != "installed" && $3 != "config-files" && $3 != "not-installed")) { print $4 ":" $3 }'
+  }
+  dpkg-query -W >/dev/null || { echo "dpkg-query failed" >&2; exit 1; }
+  $SUDO env DEBIAN_FRONTEND=noninteractive dpkg --force-confdef \
+    --force-confold --configure -a </dev/null \
+    || { echo "dpkg --configure -a failed" >&2; exit 1; }
+  [ -z "$(partly)" ] \
+    || { echo "dpkg left packages partly installed: $(partly | tr '\n' ' ')" >&2; exit 1; }
+  if [ "$(zsh_state)" != "$ZSH_OK" ]; then
+    $SUDO apt-get update </dev/null || { echo "apt update failed" >&2; exit 1; }
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+      zsh </dev/null || { echo "zsh install failed" >&2; exit 1; }
   fi
+  [ "$(zsh_state)" = "$ZSH_OK" ] \
+    || { echo "zsh is not configured: $(zsh_state | tr '\n' ' ')" >&2; exit 1; }
 
   # uv + Python 3.13 (Python lanes)
   if ! command -v uv >/dev/null 2>&1; then

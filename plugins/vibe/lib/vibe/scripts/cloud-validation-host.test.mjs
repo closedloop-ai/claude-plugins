@@ -538,3 +538,20 @@ test("ISS-14476 each lane and the root service start report their wall time as t
     'CLOUD_HOST_LANE_TIME {"name":"api","exitCode":0,"seconds":61}',
   ]);
 });
+
+test("ISS-14476 root setup runs the package repair once before any lane: a failure stops every lane with its reason, and a repair with nothing to finish stays out of the lane list", (t) => {
+  const lanes = [{ name: "unit", command: "pnpm test" }];
+  const plan = (repaired, extra = {}) => {
+    const calls = [], timed = [];
+    const observed = runCloudHostPlan({ ...fixture(t), lanes, uid: 0, gid: 0, environment: { PATH: "/bin" }, run: () => PASS, provision: () => {},
+      repair: () => { calls.push(1); return repaired; }, onLane: (lane) => timed.push([lane.name, lane.exitCode]), ...extra });
+    return { calls: calls.length, timed: timed.filter(([name]) => name.startsWith("root ")), lanes: observed.map(({ exitCode, notRun }) => [exitCode, notRun ?? null]) };
+  };
+  assert.deepEqual(plan({ exitCode: 1, partlyInstalled: ["zsh:unpacked"], detail: "exit 1; dpkg --configure -a failed" }),
+    { calls: 1, timed: [["root package repair", 1]], lanes: [[null, "prerequisite root setup: package repair failed: exit 1; dpkg --configure -a failed"]] });
+  assert.deepEqual(plan({ exitCode: 0, partlyInstalled: ["zsh:unpacked"], detail: "" }), { calls: 1, timed: [["root package repair", 0]], lanes: [[0, null]] },
+    "a repair that finished packages is reported and the lanes run");
+  assert.deepEqual(plan({ exitCode: 0, partlyInstalled: [], detail: "" }), { calls: 1, timed: [], lanes: [[0, null]] });
+  assert.deepEqual(plan(null, { provisioned: true }), { calls: 0, timed: [], lanes: [[0, null]] }, "the lanes phase does not repair again");
+  assert.deepEqual(plan(null, { uid: 1000, gid: 1000 }), { calls: 0, timed: [], lanes: [[0, null]] }, "a non-root runner does not repair");
+});

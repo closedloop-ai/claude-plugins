@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { git, makeCheckout, makeHome } from "../../../skills/vibe/scripts/test-fixtures.mjs";
 import { validationBrief, validationLanes } from "./cloud-worker.mjs";
@@ -11,7 +11,7 @@ import { workflowLaneDefinitions } from "./workflow-lane-definitions.mjs";
 import { reporterFiles } from "./cloud-outcome-instruction.mjs";
 
 const tools="plugins/vibe/lib/vibe/scripts";
-const fixtureFiles=["cloud-workflow-plan.mjs","workflow-lane-definitions.mjs","cloud-receipts.mjs",...reporterFiles];
+const fixtureFiles=["cloud-workflow-plan.mjs","workflow-lane-definitions.mjs","cloud-receipts.mjs","cloud-validation-host.mjs","cloud-workflow-runner.mjs",...reporterFiles];
 const checksum=value=>createHash("sha256").update(value).digest("hex");
 const workflowPath=".github/workflows/ci.yml";
 const root=fileURLToPath(new URL("../../../../../",import.meta.url));
@@ -108,4 +108,81 @@ test("large committed workflow briefs reconstruct every selected recipe and pin 
   writeFileSync(path.join(worktree,workflowPath),workflow+"\n# local divergence\n");
   const second=run();
   assert.equal(readFileSync(path.join(second,"lane-0.json"),"utf8"),expected[0].command);
+});
+
+test("AC-68 the compact brief runs each workflow lane through the shipped runner and never has the agent run recipe steps or install dependencies",t=>{
+  const f=makeHome("compact-runner-");t.after(f.cleanup);
+  const workflow="on: pull_request\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: echo compact lane\n";
+  const files={[workflowPath]:workflow};
+  for (const name of fixtureFiles) files[tools+"/"+name]=readFileSync(path.join(root,tools,name),"utf8");
+  const worktree=path.join(f.root,"checkout");
+  makeCheckout({...f,checkout:worktree,remoteUrl:"https://github.com/example/widgets.git",files});
+  const commit=git(worktree,["rev-parse","HEAD"],f.home);
+  const request={provider:"claude",repository:"example/widgets",commit,worktree,branch:"main",model:"fixture-model",lanes:[{name:"check"}],
+    resultArtifact:{kind:"validation-outcomes",branch:"vibe-validation-results/runner",path:".vibe-validation-outcomes-87654321.json"},
+    laneSource:{kind:"github-workflow",path:workflowPath,sha256:checksum(workflow),commit}};
+  const brief=validationBrief(request);
+  assert.match(brief,/Run each lane by its zero-based index, 0 through 0, from the repository root with exactly `node "\$p\/cloud-workflow-runner\.mjs" <index>`/);
+  assert.match(brief,/environment setup as root, then every other step as a non-root user\. Never run a recipe step yourself/);
+  assert.match(brief,/ends with a CLOUD_WORKFLOW_NOT_RUN line, record exitCode null and notRun/);
+  assert.doesNotMatch(brief,/perform its committed setup\/action steps|Execute its complete workflow|Install dependencies/,"the agent no longer applies recipe steps or installs in its own checkout");
+  const command=brief.split("\n").find(line=>line.startsWith("node -e "));
+  const dir=execFileSync("bash",["-ec",command],{cwd:worktree,encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
+  for (const name of ["cloud-workflow-runner.mjs","cloud-validation-host.mjs"]) {
+    const shipped=path.join(dir,name);
+    assert.equal(existsSync(shipped)?readFileSync(shipped,"utf8"):null,files[tools+"/"+name],name+" is shipped into the private plan directory");
+  }
+  const lane=spawnSync(process.execPath,[path.join(dir,"cloud-workflow-runner.mjs"),"0"],{cwd:worktree,encoding:"utf8"});
+  assert.equal(lane.status,0,lane.stderr);
+  assert.match(lane.stdout,/^compact lane$/m);
+  assert.match(lane.stdout.trim().split("\n").at(-1),/^CLOUD_WORKFLOW_LANE \{"exitCode":0,"steps":\[\[1,"action",\d+,0\],\[2,"actor",\d+,0\]\]\}$/);
+  assert.equal(git(worktree,["status","--porcelain"],f.home),"");
+});
+
+// A compact plan prepared as the bootstrap prepares it, with the host's package repair replaced by a fixed result.
+function repairedPlan(t){
+  const f=makeHome("compact-repair-");t.after(f.cleanup);
+  const workflow="on: pull_request\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: echo compact lane\n";
+  const files={[workflowPath]:workflow};
+  for (const name of fixtureFiles) files[tools+"/"+name]=readFileSync(path.join(root,tools,name),"utf8");
+  const worktree=path.join(f.root,"checkout");
+  makeCheckout({...f,checkout:worktree,remoteUrl:"https://github.com/example/widgets.git",files});
+  const commit=git(worktree,["rev-parse","HEAD"],f.home);
+  const request={provider:"claude",repository:"example/widgets",commit,worktree,branch:"main",model:"fixture-model",lanes:[{name:"check"}],
+    resultArtifact:{kind:"validation-outcomes",branch:"vibe-validation-results/repair",path:".vibe-validation-outcomes-11223344.json"},
+    laneSource:{kind:"github-workflow",path:workflowPath,sha256:checksum(workflow),commit}};
+  const command=validationBrief(request).split("\n").find(line=>line.startsWith("node -e "));
+  const shipped=execFileSync("bash",["-ec",command],{cwd:worktree,encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
+  const {plan}=JSON.parse(Buffer.from(command.slice(command.lastIndexOf(" ")+1),"base64url"));
+  const prepare=repaired=>{
+    const dir=mkdtempSync(path.join(worktree,".git","vibe-repair-"));
+    for (const name of fixtureFiles) copyFileSync(path.join(shipped,name),path.join(dir,name));
+    const reader=pathToFileURL(path.join(dir,"cloud-workflow-plan.mjs")).href;
+    const child=spawnSync(process.execPath,["--input-type=module","-e",`import { prepareWorkflowPlan } from ${JSON.stringify(reader)};
+prepareWorkflowPlan(JSON.parse(process.argv[1]),process.argv[2],()=>JSON.parse(process.argv[3]));`,JSON.stringify(plan),dir,JSON.stringify(repaired)],{cwd:worktree,encoding:"utf8"});
+    assert.equal(child.status,0,child.stderr);
+    return dir;
+  };
+  const lane=dir=>spawnSync(process.execPath,[path.join(dir,"cloud-workflow-runner.mjs"),"0"],{cwd:worktree,encoding:"utf8"});
+  return {prepare,lane};
+}
+
+test("ISS-14476 the plan records the host's package repair once before any lane, and a failed repair refuses every lane with its reason before any step",t=>{
+  const {prepare,lane}=repairedPlan(t);
+  const failure={exitCode:1,partlyInstalled:["zsh:unpacked"],detail:"exit 1; dpkg --configure -a failed"};
+  const failed=prepare(failure);
+  const record=path.join(failed,"package-repair.json");
+  assert.deepEqual(existsSync(record)?JSON.parse(readFileSync(record,"utf8")):null,failure,"the plan holds the repair's result for every lane");
+  const refused=lane(failed);
+  assert.equal(refused.status,78);
+  assert.equal(refused.stdout,"","no step runs");
+  assert.equal(refused.stderr,"CLOUD_WORKFLOW_NOT_RUN root setup: the host's package repair failed before any lane: exit 1; dpkg --configure -a failed\n");
+  assert.equal(existsSync(path.join(prepare(null),"package-repair.json")),false,"a host with nothing to repair records nothing");
+});
+
+test("ISS-14476 each lane's line names the packages the plan's repair finished before it",t=>{
+  const {prepare,lane}=repairedPlan(t);
+  const ran=lane(prepare({exitCode:0,partlyInstalled:["zsh:unpacked","zsh-common:unpacked"],detail:""}));
+  assert.equal(ran.status,0,ran.stderr);
+  assert.match(ran.stdout.trim().split("\n").at(-1),/^CLOUD_WORKFLOW_LANE \{"exitCode":0,"steps":\[\[1,"action",\d+,0\],\[2,"actor",\d+,0\]\],"repaired":\["zsh:unpacked","zsh-common:unpacked"\]\}$/);
 });
