@@ -209,9 +209,10 @@ function confirmConnectors(updated, allowlist) {
 
 /**
  * Run one brief on this machine's standing routine: create it once (intent first), update its job_config,
- * run it, and record the run's session id in the ledger before the lock is released.
+ * run it, and record the run's session id in the ledger before the lock is released. `afterRun` receives the
+ * launch with the acknowledged run and session ids before the ledger is written.
  */
-export async function runOnStanding({ remote, home = os.homedir(), environment, ccr, brief, allowlist = [], label, waitMs, refusal, account = currentClaudeAccount, requestKey, beforeRun }) {
+export async function runOnStanding({ remote, home = os.homedir(), environment, ccr, brief, allowlist = [], label, waitMs, refusal, account = currentClaudeAccount, requestKey, beforeRun, afterRun }) {
   return withRoutineLock(home, waitMs, async () => {
     const ledger = readLedger(home);
     requireLedgerPin(ledger, environment, home, account);
@@ -263,9 +264,13 @@ export async function runOnStanding({ remote, home = os.homedir(), environment, 
     const runId = started?.run_id ?? started?.run?.id ?? started?.session_id;
     if (!runId) throw Object.assign(new Error("RemoteTrigger run returned no run or session id"),{code:"CLOUD_RUN_NOT_CREATED"});
     const sessionId = started?.session_id ?? null;
+    // The acknowledged run goes on the caller's reservation first; a failure there still leaves the ledger row.
+    let unrecorded;
+    try { await afterRun?.({ ...launch, routineId: standing.id, runId, sessionId }); } catch (error) { unrecorded = error; }
     ledger.runs.push({ runId, sessionId, routineId: standing.id,
       ...binding, ...(launch ? {launchToken:launch.launchToken} : {}), label: label ?? null, startedAt: new Date().toISOString(), status: "started", maxWallMs: waitMs, ...(requestKey ? { requestKey } : {}) });
     try { writeLedger(home, ledger); } catch (error) { error.launchUncertain = true; throw error; }
+    if (unrecorded) { unrecorded.launchUncertain = true; throw unrecorded; }
     return { routineId: standing.id, runId, sessionId };
   });
 }

@@ -67,7 +67,7 @@ import { boundProbeReceipt, cloudHostInstruction, describeCloudLanes, executeClo
 import { validationPrerequisites, validatePrerequisiteOutcomes } from "./cloud-validation-prerequisites.mjs";
 import { checkStreamDirectories, privateStreamEvidence, validationReportInstruction, validationReportLanes, validationReportSummary } from "./cloud-validation-report.mjs";
 import { codexEnvironment, installInstruction, PROVENANCE_COMMAND, provenanceProblem, resolveRepository } from "./cloud-repository.mjs";
-import { visibleRun } from "./cloud-validation-admission.mjs";
+import { releaseValidationReservation, visibleRun } from "./cloud-validation-admission.mjs";
 import { LANE_INDEX } from "./cloud-validation-e2e.mjs";
 import { workflowLaneDefinitions } from "./workflow-lane-definitions.mjs";
 import { connectionLabel, providerDataOr, sessionBinding } from "./provider.mjs";
@@ -310,7 +310,8 @@ function pauseSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 
 /**
  * Use the signed-in Claude client's RemoteTrigger tool. Create requires an intent already recorded in the routine ledger.
  * A loaded machine can time out the local `claude -p` (spawnSync ETIMEDOUT); an idempotent action is then sent again
- * after a pause, at most twice, and the last timeout is thrown as CLOUD_CALL_TIMEOUT.
+ * after a pause, at most twice, and the last timeout is thrown as CLOUD_CALL_TIMEOUT. A timeout after the stream
+ * already holds the one tool result is read as that result, so a run the provider accepted keeps its run and session ids.
  */
 export function remoteTrigger(action, payload, { pause = pauseSync, ...options } = {}) {
   const retried = RETRIED_ACTIONS.has(action);
@@ -336,7 +337,7 @@ function remoteTriggerOnce(action, payload, { run = runCommand, cwd, intent, hom
   const executed = frames?.executed ?? [];
   const last = executed.at(-1);
   const diagnostic = triggerDiagnostic(result, terminal, last);
-  if (result.error?.code === "ETIMEDOUT") {
+  if (result.error?.code === "ETIMEDOUT" && (executed.length !== 1 || !last?.raw.trim())) {
     throw Object.assign(new Error(`Claude RemoteTrigger ${action} timed out on this machine after ${timeout / 1000} s (${diagnostic})`), { code: CloudCallError.Timeout });
   }
   const details = diagnostic ? ` (${diagnostic})` : "";
@@ -383,14 +384,14 @@ function remoteTriggerOnce(action, payload, { run = runCommand, cwd, intent, hom
  * then for each run its job_config is updated (connectors cleared, or set to the allow list) and it is run under
  * the machine lock. The run is bound by the id the run call returns.
  */
-export async function startClaude(request, brief, { remote = remoteTrigger, env = process.env, home = os.homedir(), label = request.ticket ?? null, account = currentClaudeAccount, requestKey, beforeRun } = {}) {
+export async function startClaude(request, brief, { remote = remoteTrigger, env = process.env, home = os.homedir(), label = request.ticket ?? null, account = currentClaudeAccount, requestKey, beforeRun, afterRun } = {}) {
   const environment = resolveClaudeEnvironment(request, { env });
   const ccr = {
     environment_id: environment.id,
     session_context: { model: request.model, sources: [{ git_repository: { url: `https://github.com/${requireRepository(request)}` } }], allowed_tools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"] },
   };
   const { routineId, runId, sessionId } = await runOnStanding({
-    remote, home, environment, ccr, brief, allowlist: request.connectorAllowlist ?? [], label, account, requestKey, beforeRun,
+    remote, home, environment, ccr, brief, allowlist: request.connectorAllowlist ?? [], label, account, requestKey, beforeRun, afterRun,
     waitMs: request.maxWallMs ?? DEFAULT_WALL_MS, refusal: (error) => createRefusal(error, environment, remote),
   });
   return { provider: "claude", taskId: runId, runId, sessionId, routineId, environment, startedAt: new Date().toISOString() };
@@ -620,13 +621,13 @@ export async function abandonDispatch(request, { confirm = false, home = os.home
   return abandoned;
 }
 
-/** End a validation that will not be read: its receipt is abandoned and recorded routines are swept. */
+/** End a validation that will not be read: its receipt is abandoned and recorded routines are swept. A launch that wrote no receipt releases its queue reservation by request key. */
 export async function abandonValidation(request, { confirm = false, home = os.homedir(), remote = cliRemote(request.worktree), executor = chromeRemoval(), stderr } = {}) {
   validateValidationRequest(request);
-  const base = validationReceiptPath(request, sha256(JSON.stringify(request)));
+  const key = sha256(JSON.stringify(request)), base = validationReceiptPath(request, key);
   const file = request.lanes?.some(lane => lane.name === "cloud-capabilities")
     ? boundProbeReceipt(base, validationLanes(request).lanes, readLedger(home), resolveClaudeEnvironment(request)) : base;
-  if (!existsSync(file)) throw new Error("no cloud task exists to poll");
+  if (!existsSync(file)) return releaseValidationReservation({ home, key, confirm, unconfirmed: (plan) => unconfirmed("abandon", plan) });
   const receipt = JSON.parse(readFileSync(file, "utf8"));
   const abandoned = TERMINAL.has(receipt.status) ? receipt : { ...receipt, status: "abandoned", finishedAt: new Date().toISOString() };
   if (!confirm) return unconfirmed("abandon", { receipt: file, from: receipt.status ?? null, to: abandoned.status, sweepsRoutines: true });
@@ -972,7 +973,7 @@ export async function validateCommit(request, { remote = cliRemote(request.workt
       await sweepRemovals({ home, remote, worktree: request.worktree, executor, account: currentAccount, ...(stderr ? { stderr } : {}) });
       const subject = proof ? { ...routed, branch: proof.branch } : routed;
       const started = await startClaude({ ...subject, connectorAllowlist: [] }, validationBrief(routed, managedHost, proof?.branch,digest), { remote, home,
-        account: currentAccount, requestKey: digest, beforeRun: launch => launching(launch,{managedHost:Boolean(managedHost),outcomeTransport}), label: `validate ${request.commit.slice(0, 12)}` });
+        account: currentAccount, requestKey: digest, beforeRun: launch => launching(launch,{managedHost:Boolean(managedHost),outcomeTransport}), afterRun: launching, label: `validate ${request.commit.slice(0, 12)}` });
       return { ...started, outcomeTransport, ...(managedHost ? {managedHost:true} : {}), ...(proof ? {proof} : {}) };
     },
     poll: (started) => pollTask(started, routed, { remote, resume, waitForVisibility: true, ...(sleep ? { sleep } : {}), ...(now ? { now } : {}) }),
