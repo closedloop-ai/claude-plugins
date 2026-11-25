@@ -84,12 +84,22 @@ export function prepareMainSyncInputs(raw: unknown) {
 export function prepareMainSync(raw: unknown) {
   const value = syncContext(raw, "prepare");
   const root = value.place.root;
-  const inventory = inspectInputInventory(root);
   const previousFile = join(value.place.dir, MAIN_SYNC_FILE);
   const state = existsSync(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : undefined;
-  // Generated inputs are proven once, after the merge; only a proof already recorded for this exact commit is rechecked here.
-  if (state?.inputs?.headSha === inventory.headSha && state.inputs.treeSha === inventory.treeSha) committedInputs(root);
   const previous = state?.phase === "input-readiness" ? state.previous : state;
+  // A branch already 0 behind main changes nothing here, so it is not scanned: inputs, validate and push still take the
+  // whole inventory (a 0-behind preparation once scanned for 37 minutes). A branch behind main proves its inputs once,
+  // before the fetch; a branch 0 behind at the `ls-remote` read proves them after the fetch only if main moved past HEAD
+  // in between. Either way the proof comes before a merge could touch them.
+  let scanned = false;
+  const scan = () => {
+    const inventory = inspectInputInventory(root);
+    // Generated inputs are proven once, after the merge; only a proof already recorded for this exact commit is rechecked here.
+    if (state?.inputs?.headSha === inventory.headSha && state.inputs.treeSha === inventory.treeSha) committedInputs(root);
+    scanned = true;
+  };
+  const advertisedMain = remoteMainSha(root);
+  if (!advertisedMain || !isAncestor(root, advertisedMain)) scan();
   if (previous && (previous.worktree !== root || previous.branch !== value.place.branch
     || previous.originalBase !== value.place.session.baseCommit || previous.operator.id !== value.place.session.operator.id
     || previous.operator.email !== value.place.session.operator.email)) {
@@ -104,6 +114,7 @@ export function prepareMainSync(raw: unknown) {
   try { git(root, ["fetch", "origin", "main"], { timeout: GIT_NETWORK_MS }); }
   catch { throw new MainSyncError("Fresh main fetch failed; nothing was published"); }
   const fetchedMain = git(root, ["rev-parse", "FETCH_HEAD^{commit}"]);
+  if (!scanned && !isAncestor(root, fetchedMain)) scan();
   const startingHead = git(root, ["rev-parse", "HEAD"]);
   const common = git(root, ["merge-base", startingHead, fetchedMain]);
   const decision = mainMergeDecision(root, value.place.session, fetchedMain);
@@ -386,6 +397,11 @@ function mainMergeDecision(root: string, session: MainSyncSession, mainSha: stri
 function isAncestor(root: string, commit: string) {
   try { git(root, ["merge-base", "--is-ancestor", commit, "HEAD"]); return true; }
   catch { return false; }
+}
+/** The commit origin's main names, read without fetching; empty when it cannot be read, so the caller scans. */
+function remoteMainSha(root: string) {
+  try { return remoteHead(root, "main"); }
+  catch { return ""; }
 }
 function remoteHead(root: string, branch: string) {
   try { return git(root, ["ls-remote", "origin", `refs/heads/${branch}`], { timeout: GIT_NETWORK_MS }).split("\t")[0] ?? ""; }

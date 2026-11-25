@@ -3,7 +3,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { actionSchema, dropPendingSchema, ledgerSchema, migrateSchema, registerSchema, requireSupportedCapabilities, type Capability, type Ledger, type RetainedRecord } from "./contracts.js";
+import { actionSchema, capabilityIdentity, dropPendingSchema, ledgerSchema, migrateSchema, registerSchema, requireSupportedCapabilities, type Capability, type Ledger, type RetainedRecord } from "./contracts.js";
+import { recordModes } from "./record-context.js";
 import { isVibePlugin } from "../../../plugins/vibe/shared/plugin-roots.mjs";
 import { sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
 import { assertIsolatedTestRead } from "../../../plugins/vibe/lib/vibe/scripts/test-state-isolation.mjs";
@@ -158,12 +159,19 @@ export type StrandedRecordVerifier = (lock: string, ledger: Ledger, retained: Re
 
 /**
  * Rebinds only a stopped writer with proven definition loss or upgrade, or moves a stopped writer whose runtime
- * cannot run to the other harness, retaining every prior state.
+ * cannot run to the other harness, retaining every prior state. A harness switch requires the capabilities in the new
+ * runtime's names. Supplied capabilities for a Claude binding keep only the record writes some change-worker action
+ * declares, since the Claude launcher refuses any other; capabilities left out keep the recorded binding as it is.
+ * A switch or a definition change may add only what the current definition declares. A same-runtime rebind whose capabilities differ from the recorded ones only
+ * in naming (`capabilityIdentity`) is allowed, so a writer a harness switch left with the old runtime's names can run.
  * With a verifier and the parent's stopped-turn evidence, it also releases the writer's own record grant
  * that only the removed definition could have released, in the same atomic ledger update.
  */
 export function migrateWriter(input: unknown, currentPluginRoot: string, verifyRetained?: StrandedRecordVerifier) {
   const data = migrateSchema.parse(input);
+  if (data.harnessSwitch && !data.capabilities) {
+    throw new Error("A harness switch requires the capabilities the parent discovered in the new runtime's names; the recorded ones are spelled for the old runtime");
+  }
   if (data.capabilities) requireSupportedCapabilities(data.capabilities, sessionBinding(data.worktree));
   const currentDefinition = (capabilities: Capability[]) => {
     const found = readDefinition(currentPluginRoot, "vibe-change-worker", capabilities);
@@ -180,7 +188,11 @@ export function migrateWriter(input: unknown, currentPluginRoot: string, verifyR
     const ledger = readLedger(place);
     if (ledger.runtime !== data.runtime || ledger.workerId !== data.previousWorkerId
       || ledger.binding.digest !== data.previousDigest) throw new Error("Migration requires the exact recorded writer and digest");
-    const definition = currentDefinition(data.capabilities ?? ledger.binding.capabilities);
+    const runtime = data.harnessSwitch?.to ?? data.runtime;
+    // Capabilities left out keep the recorded binding as it is, with no provider read: a plugin update migrates a
+    // stranded writer this way even while the update's check left the provider unprobed.
+    const capabilities = data.capabilities ? keptCapabilities(data.worktree, runtime, data.capabilities) : ledger.binding.capabilities;
+    const definition = currentDefinition(capabilities);
     const lock = join(place.dir, "vibe-record-turn.lock");
     const retained = existsSync(lock);
     if (ledger.active?.lease || (retained && !(data.retainedRecord && verifyRetained))) {
@@ -191,13 +203,16 @@ export function migrateWriter(input: unknown, currentPluginRoot: string, verifyR
     if (harnessSwitch && (harnessSwitch.to === ledger.runtime || data.retainedRecord)) {
       throw new Error("A harness switch moves a stopped writer to the other runtime and releases no record grant");
     }
+    if (harnessSwitch) refuseDroppedCapabilities(keptCapabilities(ledger.worktree, runtime, ledger.binding.capabilities), capabilities);
     const evidence = definitionUpgradeEvidence(ledger, currentPluginRoot);
     const observedDigest = evidence.observedDigest;
-    const reason = harnessSwitch ? "harness-switch" as const : provenDefinitionChange(evidence);
+    const reason = harnessSwitch ? "harness-switch" as const
+      : renamedOnly(ledger, data.runtime, data.capabilities, capabilities, evidence) ? "capability-names" as const : provenDefinitionChange(evidence);
+    // A naming-only rebind refuses any addition itself (renamedOnly); the other paths rebind to the current definition.
+    if (reason !== "capability-names") refuseUndeclaredAdditions(ledger, capabilities);
     const releasedRecord = retained && data.retainedRecord && verifyRetained
       ? verifyRetained(lock, ledger, data.retainedRecord) : undefined;
     const block = migratableBlock(ledger, evidence, releasedRecord);
-    const runtime = harnessSwitch?.to ?? data.runtime;
     const workerId = runtime === "claude" ? randomUUID() : data.workerId;
     if (!workerId) throw new Error("Native migration requires the new read-only held worker's actual ID");
     const oldIds = [ledger.workerId, ...ledger.migrations.map((item) => item.previous.workerId)];
@@ -223,8 +238,68 @@ export function migrateWriter(input: unknown, currentPluginRoot: string, verifyR
       try { save(place, ledger); } catch (error) { renameSync(parked, lock); throw error; }
       rmSync(parked, { recursive: true, force: true });
     }
-    return { ...summary(ledger), ...(carriedBlock ? { carriedBlock } : {}) };
+    return { ...summary(ledger), capabilities: ledger.binding.capabilities, ...(carriedBlock ? { carriedBlock } : {}) };
   });
+}
+
+/**
+ * A harness switch renames capabilities into the new runtime's spelling and may drop the writes it does not declare,
+ * never another: the new binding holds, under one name or the other, every recorded capability the new runtime keeps
+ * (`kept`). A dropped one could not come back, since a later rebind refuses any change but naming.
+ */
+function refuseDroppedCapabilities(kept: Capability[], target: Capability[]) {
+  const present = new Set(target.map(capabilityIdentity));
+  const dropped = kept.filter((capability) => !present.has(capabilityIdentity(capability))).map((capability) => capability.name).sort().join(", ");
+  if (dropped) throw new Error(`A harness switch may rename capabilities and drop undeclared writes, never drop a declared one: ${dropped}`);
+}
+
+/**
+ * Every migration that rebinds to the current definition (a harness switch, or a missing or upgraded definition) may
+ * add a capability the recorded binding lacks only when the current definition declares it: a read the bound provider
+ * offers, or a record write some change-worker action declares. A release can make a provider read bindable and require
+ * it in the change worker's prompt, and a writer registered before that gains it only here. Any other addition refuses.
+ */
+function refuseUndeclaredAdditions(ledger: Ledger, target: Capability[]) {
+  const known = new Set(ledger.binding.capabilities.map(capabilityIdentity));
+  const added = target.filter((capability) => !known.has(capabilityIdentity(capability)));
+  // Only an addition is checked against the definition, so a migration that adds nothing never reads the provider.
+  if (!added.length) return;
+  const declared = new Set(declaredByChangeWorker(ledger.worktree, added).map(capabilityIdentity));
+  const undeclared = added.filter((capability) => !declared.has(capabilityIdentity(capability)));
+  if (undeclared.length) {
+    throw new Error(`A migration may add only the capabilities the current definition declares: ${undeclared.map((capability) => capability.name).sort().join(", ")}`);
+  }
+}
+
+/** The recorded `capabilities` a `runtime` binding keeps: every one for Codex, and only the declared ones for Claude. */
+function keptCapabilities(worktree: string, runtime: Ledger["runtime"], capabilities: Capability[]) {
+  return runtime === "claude" ? declaredByChangeWorker(worktree, capabilities) : capabilities;
+}
+
+/** Reads, and only the record writes some change-worker record action declares: the Claude launcher refuses any other. */
+function declaredByChangeWorker(worktree: string, capabilities: Capability[]) {
+  const declared = new Set(Object.values(recordModes(sessionBinding(worktree))["vibe-change-worker"] ?? {}).flat());
+  return capabilities.filter((capability) => capability.access === "read" || declared.has(capability.operation));
+}
+
+/**
+ * A same-runtime rebind whose definitions still match and whose new binding `target` (the `supplied` capabilities,
+ * less the writes the runtime does not declare) differs from the recorded binding, as recorded, only in naming and in
+ * dropping writes the runtime does not declare. Nothing supplied, or nothing different, is no rebind; adding a
+ * capability, or dropping or changing a declared one, refuses here.
+ */
+function renamedOnly(ledger: Ledger, runtime: Ledger["runtime"], supplied: Capability[] | undefined, target: Capability[],
+  evidence: ReturnType<typeof definitionUpgradeEvidence>) {
+  if (!supplied || runtime !== ledger.runtime || evidence.observedDigest !== evidence.recordedDigest
+    || evidence.installedDigest !== evidence.recordedDigest) return false;
+  const names = (values: Capability[]) => JSON.stringify(values.map((value) => value.name).sort());
+  if (names(target) === names(ledger.binding.capabilities)) return false;
+  const kept = keptCapabilities(ledger.worktree, runtime, ledger.binding.capabilities);
+  const identities = (values: Capability[]) => JSON.stringify(values.map(capabilityIdentity).sort());
+  if (identities(target) !== identities(kept)) {
+    throw new Error("A rebind may change capabilities only in naming and by dropping record writes the runtime does not declare; the supplied capabilities add, drop or change one");
+  }
+  return true;
 }
 
 /** Only an absent recorded definition or a proven newer installed definition replaces the writer. */

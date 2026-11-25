@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { finalMerge, invokeSync, syncFixture, validateFixture, currentSyncDefinitions, selectedReportFixture } from "./main-sync-test-fixtures.js";
+import { advanceMain, finalMerge, invokeSync, syncFixture, validateFixture, currentSyncDefinitions, selectedReportFixture } from "./main-sync-test-fixtures.js";
 import { prismaInputFixture, fumadocsInputFixture, buildInfoInputFixture, largeProducerInputFixture, nextInputFixture, pureInputFixture,
   docsInputFixture, huskyInputFixture, desktopPrismaInputFixture, producerShimInputFixture } from "./main-sync-input-test-fixtures.js";
 import { gzipSync, gunzipSync } from "node:zlib";
@@ -57,6 +57,8 @@ describe("production committed-input privacy and origin boundaries", () => {
     value.write("apps/app/probe.ts", `import '../../${path}';\n`);
     value.git(["add", "apps/app/probe.ts"]);
     value.git(["commit", "-m", "Synthetic consumed private input"]);
+    // Only a branch behind main is scanned at preparation (ISS-14689 AC1).
+    advanceMain(value);
     const turn = value.start("redeploy");
     try {
       const result = invokeSync(value, "prepare", turn.context);
@@ -74,6 +76,8 @@ describe("production committed-input privacy and origin boundaries", () => {
     value.write(path, "throw new Error('must remain uncollected');\n");
     value.write("vitest.config.ts", "export default {test:{include:['**/*.test.tsx']}};\n");
     value.git(["add", "vitest.config.ts"]); value.git(["commit", "-m", "Synthetic root collector expansion"]);
+    // Only a branch behind main is scanned at preparation (ISS-14689 AC1).
+    advanceMain(value);
     const turn = value.start("redeploy");
     try {
       const result = invokeSync(value, "prepare", turn.context);
@@ -115,6 +119,8 @@ describe("production committed-input privacy and origin boundaries", () => {
       value.git(["commit", "-m", "Synthetic unignored evidence"]);
     }
     if (failure === "staged") value.git(["add", "-f", path]);
+    // Only a branch behind main is scanned at preparation (ISS-14689 AC1).
+    advanceMain(value);
     const turn = value.start("redeploy");
     try {
       const result = invokeSync(value, "prepare", turn.context);
@@ -349,6 +355,8 @@ describe("production committed-input privacy and origin boundaries", () => {
     state.inputs.inputSha256 = originIdentity(state.inputs.trackedInputSha256, state.inputs.files, state.inputs.packages);
     writeFileSync(file, JSON.stringify(state));
     const before = readFileSync(file);
+    // Only a branch behind main is scanned at preparation (ISS-14689 AC1).
+    advanceMain(value);
     const publisher = value.start("redeploy");
     try {
       const result = invokeSync(value, "prepare", publisher.context);
@@ -413,6 +421,8 @@ describe("production committed-input privacy and origin boundaries", () => {
     }
     if (failure === "execution-log") writeFileSync(state.inputs.producers[0].log, "unverified execution\n");
     const retained = readFileSync(join(value.worktree, generated.output));
+    // Only a branch behind main is scanned at preparation (ISS-14689 AC1).
+    advanceMain(value);
     const prepare = value.start("redeploy");
     try {
       const result = invokeSync(value, "prepare", prepare.context);

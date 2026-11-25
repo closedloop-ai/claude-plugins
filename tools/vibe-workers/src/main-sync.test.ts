@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { captureMain, finalMerge, generatedBiomeFixture, invokeSync, remoteSlotReport, syncFixture, validateFixture, currentSyncDefinitions } from "./main-sync-test-fixtures.js";
+import { advanceMain, captureMain, finalMerge, generatedBiomeFixture, invokeSync, remoteSlotReport, syncFixture, validateFixture, currentSyncDefinitions } from "./main-sync-test-fixtures.js";
 import { bundleDirectory, graph, recordWrite, writeAgent } from "./test-fixtures.js";
 import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES } from "./main-sync-generated-input.js";
 import { inspectInputInventory } from "./main-sync-checks.js";
@@ -13,6 +13,27 @@ import { admitMainSyncRequest, recordRemoteMainSync } from "./main-sync.js";
 const fixtures: ReturnType<typeof syncFixture>[] = [];
 afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
 function setup(source?: string) { const value = syncFixture(source); fixtures.push(value); return value; }
+
+/**
+ * Runs `action` with Git's own command trace, written in the session's Git metadata, and returns each traced git
+ * command's arguments. Git writes the trace itself, so no wrapper process runs per git call.
+ */
+function traceGit<T>(value: ReturnType<typeof setup>, action: () => T) {
+  const file = join(value.metadata, "git-trace.log");
+  const previous = process.env.GIT_TRACE;
+  process.env.GIT_TRACE = file;
+  try {
+    const result = action();
+    const commands = existsSync(file) ? readFileSync(file, "utf8").split("\n")
+      .flatMap((line) => { const found = / trace: built-in: git (.+)$/.exec(line); return found ? [found[1]!.split(" ")] : []; }) : [];
+    return { result, commands };
+  } finally {
+    if (previous === undefined) Reflect.deleteProperty(process.env, "GIT_TRACE");
+    else process.env.GIT_TRACE = previous;
+  }
+}
+/** The git listings the input inventory runs: untracked and ignored files, the index tree and the committed tree. */
+const inputScan = (args: string[]) => args.includes("--others") || args[0] === "write-tree" || (args[0] === "ls-tree" && args.includes("-r"));
 
 describe("production main-sync publication CLIs", () => {
   it("admits a vibe session with no hosted environment and no data mode, and refuses a mode-less one with an environment", () => {
@@ -47,7 +68,7 @@ describe("production main-sync publication CLIs", () => {
     } finally { publisher.finish(); }
   }, 30000);
   it.each(["edited", "trimmed", "stale", "dirty-config", "staged-config", "dirty-owner", "committed-owner", "committed-import",
-    "missing-owner", "symlink", "dangling-symlink", "directory", "oversized", "unignored", "nested", "suffix", "temporary", "mixed-source", "pure-throw"] as const)(
+    "missing-owner", "symlink", "dangling-symlink", "directory", "oversized", "unignored", "nested", "suffix", "temporary", "pure-throw"] as const)(
     "rejects %s generated-input counterfactual before capture/check/receipt/publication and preserves files", (failure) => {
     const value = setup(); const generated = generatedBiomeFixture(value);
     let inspected = generated.artifact;
@@ -102,15 +123,11 @@ describe("production main-sync publication CLIs", () => {
       value.write(path, generated.output); inspected = join(value.worktree, path);
       expectedError = /uncommitted executable|unsupported generated.*path/i;
     }
-    if (failure === "mixed-source") {
-      value.write(".gitignore", `${readFileSync(join(value.worktree, ".gitignore"), "utf8")}\nignored-probe.ts\n`);
-      value.git(["add", ".gitignore"]); value.git(["commit", "-m", "Ignored authored input control"]);
-      value.write("ignored-probe.ts", "export const unrelated = 'must still block';\n");
-      expectedError = /uncommitted executable ignored-probe.ts/i;
-    }
     const contents = failure === "oversized" || failure === "directory" || failure === "dangling-symlink" ? undefined : readFileSync(inspected);
     const stat = lstatSync(inspected);
     const session = readFileSync(join(value.metadata, "vibe-session.json"), "utf8");
+    // Only a branch behind main is scanned at preparation (ISS-14689 AC1).
+    advanceMain(value);
     const head = value.git(["rev-parse", "HEAD"]); const turn = value.start("redeploy");
     try {
       const denied = invokeSync(value, "prepare", turn.context);
@@ -145,6 +162,62 @@ describe("production main-sync publication CLIs", () => {
     rmSync(join(value.metadata, "info", "exclude"));
     expect(() => inspectInputInventory(value.worktree)).toThrow(/uncommitted executable \.(?:agents|claude|codex|idea|vscode)\//);
   });
+  it("ISS-14689 AC1: prepares a branch already 0 behind main with no input scan and returns at once", () => {
+    const value = setup();
+    // An untracked executable the input scan refuses: a scan would fail this preparation.
+    value.write("apps/app/scratch.ts", "export const draft = 1;\n");
+    const turn = value.start("redeploy");
+    try {
+      const started = Date.now();
+      const { result, commands } = traceGit(value, () => invokeSync(value, "prepare", turn.context));
+      expect(result.status, result.stdout).toBe(0);
+      expect(result.json?.mainSync).toMatchObject({ status: "DONE", mainMerge: "merged", mainMergeReason: "main is already merged",
+        requiresCommit: false, importedFiles: [] });
+      // The trace reached preparation's own git calls: it read origin's main before deciding there was nothing to merge.
+      expect(commands.some((args) => args[0] === "ls-remote")).toBe(true);
+      expect(commands.filter(inputScan)).toEqual([]);
+      expect(Date.now() - started).toBeLessThan(10000);
+      expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(true);
+    } finally { turn.finish(); }
+  });
+  it("ISS-14689 AC1: still scans a branch behind main in final-merge mode, before the fetch and any merge", () => {
+    const value = setup();
+    // The same untracked executable the input scan refuses.
+    value.write("apps/app/scratch.ts", "export const draft = 1;\n");
+    advanceMain(value); finalMerge(value);
+    const behind = value.start("redeploy");
+    try {
+      const { result: refused, commands } = traceGit(value, () => invokeSync(value, "prepare", behind.context));
+      expect(refused.status, refused.stdout).toBe(1);
+      // The same trace sees the inventory's listings here, so the 0-behind case's empty list is not a blind spot.
+      expect(commands.filter(inputScan).length).toBeGreaterThan(0);
+      expect(String(refused.json?.error)).toMatch(/uncommitted executable apps\/app\/scratch\.ts/);
+      expect(existsSync(join(value.metadata, "FETCH_HEAD"))).toBe(false);
+      expect(existsSync(join(value.metadata, "MERGE_HEAD"))).toBe(false);
+    } finally { behind.finish(); }
+  });
+  it("ISS-14689 AC2: passes git-ignored executables and reports every untracked offender in one pass", () => {
+    const value = setup();
+    value.write(".gitignore", `${readFileSync(join(value.worktree, ".gitignore"), "utf8")}.venv/\ntools/build/.out/\n`);
+    value.git(["add", ".gitignore"]); value.git(["commit", "-m", "Ignore local tool output"]);
+    value.write(".venv/bin/activate_this.py", "exec(open(__file__).read())\n");
+    value.write("tools/build/.out/cli.mjs", "export {};\n");
+    expect(inspectInputInventory(value.worktree).headSha).toBe(value.git(["rev-parse", "HEAD"]));
+    value.write("apps/app/first.ts", "export const first = 1;\n");
+    value.write("scripts/second.sh", "echo second\n");
+    expect(() => inspectInputInventory(value.worktree))
+      .toThrow("Committed validation inputs differ from HEAD: uncommitted executable apps/app/first.ts; uncommitted executable scripts/second.sh");
+    rmSync(join(value.worktree, "scripts/second.sh"));
+    expect(() => inspectInputInventory(value.worktree)).toThrow(/^Committed validation inputs differ from HEAD: uncommitted executable apps\/app\/first\.ts$/);
+  });
+  it("ISS-14689 AC2: reports the offenders of the untracked and the ignored listings in one refusal", () => {
+    const value = setup();
+    value.write(".gitignore", `${readFileSync(join(value.worktree, ".gitignore"), "utf8")}tools/build/.out/\n`);
+    value.git(["add", ".gitignore"]); value.git(["commit", "-m", "Ignore local tool output"]);
+    value.write("tools/build/.out/.biome-noscan.jsonc.bak", "{}\n");
+    value.write("apps/app/first.ts", "export const first = 1;\n");
+    expect(() => inspectInputInventory(value.worktree)).toThrow(/^Committed validation inputs differ from HEAD: uncommitted executable apps\/app\/first\.ts; unsupported generated-input path tools\/build\/\.out\/\.biome-noscan\.jsonc\.bak$/);
+  });
   it.each(["malformed", "conflicting-exit", "timeout", "changed-source"] as const)(
     "rejects %s pure-loader evidence before any transaction and does not expose dependency output", (failure) => {
     const value = setup(); const generated = generatedBiomeFixture(value);
@@ -159,6 +232,8 @@ describe("production main-sync publication CLIs", () => {
       writeFileSync(pnpm, original.replace("if (args[0] === 'exec' && args[1] === 'node') {",
         `if (args[0] === 'exec' && args[1] === 'node') { process.stderr.write('RAW_LOADER_SECRET'); ${exit}`));
     }
+    // Only a branch behind main is scanned at preparation (ISS-14689 AC1).
+    advanceMain(value);
     const turn = value.start("redeploy");
     try {
       const denied = invokeSync(value, "prepare", turn.context);

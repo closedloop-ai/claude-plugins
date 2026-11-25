@@ -40,6 +40,7 @@
 //                                     --request-id <id>
 //   vibe-sessions.mjs local-fix       --worktree <path> --ticket <bug reference> --path <file> [--path <file> ...]
 //   vibe-sessions.mjs story-replacement --worktree <path> --path <story file> --replacement <component>
+//   vibe-sessions.mjs frozen-story-move --worktree <path> --path <frozen story file at the base> --criterion <AC-n>
 //   vibe-sessions.mjs discard         --worktree <path> [--confirm]
 //
 // `--repo` defaults to the checkout vibe-preflight.sh remembered in
@@ -50,7 +51,10 @@
 // reference names the report), so no redeploy or handoff commits them. `story-replacement` records
 // an existing story file whose title changed because it became the entry of a
 // sibling replacement component (such as a V3); handoff blocks any other
-// retitled existing story file (design ruling, 2026-10-15).
+// retitled existing story file (design ruling, 2026-10-15). `frozen-story-move` records the live-ticket
+// criterion that authorizes moving or retiring a frozen v1.0 story file, refusing a criterion the ticket worker's
+// latest read of the live ticket does not have or that does not speak of moving or retiring a story; handoff then
+// lifts that file's frozen blocks and lists its story IDs for the pull request body (frozen-story-moves.mjs).
 //
 // `new` also moves the questions session-questions.mjs kept before the
 // session existed onto the new record, so none of them is asked again, and
@@ -138,6 +142,9 @@ import {
   vercelAliases,
 } from "./vibe-session-data.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
+import { STORY_FILE } from "../../handoff/scripts/diff-rules.mjs";
+import { liveTicketCriteria, moveCriterion, storyNames } from "../../handoff/scripts/frozen-story-moves.mjs";
+import { pathCitationAuthority } from "../../handoff/scripts/path-citations.mjs";
 
 const { git, readSessionRecord, sessionLiveTicket, writeSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
 
@@ -175,7 +182,6 @@ const PlanStatus = {
 const THREAD_PATTERN = /^[A-Za-z0-9-]{8,100}$/;
 const CLAUDE_SESSION_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PID_PATTERN = /^[1-9]\d{0,9}$/;
-const STORY_FILE_PATTERN = /\.stories\.tsx?$/;
 const MAX_REPLACEMENT_LENGTH = 200;
 // What the Desktop app's main process logs once its window is shown.
 const DESKTOP_WINDOW_VISIBLE = /Desktop window visible/;
@@ -317,13 +323,15 @@ async function run(command) {
       return { session: recordLocalFix() };
     case "story-replacement":
       return { session: recordStoryReplacement() };
+    case "frozen-story-move":
+      return { session: recordFrozenStoryMove() };
     case "stop":
       return stopSession();
     case "discard":
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, stop, link, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-record-remote, main-sync-push, main-sync-share, codex-sessions, claude-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
+        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, stop, link, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-record-remote, main-sync-push, main-sync-share, codex-sessions, claude-sessions, ticket-sections, environment-result, local-fix, story-replacement, frozen-story-move, discard."
       );
   }
 }
@@ -577,7 +585,6 @@ async function touchSession() {
   if (values["body-refreshed"]) delete updated.prBodyStale;
   if (values["cite-path"] !== undefined || values.criterion !== undefined) {
     const requested = { path: values["cite-path"], cites: values.criterion };
-    const { pathCitationAuthority } = await import("../../handoff/scripts/path-citations.mjs");
     const verified = pathCitationAuthority(worktree, updated, { requested }).citations.find(entry => entry.source === "request");
     if (!verified) throw new Error("The bound ticket needs a current criterion naming this exact repository file.");
     const row = { ticket: verified.ticket, ...requested, text: verified.text };
@@ -1256,7 +1263,7 @@ function isRunning(pid) {
 function recordStoryReplacement() {
   const worktree = requireOption("worktree");
   const paths = (values.path ?? []).map(normalizeRepoPath);
-  if (paths.length !== 1 || !STORY_FILE_PATTERN.test(paths[0])) {
+  if (paths.length !== 1 || !STORY_FILE.test(paths[0])) {
     throw new Error("--path is required once and must name a story file.");
   }
   const replacement = requireOption("replacement").trim();
@@ -1270,6 +1277,34 @@ function recordStoryReplacement() {
     { path: paths[0], replacement, recordedAt: now },
   ];
   const updated = { ...record, storyReplacements, lastActiveAt: now };
+  writeRecord(worktree, updated);
+  return { worktree, ...updated };
+}
+
+/** Records the live-ticket criterion authorizing a frozen v1.0 story file's move or retirement, replacing an earlier entry for it. */
+function recordFrozenStoryMove() {
+  const worktree = requireOption("worktree");
+  const paths = (values.path ?? []).map(normalizeRepoPath);
+  if (paths.length !== 1 || !STORY_FILE.test(paths[0])) {
+    throw new Error("--path is required once and must name a story file.");
+  }
+  const cites = requireOption("criterion").trim();
+  const record = requireRecord(worktree);
+  const live = liveTicketCriteria(worktree, record);
+  if (!live) {
+    throw new Error("No current read of the session's live ticket is saved, so the criterion cannot be checked; the ticket worker saves it first.");
+  }
+  // The story's IDs come from the file at the base the inventory compares with; a criterion may name either.
+  let base;
+  try { base = git(worktree, ["show", `${currentBaseCommit(worktree, record)}:${paths[0]}`]); } catch { base = undefined; }
+  const { criterion, problem } = moveCriterion(live.criteria, cites, storyNames(paths[0], base), live.ticket);
+  if (problem) throw new Error(`The frozen story move is refused: ${problem}.`);
+  const now = new Date().toISOString();
+  const frozenStoryMoves = [
+    ...(record.frozenStoryMoves ?? []).filter((entry) => entry.path !== paths[0]),
+    { path: paths[0], ticket: live.ticket, cites, text: criterion.text, recordedAt: now },
+  ];
+  const updated = { ...record, frozenStoryMoves, lastActiveAt: now };
   writeRecord(worktree, updated);
   return { worktree, ...updated };
 }

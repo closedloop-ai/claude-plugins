@@ -126,6 +126,7 @@ import {
   storyMetaTitle,
 } from "./storybook-taxonomy.mjs";
 import { localFixPaths } from "./local-fix-paths.mjs";
+import { frozenStoryMoves, storyRenames } from "./frozen-story-moves.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 
 const { withStableSource } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
@@ -253,6 +254,9 @@ const result = withStableSource(worktree, (source) => {
   const areas = sessionAreas(worktree);
   const backendFiles = changedFiles.filter((file) => isBackend(file.path));
   const gitDir = path.dirname(sessionRecordPath(worktree));
+  // Ticket-authorized moves and retirements of frozen v1.0 stories lift those files' frozen blocks (frozen-story-moves.mjs).
+  const frozenMoves = frozenStoryMoves(worktree, baseCommit, record);
+  const movedFrozen = new Set(frozenMoves.moves.map((move) => move.path));
   const cacheKey = inventoryCacheKey();
   const cached = readInventoryCache(gitDir, cacheKey);
   if (!cached && values["body-only"]) {
@@ -282,7 +286,7 @@ const result = withStableSource(worktree, (source) => {
   const computed = cached ?? {
     diffRules: runDiffRules({ worktree, base: baseCommit, exclude: new Set(localFixTickets.keys()), isFrozenStory: isV1Story,
       storyReplacements: new Set((Array.isArray(record?.storyReplacements) ? record.storyReplacements : []).map((entry) => entry?.path)),
-      phase: values.phase,
+      frozenStoryMoves: movedFrozen, phase: values.phase,
     }),
     ...(values.phase === "build" ? {} : { bundle: buildBundle() }),
   };
@@ -349,6 +353,8 @@ const result = withStableSource(worktree, (source) => {
     v1Stories,
     compileOnlyV1Repairs,
     retitledStories,
+    frozenStoryMoves: frozenMoves.moves,
+    ...(frozenMoves.problems.length ? { frozenStoryMoveProblems: frozenMoves.problems } : {}),
     diffRules: { blocking: diffRulesBlocking, deferredToHandoff, requiredTests: diffRules.requiredTests, requiredChecks: diffRules.requiredChecks,
       ...(diffRules.flagRetirements ? { flagRetirements: diffRules.flagRetirements } : {}) },
     decisionTableProblems: decisionTables,
@@ -387,7 +393,7 @@ const result = withStableSource(worktree, (source) => {
       record?.stack?.storybookUrl].map((value) => value ?? null);
     return {
       head: source.head,
-      diffHash: hashParts([baseCommit, source.diffSha256, recordInputs, pathCitations, changeLog, sessionInternalIds(worktree, changeLog), binding,
+      diffHash: hashParts([baseCommit, source.diffSha256, recordInputs, pathCitations, frozenMoves.moves, changeLog, sessionInternalIds(worktree, changeLog), binding,
         typeof binding.root === "string" ? read(path.join(binding.root, "provider.json")) : null]),
       rulesVersion: rulesVersion(),
       phase: values.phase,
@@ -407,6 +413,7 @@ const result = withStableSource(worktree, (source) => {
     const facts = pullRequestFacts({
       worktree,
       pathCitations,
+      frozenStoryMoves: frozenMoves.moves,
       base: baseCommit,
       include: new Set(changedFiles.map((file) => file.path)),
       prs,
@@ -662,6 +669,9 @@ const result = withStableSource(worktree, (source) => {
       }
       const from = movedFrom.get(file.path);
       const basePath = file.status === "M" ? file.path : from;
+      if (basePath !== undefined && movedFrozen.has(basePath)) {
+        continue;
+      }
       const base = basePath === undefined ? undefined : readBaseFile(basePath);
       if (isUnversionedStory(base) || isUnversionedStory(source)) {
         continue;
@@ -700,6 +710,9 @@ const result = withStableSource(worktree, (source) => {
         .map((entry) => [entry.path, entry.replacement ?? null])
     );
     return [...modified, ...movedStories].flatMap(({ path: filePath, from }) => {
+      if (movedFrozen.has(from)) {
+        return [];
+      }
       const source = readWorktreeFile(filePath);
       const base = readBaseFile(from);
       if (source === undefined || base === undefined || isUnversionedStory(base) || isUnversionedStory(source)) {
@@ -722,11 +735,7 @@ const result = withStableSource(worktree, (source) => {
 
   /** Story files git sees as renamed since the base, tracked changes only. */
   function findMovedStories() {
-    const renames = git(["diff", "--name-status", "-M", "--diff-filter=R", baseCommit, "--", ...STORY_PATHSPECS]);
-    return renames.split("\n").filter(Boolean).map((line) => {
-      const [, from, to] = line.split("\t");
-      return { path: to, from };
-    });
+    return [...storyRenames(worktree, baseCommit, { pathspecs: STORY_PATHSPECS })].map(([from, to]) => ({ path: to, from }));
   }
 
   function readWorktreeFile(filePath) {

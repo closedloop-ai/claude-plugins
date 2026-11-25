@@ -300,6 +300,16 @@ export function remoteSlotReport(value: ReturnType<typeof syncFixture>, context:
       sha256: createHash("sha256").update(`remote log ${index}`).digest("hex") })) } };
 }
 
+/**
+ * Moves origin's main one empty commit past the branch without a checkout, so preparation has a main to merge and
+ * proves the session's inputs first; a branch 0 behind main is never scanned there (ISS-14689 AC1).
+ */
+export function advanceMain(value: ReturnType<typeof syncFixture>) {
+  const commit = value.git(["commit-tree", "main^{tree}", "-p", "main", "-m", "Upstream moved on"]);
+  value.git(["update-ref", "refs/heads/main", commit]);
+  value.git(["push", "origin", "main"]);
+}
+
 /** Final-merge mode, set once QA passes: the next publication merges fresh main. */
 export function finalMerge(value: ReturnType<typeof syncFixture>) {
   const file = join(value.metadata, "vibe-session.json");
