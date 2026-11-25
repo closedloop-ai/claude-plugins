@@ -1,15 +1,16 @@
-// Runs one committed GitHub workflow lane for cloud validation. Lanes run as a non-root user, as on GitHub's runner
-// (AC-68, item 116; team-lead, 2026-11-25: "Workflow lanes also drop to the actor after root setup"): the job's
-// environment setup runs as root, then every other step runs as the non-root actor through the managed host's lane
-// supervisor, in a private clone of the commit that the actor owns. The cloud agent runs it once per lane from its
-// checkout, `node "$p/cloud-workflow-runner.mjs" <lane index>`, where $p is the private directory prepareWorkflowPlan
-// wrote (lanes.json, lane-<index>.json and reporter-spec).
+// Runs one committed GitHub workflow lane for cloud validation, as GitHub's runner does (AC-68, item 116; team-lead,
+// 2026-11-25: "Every step runs as the actor, and the actor gets passwordless sudo for setup"): every `run` step runs as
+// the non-root actor through the managed host's lane supervisor, in a private clone of the commit that the actor owns,
+// and reaches root only through `sudo`. The host's package repair has already run once as root (the plan step). The
+// cloud agent runs it once per lane from its checkout, `node "$p/cloud-workflow-runner.mjs" <lane index>`, where $p is
+// the private directory prepareWorkflowPlan wrote (lanes.json, lane-<index>.json and reporter-spec).
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cloudHostEnvironment, ownTree, PACKAGE_REPAIR_FILE, rootSetupEnvironment, runLaneGroup, runsAsScript, validationHostActor } from "./cloud-validation-host.mjs";
+import { cloudHostEnvironment, hostNetworkEnvironment, ownTree, PACKAGE_REPAIR_FILE, runLaneGroup, runsAsScript, validationHostActor } from "./cloud-validation-host.mjs";
 
 export const WORKFLOW_NOT_RUN = "CLOUD_WORKFLOW_NOT_RUN";
 // The managed host's per-lane limit, for a job that sets none.
@@ -24,49 +25,71 @@ const ACTIONS = new Map([
   ["actions/setup-node", ["node-version", "cache", "cache-dependency-path"]],
   ["astral-sh/setup-uv", ["python-version"]],
 ]);
-// A dependency install fetches from registries and the actor has no network (team-lead, 2026-11-24, attempt six), so it
-// is environment setup, like the managed host's repository bootstrap (operator ruling 2026-11-24 on AC-68).
-const DEPENDENCY_INSTALL = /^(?:npm (?:ci|install)|pnpm install|yarn install|uv sync)(?:\s|$)/;
+// Where root setup grants the actor passwordless sudo for one lane. sudo reads every file here whose name has no "."
+// (so an entry still being written, named with ".new", is never read) and stops working for everyone if one fails to
+// parse, so each entry passes `visudo -c` before it takes its name.
+export const SUDOERS_DIRECTORY = "/etc/sudoers.d";
 
 class Refusal extends Error {}
 const refuse = (reason) => { throw new Refusal(reason); };
 const strings = (values) => Object.fromEntries(Object.entries(values ?? {}).map(([key, value]) => [key, String(value)]));
 const label = (step, index) => `step ${index + 1} (${String(step.name ?? step.uses ?? step.run.trim().split("\n")[0]).slice(0, 80)})`;
-
-/** How a step runs: an action, a step of only `sudo` commands or a dependency install as root; any other as the actor. */
-export function stepRole(step) {
-  if (step.uses) return "action";
-  const commands = step.run.split(/\n|&&/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
-  if (commands.length > 0 && commands.every((line) => /^sudo\s/.test(line))) return "root";
-  if (/(?:^|[\s;&|(`])sudo\s/.test(step.run)) return "mixed";
-  return commands.length === 1 && DEPENDENCY_INSTALL.test(commands[0]) ? "setup" : "actor";
-}
+const oneLine = (text) => String(text ?? "").replace(/\s+/g, " ").trim().slice(-300);
 
 /**
- * The lane's steps in order with the identity each runs as. Setup after the first lane command, or `sudo` inside one,
- * would need root mid-lane, which the runner never grants: the whole lane is refused, naming the step.
+ * The lane's steps in order. An action is the runner's own setup: it copies a host tool into the lane and runs nothing
+ * from the commit. Every `run` step is the actor's, whatever it runs or chains, as on GitHub's runner.
  */
 export function workflowLanePlan({ workflow = {}, job }) {
-  let command = null;
   return job.steps.map((step, index) => {
-    const role = stepRole(step), name = label(step, index);
+    const name = label(step, index);
     conditionHolds(step.if, false);
-    if (role === "mixed") refuse(`${name} runs sudo inside a lane command`);
-    if (role !== "actor" && command) refuse(`${name} is root setup after the lane command ${command}`);
-    if (role === "actor") command ??= name;
-    if (role === "action") {
+    if (step.uses) {
       const action = step.uses.split("@")[0], inputs = ACTIONS.get(action);
       if (!inputs) refuse(`${name} uses ${action}, which the cloud runner does not provide`);
       const extra = Object.keys(step.with ?? {}).find((key) => !inputs.includes(key));
       if (extra) refuse(`${name} sets the ${action} input ${extra}, which the cloud runner does not provide`);
-      return { index, role, name, step };
+      return { index, role: "action", name, step };
     }
     const shell = step.shell ?? job.defaults?.run?.shell ?? workflow.defaults?.run?.shell;
     if (shell !== undefined && !["bash", "sh"].includes(shell)) refuse(`${name} uses the shell ${shell}`);
     const directory = path.posix.normalize(step["working-directory"] ?? job.defaults?.run?.["working-directory"] ?? workflow.defaults?.run?.["working-directory"] ?? ".");
     if (path.posix.isAbsolute(directory) || directory === ".." || directory.startsWith("../")) refuse(`${name} works outside the checkout`);
-    return { index, role, name, step, shell, directory };
+    return { index, role: "actor", name, step, shell, directory };
   });
+}
+
+function visudoCheck(file) {
+  const checked = spawnSync("visudo", ["-cqf", file], { encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"],
+    env: { PATH: `${process.env.PATH ?? "/usr/bin:/bin"}:/usr/local/sbin:/usr/sbin:/sbin` } });
+  return { exitCode: checked.status ?? 1, detail: oneLine(checked.stderr || checked.stdout || checked.error?.code) };
+}
+
+/**
+ * Root setup's grant for one lane: passwordless sudo for the actor, as GitHub's runner gives its user, proved with the
+ * actor's own `sudo -n true` through the supervisor the steps run under. Returns the function that removes the grant.
+ * Each lane has its own entry, so one lane's removal never ends another's grant. When the entry cannot be installed or
+ * the actor's sudo fails (no sudo, no include of the directory, a "no new privileges" flag), the lane is refused by name
+ * and no step runs: a lane never falls back to root.
+ */
+export function grantActorSudo({ actor, run, cwd, env, directory = SUDOERS_DIRECTORY, check = visudoCheck }) {
+  const unavailable = (why) => refuse(`root setup: the actor's passwordless sudo is unavailable: ${why}`);
+  if (!existsSync(directory)) unavailable(`${directory} does not exist`);
+  const entry = path.join(directory, `vibe-workflow-lane-${process.pid}-${randomBytes(4).toString("hex")}`), pending = `${entry}.new`;
+  try {
+    writeFileSync(pending, `#${actor.uid} ALL=(ALL:ALL) NOPASSWD: ALL\n`, { flag: "wx", mode: 0o440 });
+    chmodSync(pending, 0o440);
+    const checked = check(pending);
+    if (checked.exitCode !== 0) unavailable(`visudo refused the entry: ${checked.detail}`);
+    renameSync(pending, entry);
+  } finally { rmSync(pending, { force: true }); }
+  const release = () => rmSync(entry, { force: true });
+  const proof = run("sudo", ["-n", "true"], { cwd, env, ...actor, stdio: ["ignore", "pipe", "pipe"] }, { timeout: 60_000 });
+  if (proof.exitCode !== 0) {
+    release();
+    unavailable(`the actor's sudo -n true exited ${proof.exitCode ?? "without a code"}: ${oneLine(proof.stderrTail || proof.diagnosis)}`);
+  }
+  return release;
 }
 
 /** A job or step condition for a pull request validation; one with no status function implies success(), as in CI. */
@@ -176,9 +199,10 @@ export function pullRequestBase(checkout) {
  * Run one lane's job in declared order. Step output goes to `stdio`; each step's line names the identity it ran as. The
  * lane's exit code is its first failing step's, unless that step continues on error. The runner's own streams pass by
  * name, never by number: the agent opens them write-only (`2>file`), and runLaneGroup reads back a numbered stderr,
- * which failed every setup step that wrote to it with EBADF (the r11 kit's cloud emulation). The lane's checkout and
- * every step run under LANE_UMASK, and the caller's umask is restored afterwards. `repaired` names the packages the
- * plan's package repair finished before any lane; the lane's line carries them when there were any.
+ * which failed every step that wrote to it with EBADF (the r11 kit's cloud emulation). The lane's checkout and every
+ * step run under LANE_UMASK, and the caller's umask is restored afterwards. A root runner grants the actor
+ * passwordless sudo (`sudo`, grantActorSudo) before the first step and removes it after the last. `repaired` names the
+ * packages the plan's package repair finished before any lane; the lane's line carries them when there were any.
  */
 export function runWorkflowLane(options) {
   const previous = process.umask(LANE_UMASK);
@@ -186,7 +210,7 @@ export function runWorkflowLane(options) {
 }
 
 function runLane({ checkout, commit, definition, work, base = null, uid, gid, environment = process.env, repaired = [],
-  run = runLaneGroup, provision = ownTree, stdio = ["ignore", "inherit", "inherit"], log = (line) => process.stdout.write(line + "\n"), now = Date.now }) {
+  run = runLaneGroup, provision = ownTree, sudo = grantActorSudo, stdio = ["ignore", "inherit", "inherit"], log = (line) => process.stdout.write(line + "\n"), now = Date.now }) {
   const { workflow = {}, job } = definition;
   const plan = workflowLanePlan(definition);
   if (!conditionHolds(job.if, false)) refuse(`the job condition ${job.if} is false for a pull request`);
@@ -206,40 +230,43 @@ function runLane({ checkout, commit, definition, work, base = null, uid, gid, en
   own();
   const github = { CI: "true", GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request", GITHUB_BASE_REF: base ?? "",
     GITHUB_WORKSPACE: clone, RUNNER_OS: "Linux", RUNNER_TEMP: path.join(home, "runner-temp") };
+  // Every step is the actor's, installs included, so the actor reaches the registries with the host's own network
+  // settings, as GitHub's runner user does (its sudo could read them anyway).
+  const host = { ...cloudHostEnvironment(environment, home, home), ...hostNetworkEnvironment(environment) };
   const env = { ...strings(workflow.env), ...strings(job.env) };
   const bins = [];
   const deadline = now() + (job["timeout-minutes"] ?? JOB_MINUTES) * 60_000;
   const steps = [];
   let exitCode = 0;
-  for (const { index, role, name, step, shell, directory } of plan) {
-    const as = role === "actor" ? actor.uid : self;
-    if (!conditionHolds(step.if, exitCode !== 0)) { steps.push([index + 1, role, null, null]); continue; }
-    log(`CLOUD_WORKFLOW_STEP ${JSON.stringify({ step: index + 1, name, role, uid: as })}`);
-    if (role === "action") {
-      const action = step.uses.split("@")[0];
-      if (action === "actions/setup-node") bins.unshift(setupNode(step, tools, environment.PATH, name));
-      else if (action === "astral-sh/setup-uv") bins.unshift(setupUv(step, tools, environment.PATH, name, env));
-      else if (Number(step.with?.["fetch-depth"] ?? 1) === 0 && shallow) {
-        refuse(`${name} needs the full history, and the cloud checkout is shallow`);
+  const release = asRoot ? sudo({ actor, run, cwd: clone, env: { ...host, PATH: lanePath([], environment.PATH, actor) } }) : () => {};
+  try {
+    for (const { index, role, name, step, shell, directory } of plan) {
+      const as = role === "actor" ? actor.uid : self;
+      if (!conditionHolds(step.if, exitCode !== 0)) { steps.push([index + 1, role, null, null]); continue; }
+      log(`CLOUD_WORKFLOW_STEP ${JSON.stringify({ step: index + 1, name, role, uid: as })}`);
+      if (role === "action") {
+        const action = step.uses.split("@")[0];
+        if (action === "actions/setup-node") bins.unshift(setupNode(step, tools, environment.PATH, name));
+        else if (action === "astral-sh/setup-uv") bins.unshift(setupUv(step, tools, environment.PATH, name, env));
+        else if (Number(step.with?.["fetch-depth"] ?? 1) === 0 && shallow) {
+          refuse(`${name} needs the full history, and the cloud checkout is shallow`);
+        }
+        own();
+        steps.push([index + 1, role, as, 0]);
+        continue;
       }
-      own();
-      steps.push([index + 1, role, as, 0]);
-      continue;
+      const script = path.join(scripts, `${index + 1}.sh`);
+      writeFileSync(script, step.run.replaceAll(BASE_REF, base ?? ""));
+      chmodSync(script, 0o644);
+      const argv = shell === "sh" ? ["sh", ["-e", script]] : shell === "bash" ? ["bash", ["--noprofile", "--norc", "-eo", "pipefail", script]] : ["bash", ["-e", script]];
+      const stepEnv = { ...host, ...github, ...env, ...strings(step.env), PATH: lanePath(bins, environment.PATH, actor) };
+      const limit = Math.max(1000, Math.min((step["timeout-minutes"] ?? Infinity) * 60_000, deadline - now()));
+      const result = run(argv[0], argv[1], { cwd: path.join(clone, directory), env: stepEnv, ...actor, stdio }, { timeout: limit });
+      const code = Number.isInteger(result.exitCode) ? result.exitCode : 1;
+      steps.push([index + 1, role, as, code]);
+      if (code !== 0 && step["continue-on-error"] !== true && exitCode === 0) exitCode = code;
     }
-    const script = path.join(scripts, `${index + 1}.sh`);
-    writeFileSync(script, step.run.replaceAll(BASE_REF, base ?? ""));
-    chmodSync(script, 0o644);
-    const argv = shell === "sh" ? ["sh", ["-e", script]] : shell === "bash" ? ["bash", ["--noprofile", "--norc", "-eo", "pipefail", script]] : ["bash", ["-e", script]];
-    const stepEnv = { ...cloudHostEnvironment(environment, home, home), ...github, ...env, ...strings(step.env), PATH: lanePath(bins, environment.PATH, actor) };
-    const cwd = path.join(clone, directory);
-    const options = role === "actor" ? { cwd, env: stepEnv, ...actor, stdio } : { cwd, env: rootSetupEnvironment(stepEnv, environment, clone), stdio };
-    const limit = Math.max(1000, Math.min((step["timeout-minutes"] ?? Infinity) * 60_000, deadline - now()));
-    const result = run(argv[0], argv[1], options, { timeout: limit });
-    if (role !== "actor") own();
-    const code = Number.isInteger(result.exitCode) ? result.exitCode : 1;
-    steps.push([index + 1, role, as, code]);
-    if (code !== 0 && step["continue-on-error"] !== true && exitCode === 0) exitCode = code;
-  }
+  } finally { release(); }
   log(`CLOUD_WORKFLOW_LANE ${JSON.stringify({ exitCode, steps, ...(repaired.length ? { repaired } : {}) })}`);
   return { exitCode, steps };
 }

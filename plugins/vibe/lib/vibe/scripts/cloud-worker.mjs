@@ -961,7 +961,9 @@ export async function validateCommit(request, { remote = cliRemote(request.workt
   const ledger = () => readLedger(home);
   const admission = () => validationRuntimeAdmission(lanes, { home, env, ledger, currentAccount, tool: request.runtimeTool });
   const selected = boundProbeReceipt(file, lanes, ledger(), env);
-  if (!existsSync(selected)) admission();
+  // A new run's brief is built before the queue hold and the proof push, so a request it refuses (workflow lanes whose
+  // commit lacks the shipped runner) never takes the account's validation slot.
+  if (!existsSync(selected)) validationBrief(routed, admission(), null, digest);
   const resume = `run the same cloud-worker.mjs validate --request again; its receipt ${selected} resumes this poll`;
   return executeCloudValidation({ file, digest, request: routed, env, lanes, laneKeys, home, ledger, currentAccount, remote, signal, timeoutMs: DEFAULT_WALL_MS,
     async start(launching) {

@@ -130,17 +130,22 @@ export function cloudHostEnvironment(current, home, registry) {
     GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "log.date", GIT_CONFIG_VALUE_0: "iso-strict-local" };
 }
 
-// The host's own registry trust and proxy settings. Root setup is the host's environment setup and keeps them (r18:
-// without them root's first registry fetch failed in 1 s, where r17's root bootstrap with them took 37 s); the
-// non-root actor never receives them (team-lead, 2026-11-24, attempt six). uv reads the system trust store only
-// under UV_NATIVE_TLS or UV_SYSTEM_CERTS, which the cloud sets (r24's `uv sync` warned about UV_NATIVE_TLS).
+// The host's own registry trust and proxy settings (r18: without them the first registry fetch failed in 1 s, where
+// r17's bootstrap with them took 37 s). The managed host's root setup keeps them and its non-root actor never receives
+// them (team-lead, 2026-11-24, attempt six). A workflow lane's steps all run as the actor, installs included, so they
+// receive them (cloud-workflow-runner.mjs). uv reads the system trust store only under UV_NATIVE_TLS or
+// UV_SYSTEM_CERTS, which the cloud sets (r24's `uv sync` warned about UV_NATIVE_TLS).
 const HOST_NETWORK = ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO",
   "NODE_USE_SYSTEM_CA", "UV_NATIVE_TLS", "UV_SYSTEM_CERTS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"];
 
+/** The host's own registry trust and proxy settings from `current`, and nothing else. */
+export function hostNetworkEnvironment(current) {
+  return Object.fromEntries(HOST_NETWORK.filter((key) => typeof current[key] === "string").map((key) => [key, current[key]]));
+}
+
 /** The environment of a root setup command: the actor's standard environment plus the host's own network settings. */
 export function rootSetupEnvironment(env, current, checkout) {
-  const network = Object.fromEntries(HOST_NETWORK.filter((key) => typeof current[key] === "string").map((key) => [key, current[key]]));
-  return rootSetupGitEnvironment({ ...env, ...network }, checkout);
+  return rootSetupGitEnvironment({ ...env, ...hostNetworkEnvironment(current) }, checkout);
 }
 
 /** A short, credential-free account of a failed setup command for the lanes it stops. */

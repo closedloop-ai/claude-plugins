@@ -5,16 +5,22 @@ import { copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } fr
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
-import { git, makeCheckout, makeHome } from "../../../skills/vibe/scripts/test-fixtures.mjs";
+import { fakeDpkg, git, makeCheckout, makeHome, privateSudoers } from "../../../skills/vibe/scripts/test-fixtures.mjs";
 import { validationBrief, validationLanes } from "./cloud-worker.mjs";
 import { workflowLaneDefinitions } from "./workflow-lane-definitions.mjs";
 import { reporterFiles } from "./cloud-outcome-instruction.mjs";
+import { compactWorkflowBrief, WORKFLOW_BRIEF_UNAVAILABLE } from "./cloud-workflow-brief.mjs";
 
 const tools="plugins/vibe/lib/vibe/scripts";
 const fixtureFiles=["cloud-workflow-plan.mjs","workflow-lane-definitions.mjs","cloud-receipts.mjs","cloud-validation-host.mjs","cloud-workflow-runner.mjs",...reporterFiles];
 const checksum=value=>createHash("sha256").update(value).digest("hex");
 const workflowPath=".github/workflows/ci.yml";
 const root=fileURLToPath(new URL("../../../../../",import.meta.url));
+// The bootstrap's plan step runs the host's package repair, which runs dpkg as root: every bootstrap here runs with
+// dpkg and dpkg-query stubbed first on its PATH, so a root test run never configures a real package.
+const stubbed=dpkg=>({...process.env,PATH:dpkg.bin+path.delimiter+process.env.PATH});
+// A lane as the agent runs it; as root, with a private /etc/sudoers.d for the runner's real grant.
+const runLane=(dir,cwd)=>spawnSync(...privateSudoers(process.execPath,[path.join(dir,"cloud-workflow-runner.mjs"),"0"]),{cwd,encoding:"utf8"});
 
 test("large committed workflow briefs reconstruct every selected recipe and pin the machine reporter",t=>{
   const f=makeHome("compact-workflow-");t.after(f.cleanup);
@@ -62,7 +68,8 @@ test("large committed workflow briefs reconstruct every selected recipe and pin 
   assert.ok(Buffer.byteLength(brief)<10000, "entire 13-job request must avoid the repeated oversized update");
   const command=brief.split("\n").find(line=>line.startsWith("node -e "));
   assert.ok(command);
-  const run=()=>execFileSync("bash",["-ec",command],{cwd:worktree,encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
+  const env=stubbed(fakeDpkg(f.root));
+  const run=()=>execFileSync("bash",["-ec",command],{cwd:worktree,env,encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
   const dir=run();
   assert.equal(path.dirname(dir),path.join(worktree,".git"));
   const expected=validationLanes(request).lanes;
@@ -98,7 +105,7 @@ test("large committed workflow briefs reconstruct every selected recipe and pin 
   for (const [adjust,reason] of refusals){
     const payload=structuredClone(original); adjust(payload);
     const modified=command.slice(0,split+1)+Buffer.from(JSON.stringify(payload)).toString("base64url");
-    const child=spawnSync("bash",["-ec",modified],{cwd:worktree,encoding:"utf8"});
+    const child=spawnSync("bash",["-ec",modified],{cwd:worktree,env,encoding:"utf8"});
     assert.ifError(child.error);
     assert.equal(child.status,1);
     assert.equal(child.stdout,"");
@@ -123,20 +130,46 @@ test("AC-68 the compact brief runs each workflow lane through the shipped runner
     laneSource:{kind:"github-workflow",path:workflowPath,sha256:checksum(workflow),commit}};
   const brief=validationBrief(request);
   assert.match(brief,/Run each lane by its zero-based index, 0 through 0, from the repository root with exactly `node "\$p\/cloud-workflow-runner\.mjs" <index>`/);
-  assert.match(brief,/environment setup as root, then every other step as a non-root user\. Never run a recipe step yourself/);
+  assert.match(brief,/every step as a non-root user with passwordless sudo, as on GitHub's runner\. Never run a recipe step yourself/);
   assert.match(brief,/ends with a CLOUD_WORKFLOW_NOT_RUN line, record exitCode null and notRun/);
-  assert.doesNotMatch(brief,/perform its committed setup\/action steps|Execute its complete workflow|Install dependencies/,"the agent no longer applies recipe steps or installs in its own checkout");
+  assert.doesNotMatch(brief,/perform its committed setup\/action steps|Execute its complete workflow|Install dependencies|as root/,"the agent no longer applies recipe steps or installs in its own checkout, and no step is the agent's as root");
   const command=brief.split("\n").find(line=>line.startsWith("node -e "));
-  const dir=execFileSync("bash",["-ec",command],{cwd:worktree,encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
+  const dpkg=fakeDpkg(f.root);
+  const dir=execFileSync("bash",["-ec",command],{cwd:worktree,env:stubbed(dpkg),encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
+  assert.equal(existsSync(dpkg.calls)?readFileSync(dpkg.calls,"utf8").includes("dpkg --force-confdef --force-confold --configure -a"):null,process.getuid()===0?true:null,
+    "as root the plan step's repair ran, against the stubs; otherwise it never runs dpkg");
   for (const name of ["cloud-workflow-runner.mjs","cloud-validation-host.mjs"]) {
     const shipped=path.join(dir,name);
     assert.equal(existsSync(shipped)?readFileSync(shipped,"utf8"):null,files[tools+"/"+name],name+" is shipped into the private plan directory");
   }
-  const lane=spawnSync(process.execPath,[path.join(dir,"cloud-workflow-runner.mjs"),"0"],{cwd:worktree,encoding:"utf8"});
+  const lane=runLane(dir,worktree);
   assert.equal(lane.status,0,lane.stderr);
   assert.match(lane.stdout,/^compact lane$/m);
   assert.match(lane.stdout.trim().split("\n").at(-1),/^CLOUD_WORKFLOW_LANE \{"exitCode":0,"steps":\[\[1,"action",\d+,0\],\[2,"actor",\d+,0\]\]\}$/);
   assert.equal(git(worktree,["status","--porcelain"],f.home),"");
+});
+
+test("AC-68 workflow lanes whose commit lacks the shipped runner, or holds other bytes, are refused by name, never briefed for the agent to run as root; command lanes still brief",t=>{
+  const f=makeHome("compact-refused-");t.after(f.cleanup);
+  const workflow="on: pull_request\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo lane\n";
+  const brief=(files,lanes=[{name:"check"}],source=true)=>{
+    const worktree=mkdtempSync(path.join(f.root,"checkout-"));
+    makeCheckout({...f,checkout:worktree,remoteUrl:"https://github.com/example/widgets.git",files:{[workflowPath]:workflow,...files}});
+    const commit=git(worktree,["rev-parse","HEAD"],f.home);
+    return validationBrief({provider:"claude",repository:"example/widgets",commit,worktree,branch:"main",model:"fixture-model",lanes,
+      resultArtifact:{kind:"validation-outcomes",branch:"vibe-validation-results/refused",path:".vibe-validation-outcomes-55667788.json"},
+      ...(source?{laneSource:{kind:"github-workflow",path:workflowPath,sha256:checksum(workflow),commit}}:{})});
+  };
+  const shipped=Object.fromEntries(fixtureFiles.map(name=>[tools+"/"+name,readFileSync(path.join(root,tools,name),"utf8")]));
+  assert.throws(()=>brief({}),new RegExp(`^Error: ${WORKFLOW_BRIEF_UNAVAILABLE}: workflow lanes run only through the shipped runner, and commit [0-9a-f]{40} has no plugins/vibe/lib/vibe/scripts/cloud-workflow-plan\\.mjs$`),
+    "a repository without the tools");
+  const runner=tools+"/cloud-workflow-runner.mjs";
+  assert.throws(()=>brief({...shipped,[runner]:shipped[runner]+"// another version\n"}),
+    new RegExp(`^Error: ${WORKFLOW_BRIEF_UNAVAILABLE}: .*'s plugins/vibe/lib/vibe/scripts/cloud-workflow-runner\\.mjs differs from the installed copy$`), "a commit with another runner");
+  assert.throws(()=>compactWorkflowBrief({commit:"c".repeat(40)},[],"key",()=>{throw new Error("missing");}),new RegExp(`^Error: ${WORKFLOW_BRIEF_UNAVAILABLE}: `),
+    "the brief builder itself refuses; it never returns a fallback");
+  assert.match(brief(shipped),/node "\$p\/cloud-workflow-runner\.mjs" <index>/,"the same request with the shipped tools briefs");
+  assert.match(brief({},[{name:"check",command:"node --test"}],false),/- check: node --test/,"a command lane needs no runner and still briefs");
 });
 
 // A compact plan prepared as the bootstrap prepares it, with the host's package repair replaced by a fixed result.
@@ -152,7 +185,7 @@ function repairedPlan(t){
     resultArtifact:{kind:"validation-outcomes",branch:"vibe-validation-results/repair",path:".vibe-validation-outcomes-11223344.json"},
     laneSource:{kind:"github-workflow",path:workflowPath,sha256:checksum(workflow),commit}};
   const command=validationBrief(request).split("\n").find(line=>line.startsWith("node -e "));
-  const shipped=execFileSync("bash",["-ec",command],{cwd:worktree,encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
+  const shipped=execFileSync("bash",["-ec",command],{cwd:worktree,env:stubbed(fakeDpkg(f.root)),encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
   const {plan}=JSON.parse(Buffer.from(command.slice(command.lastIndexOf(" ")+1),"base64url"));
   const prepare=repaired=>{
     const dir=mkdtempSync(path.join(worktree,".git","vibe-repair-"));
@@ -163,7 +196,7 @@ prepareWorkflowPlan(JSON.parse(process.argv[1]),process.argv[2],()=>JSON.parse(p
     assert.equal(child.status,0,child.stderr);
     return dir;
   };
-  const lane=dir=>spawnSync(process.execPath,[path.join(dir,"cloud-workflow-runner.mjs"),"0"],{cwd:worktree,encoding:"utf8"});
+  const lane=dir=>runLane(dir,worktree);
   return {prepare,lane};
 }
 

@@ -106,6 +106,31 @@ export function git(cwd, args, home) {
 }
 
 /**
+ * The argv that runs `command args`. As root, it runs them with a private, empty /etc/sudoers.d, so the workflow lane
+ * runner's real sudo grant works for the actor without touching the host's directory, and it writes the directory's
+ * entries to `leftover` after the command ends. Otherwise it runs them unchanged. A root run needs sudo and a private
+ * mount namespace (a container started with --cap-add SYS_ADMIN).
+ */
+export function privateSudoers(command, args, leftover = "/dev/null") {
+  if (process.getuid?.() !== 0) return [command, args];
+  const script = 'out=$1; shift; mount -t tmpfs -o mode=0755 vibe-test-sudoers /etc/sudoers.d || exit 70; "$@"; status=$?; ls -A /etc/sudoers.d > "$out"; exit $status';
+  return ["unshare", ["--mount", "--propagation", "private", "sh", "-c", script, "private-sudoers", leftover, command, ...args]];
+}
+
+/**
+ * Stand-ins for dpkg and dpkg-query in `directory`: each records its arguments in `calls` and exits 0, so a test that
+ * runs the host's package repair as root never configures a real package. Put `bin` first on the PATH.
+ */
+export function fakeDpkg(directory) {
+  const bin = path.join(directory, "fake-dpkg-bin"), calls = path.join(directory, "fake-dpkg-calls");
+  mkdirSync(bin, { recursive: true });
+  for (const name of ["dpkg", "dpkg-query"]) {
+    writeFileSync(path.join(bin, name), `#!/bin/sh\necho "${name} $*" >> ${JSON.stringify(calls)}\n`, { mode: 0o755 });
+  }
+  return { bin, calls };
+}
+
+/**
  * Creates a bare origin with one commit on main (the given files) and clones
  * it to `checkout`. The clone's origin URL is then pointed at `remoteUrl` for
  * fetch display while pushes and fetches still use the local bare repo.
