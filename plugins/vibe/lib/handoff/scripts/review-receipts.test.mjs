@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { reviewBrief } from "./review-context-test-support.mjs";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -23,7 +24,7 @@ function gateReceipts(worktree) {
     writeFileSync(tracePath, `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "mcp__closedloop_graph__code_symbols" }] } })}\n${JSON.stringify({ type: "result", session_id: sessionId })}\n`);
     const resultFile = path.join(gitDir, `stack-${role}-result.json`);
     writeFileSync(resultFile, JSON.stringify({ runtime: "claude", agentName: role, status: "DONE", sessionId,
-      requestId: `stack-${index}`, tracePath, source, graphToolAliases: ["mcp__closedloop_graph__code_symbols"], data: { findings: [] } }));
+      requestId: `stack-${index}`, tracePath, worktree: realpathSync(worktree), source, graphToolAliases: ["mcp__closedloop_graph__code_symbols"], data: { findings: [] } }));
     const outFile = path.join(gitDir, `stack-${role}-receipt.json`);
     captureReviewReceipt({ worktree, resultFile, outFile, role });
     return outFile;
@@ -43,11 +44,17 @@ test("review receipts require all launcher roles, completion identity, graph use
     const tracePath = path.join(gitDir, `${role}.jsonl`);
     writeFileSync(tracePath, `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "mcp__closedloop_graph__code_symbols" }] } })}\n${JSON.stringify({ type: "result", session_id: sessionId })}\n`);
     const resultFile = path.join(gitDir, `${role}-result.json`);
-    const output = { runtime: "claude", agentName: role, status: "DONE", sessionId, requestId: `r-${index}`, tracePath, source,
+    const output = { runtime: "claude", agentName: role, status: "DONE", sessionId, requestId: `r-${index}`, tracePath, worktree: realpathSync(worktree), source,
       graphToolAliases: ["mcp__closedloop_graph__code_symbols"], data: { findings: [] } };
     writeFileSync(resultFile, JSON.stringify(output));
     const outFile = path.join(gitDir, `${role}-receipt.json`);
     captureReviewReceipt({ worktree, resultFile, outFile, role });
+    if (index === 0) {
+      const sibling = path.join(gitDir, "sibling-checkout");
+      execFileSync("git", ["-C", worktree, "worktree", "add", "--detach", "-q", sibling, "HEAD"]);
+      assert.equal(sourceIdentity(sibling).treeSha256, source.treeSha256);
+      assert.throws(() => captureReviewReceipt({ worktree: sibling, resultFile, outFile, role }), /launcher worktree differs/);
+    }
     return { outFile, resultFile, tracePath, output };
   });
   const saved = () => receipts.map(item => JSON.parse(readFileSync(item.outFile, "utf8")));
@@ -117,11 +124,11 @@ test("Codex native FINAL helper artifacts reach the same four-role handoff gate"
     writeFileSync(path.join(orchDir, `brief-${index}.md`), reviewBrief(orchDir));
     const definition = path.join(orchDir, `${role}-agent.md`);
     writeFileSync(definition, `---\nname: ${role}\n---\n`);
-    const started = helper("start", role, "--kind", role === "vibe-verify-worker" ? "verifier" : "reviewer", "--brief", `brief-${index}.md`,
+    const started = helper("start", role, "--runtime", "codex", "--kind", role === "vibe-verify-worker" ? "verifier" : "reviewer", "--brief", `brief-${index}.md`,
       "--worktree", worktree, "--worker-id", workerId, "--role", role, "--agent-definition", definition, "--capabilities", capabilities);
     assert.equal(started.status, 0, started.stderr);
     if (index === 0) {
-      const duplicate = helper("start", "duplicate", "--kind", "reviewer", "--brief", "duplicate.md", "--worktree", worktree,
+      const duplicate = helper("start", "duplicate", "--runtime", "codex", "--kind", "reviewer", "--brief", "duplicate.md", "--worktree", worktree,
         "--worker-id", workerId, "--role", role, "--agent-definition", definition, "--capabilities", capabilities);
       assert.notEqual(duplicate.status, 0);
       assert.match(duplicate.stderr, /cannot share a native worker identity/);
@@ -140,12 +147,25 @@ test("Codex native FINAL helper artifacts reach the same four-role handoff gate"
     assert.equal(helper("accepted", role, "--report", report).status, 0);
     await assert.rejects(captureNativeReviewReceipt({ worktree, orchDir, helperName: role, outFile,
       role: REVIEW_ROLES[(index + 1) % REVIEW_ROLES.length] }), /canonical role/);
-    const actualTurn = async () => ({ sessionId: workerId, turnId: completion.turnId, status: "completed",
+    const actualTurn = async () => ({ cwd: worktree, sessionId: workerId, turnId: completion.turnId, status: "completed",
       toolCalls: ["mcp__custom_graph__sync-status"] });
     await assert.rejects(captureNativeReviewReceipt({ worktree, orchDir, helperName: role, outFile, role },
-      async () => ({ sessionId: workerId, turnId: completion.turnId, status: "completed", toolCalls: [] })),
+      async () => ({ cwd: worktree, sessionId: workerId, turnId: completion.turnId, status: "completed", toolCalls: [] })),
     /no observed tool call/, "a helper's claimed call cannot replace App Server items");
     await captureNativeReviewReceipt({ worktree, orchDir, helperName: role, outFile, role }, actualTurn);
+    if (index === 0) {
+      const receipt = JSON.parse(readFileSync(outFile, "utf8"));
+      const saved = JSON.parse(readFileSync(path.join(orchDir, "helpers.json"), "utf8"))[role];
+      assert.deepEqual(saved.runtimeEvidence, receipt.runtimeEvidence, "the accepted owner records the observed turn evidence");
+      await captureNativeReviewReceipt({ worktree, orchDir, helperName: role, outFile, role }, actualTurn);
+      const original = readFileSync(receipt.runtimeEvidence.path);
+      writeFileSync(receipt.runtimeEvidence.path, "invalid JSON");
+      try {
+        await assert.rejects(captureNativeReviewReceipt({ worktree, orchDir, helperName: role, outFile, role }, actualTurn),
+          (error) => error.message.includes(receipt.runtimeEvidence.path));
+        assert.equal(readFileSync(receipt.runtimeEvidence.path, "utf8"), "invalid JSON");
+      } finally { writeFileSync(receipt.runtimeEvidence.path, original); }
+    }
     receipts.push(outFile);
   }
   assert.deepEqual(reviewReceiptProblems(receipts.map(file => JSON.parse(readFileSync(file, "utf8"))), source), { problems: [], findings: [] });
@@ -305,7 +325,7 @@ test("a launcher receipt records the model its trace shows and the gate refuses 
     const tracePath = path.join(gitDir, `${role}.jsonl`);
     writeFileSync(tracePath, [...events, { type: "result", session_id: sessionId }].map(event => JSON.stringify(event)).join("\n"));
     const resultFile = path.join(gitDir, `${role}-result.json`);
-    writeFileSync(resultFile, JSON.stringify({ runtime: "claude", agentName: role, status: "DONE", sessionId, requestId: `m-${index}`, tracePath, source,
+    writeFileSync(resultFile, JSON.stringify({ runtime: "claude", agentName: role, status: "DONE", sessionId, requestId: `m-${index}`, tracePath, worktree: realpathSync(worktree), source,
       graphToolAliases: [], data: { findings: [] } }));
     const outFile = path.join(gitDir, `${role}-receipt.json`);
     return { receipt: captureReviewReceipt({ worktree, resultFile, outFile, role }), outFile, tracePath };

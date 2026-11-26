@@ -1,10 +1,11 @@
+import { parseArgs, promisify } from "node:util";
+import { visualQaFindingsProblems } from "../../vibe/scripts/required-visual-qa.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFile, execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
-import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,60 +14,7 @@ import { sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { captureReviewReceipt, reviewReceiptProblems } from "./review-receipts.mjs";
 import { acceptManagedReviewer, readCodexReviewTurn, runManagedReviewer } from "./codex-review-runtime.mjs";
 import { reviewBrief } from "./review-context-test-support.mjs";
-
-/** A deterministic App Server boundary. All session, helper and receipt code runs unchanged. */
-function reviewFixture(t, { finalBody = JSON.stringify, markerSeparator = "\n", directory, helper = "first-pass" } = {}) {
-  const orchDir = directory ?? realpathSync(mkdtempSync(path.join(tmpdir(), "managed-review-")));
-  if (!directory) t.after(() => rmSync(orchDir, { recursive: true, force: true }));
-  const worktree = path.join(orchDir, "worktree-" + helper);
-  mkdirSync(worktree);
-  execFileSync("git", ["init", "-q", "-b", "main", worktree]);
-  execFileSync("git", ["-C", worktree, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.org", "commit", "-qm", "base", "--allow-empty"]);
-  const role = "vibe-adversarial-reviewer";
-  const definitionPath = fileURLToPath(new URL("../../../agents/" + role + ".md", import.meta.url));
-  const capabilities = path.join(orchDir, "capabilities.json");
-  const brief = path.join(orchDir, "brief.md");
-  writeFileSync(brief, reviewBrief(orchDir, "Review the source for regressions."));
-  writeFileSync(capabilities, JSON.stringify([{ name: "mcp__test_graph__code_symbols", service: "graph", access: "read", operation: "code_symbols" }]));
-  const input = { orchDir, worktree, role, helper, model: "gpt-6.2-astra", capabilities, brief,
-    definitionPath };
-  const calls = [];
-  const threadId = directory ? "thread-" + helper : "thread-1";
-  const turnId = "turn-1";
-  const items = [{ type: "mcpToolCall", server: "test-graph", tool: "code_symbols",
-    status: "completed" }];
-  let notify;
-  const client = {
-    onNotification(handler) { notify = handler; return () => {}; },
-    onConnection() { return () => {}; },
-    close() {},
-    async request(method, params) {
-      calls.push([method, params]);
-      switch (method) {
-        case "model/list": return { data: [{ model: "gpt-6.2-astra" }] };
-        case "thread/list": return { data: [] };
-        case "thread/start":
-        case "thread/read": return { thread: { id: threadId, cwd: worktree, turns: [], status: { type: "idle" } } };
-        case "turn/start": return { turn: { id: turnId } };
-        case "turn/steer": {
-          const [fields, marker] = params.input[0].text.split("\nLast line: ");
-          const result = { ...JSON.parse(fields.slice("Use these fields: ".length)), observedToolCalls: [], findings: [] };
-          const final = { type: "agentMessage", phase: "final_answer",
-            text: finalBody(result) + markerSeparator + marker };
-          items.push(final);
-          notify("item/completed", { threadId, turnId, item: final });
-          notify("turn/completed", { threadId, turn: { id: turnId, status: "completed" } });
-          return { turnId };
-        }
-        case "thread/turns/list": return { data: [{ id: turnId, status: "completed" }] };
-        case "thread/items/list": return { data: items.map(item => ({ item })) };
-        default: throw new Error("Unexpected App Server method " + method);
-      }
-    },
-  };
-  const runtimeRead = (threadId, turnId) => readCodexReviewTurn(threadId, turnId, client);
-  return { input, calls, client, items, runtimeRead, readHelper: () => JSON.parse(readFileSync(path.join(orchDir, "helpers.json"), "utf8"))[input.helper] };
-}
+import { reviewFixture } from "./codex-reviewer-test-support.mjs";
 
 test("AC 12 refuses an ungrounded review before connecting to a model", async t => {
   const { input } = reviewFixture(t);
@@ -101,6 +49,59 @@ test("AC-1, AC-2, AC-3, AC-6, AC-7: the named read-only managed reviewer yields 
   assert.equal(captured.trace.path, deliverable);
   assert.ok(readHelper().acceptedAt);
   assert.deepEqual(reviewReceiptProblems([captured], captured.source).problems.filter(problem => problem.startsWith(input.role)), []);
+});
+
+// ISS-14552 receipt hardening moved to ISS-14476 (AC-88): handoff replay, capture and cached publication.
+async function acceptedReceipt(t) {
+  const fixture = reviewFixture(t);
+  const { report } = await runManagedReviewer(fixture.input, async () => fixture.client);
+  const accepted = await acceptManagedReviewer({ ...fixture.input, report }, fixture.runtimeRead);
+  return { ...fixture, report, receiptFile: accepted.receipt, saved: JSON.parse(readFileSync(accepted.receipt, "utf8")) };
+}
+
+test("AC-88 R26 handoff replay binds a native receipt to its accepted ledger fingerprints, Codex runtime and worktree", async t => {
+  const { input, saved } = await acceptedReceipt(t);
+  const problems = (receipt, options) => reviewReceiptProblems([receipt], saved.source, options).problems.filter(line => line.startsWith(input.role));
+  assert.deepEqual(problems(saved), []);
+  for (const field of ["result", "trace", "capabilities", "runtimeEvidence"]) {
+    assert.match(problems({ ...saved, [field]: { ...saved[field], sha256: "0".repeat(64) } }).join(), /native FINAL owner or evidence changed/, field);
+  }
+  assert.match(problems({ ...saved, runtime: "claude" }).join(), /native FINAL owner or evidence changed/);
+  assert.match(problems({ ...saved, workerId: "another-thread" }).join(), /native FINAL owner or evidence changed/);
+  const elsewhere = realpathSync(mkdtempSync(path.join(tmpdir(), "other-worktree-")));
+  t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
+  assert.match(problems(saved, { worktree: elsewhere }).join(), /receipt belongs to another worktree/);
+  assert.match(reviewReceiptProblems([saved, { ...saved, role: "unlisted-reviewer" }], saved.source).problems.join(), /unvalidated role/,
+    "an extra receipt for an unvalidated role is refused, as cloud import relies on");
+});
+
+test("AC-88 R31 native capture binds the live App Server thread's working directory to the helper worktree", async t => {
+  const { input, client, report } = await (async () => {
+    const fixture = reviewFixture(t);
+    const { report } = await runManagedReviewer(fixture.input, async () => fixture.client);
+    return { ...fixture, report };
+  })();
+  const sibling = path.join(input.orchDir, "sibling");
+  mkdirSync(sibling);
+  const moved = { ...client, request: async (method, params) => {
+    const answer = await client.request(method, params);
+    return method === "thread/read" ? { ...answer, thread: { ...answer.thread, cwd: sibling } } : answer;
+  } };
+  await assert.rejects(acceptManagedReviewer({ ...input, report }, (thread, turn) => readCodexReviewTurn(thread, turn, moved)));
+  const accepted = await acceptManagedReviewer({ ...input, report }, (thread, turn) => readCodexReviewTurn(thread, turn, client));
+  assert.deepEqual(reviewReceiptProblems([JSON.parse(readFileSync(accepted.receipt, "utf8"))], sourceIdentity(input.worktree)).problems
+    .filter(line => line.startsWith(input.role)), [], "the matching directory recaptures");
+});
+
+test("AC-88 R28 a malformed cached receipt is a receipt-specific refusal that leaves the accepted evidence intact", async t => {
+  const { input, report, runtimeRead, receiptFile, readHelper } = await acceptedReceipt(t);
+  const acceptedAt = readHelper().acceptedAt;
+  writeFileSync(receiptFile, '{"kind": "native-final"');
+  const failure = await acceptManagedReviewer({ ...input, report }, runtimeRead).then(() => null, error => error);
+  assert.ok(failure, "a malformed cached receipt is refused");
+  assert.doesNotMatch(String(failure.message), /^SyntaxError|Unexpected end of JSON/);
+  assert.match(String(failure.message), /receipt\.json|native evidence/);
+  assert.equal(readHelper().acceptedAt, acceptedAt, "the accepted helper record is unchanged");
 });
 
 const helperCli = fileURLToPath(new URL("../../fleet-orchestrator/scripts/helpers.mjs", import.meta.url));
@@ -543,8 +544,7 @@ test("a leading UTF-8 BOM remains valid during native capture and handoff replay
 
 test("a checkpoint and FINAL on the same line fail native receipt capture", async t => {
   const { input, client, runtimeRead } = reviewFixture(t, { finalBody: withCheckpoint, markerSeparator: "" });
-  const { report } = await runManagedReviewer(input, async () => client);
-  await assert.rejects(acceptManagedReviewer({ ...input, report }, runtimeRead), /exact final line/);
+  await assert.rejects(runManagedReviewer(input, async () => client), /exact FINAL marker/i);
 });
 
 test("native receipt rejects trailing text and a checkpoint report missing its owner identity", async t => {
@@ -715,6 +715,37 @@ test("AC-8: helper registration uses the YAML name of a repository critic", t =>
   }
 });
 
+test("ADV2-2 review helper registration refuses a brief naming a repository script missing from the review worktree", t => {
+  const { input } = reviewFixture(t);
+  const cli = fileURLToPath(new URL("../../fleet-orchestrator/scripts/helpers.mjs", import.meta.url));
+  // The review worktree is a plugin checkout, so a repository-qualified script names its own source.
+  const pluginRoot = path.join(input.worktree, "plugins", "vibe");
+  mkdirSync(path.join(pluginRoot, ".claude-plugin"), { recursive: true });
+  writeFileSync(path.join(pluginRoot, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "0.0.1" }));
+  mkdirSync(path.join(pluginRoot, "skills", "vibe", "scripts"), { recursive: true });
+  const script = "plugins/vibe/skills/vibe/scripts/not-yet-added.mjs";
+  const brief = path.join(input.orchDir, "source-brief.md");
+  writeFileSync(brief, reviewBrief(input.orchDir, `Review ${script} for regressions.`));
+  const critic = path.join(input.orchDir, "critic.md");
+  writeFileSync(critic, "---\nname: visual-qa-critic\n---\nname: visual-qa-critic\n");
+  const kinds = [["reviewer", input.role, input.definitionPath],
+    ["verifier", "vibe-verify-worker", fileURLToPath(new URL("../../../agents/vibe-verify-worker.md", import.meta.url))],
+    ["critic", "visual-qa-critic", critic]];
+  const register = (kind, role, definition, suffix) => spawnSync(process.execPath, [cli, input.orchDir, "start", `${kind}-${suffix}`,
+    "--kind", kind, "--worktree", input.worktree, "--runtime", "codex", "--worker-id", `${kind}-thread-${suffix}`, "--role", role,
+    "--agent-definition", definition, "--capabilities", input.capabilities, "--brief", brief], { encoding: "utf8" });
+  for (const [kind, role, definition] of kinds) {
+    const refused = register(kind, role, definition, "missing");
+    assert.notEqual(refused.status, 0, kind);
+    assert.match(refused.stderr, /not-yet-added\.mjs: plugin script is not a contained regular file in the review worktree/, kind);
+  }
+  writeFileSync(path.join(input.worktree, script), "export {};\n");
+  for (const [kind, role, definition] of kinds) {
+    const accepted = register(kind, role, definition, "present");
+    assert.equal(accepted.status, 0, `${kind}: ${accepted.stderr}`);
+  }
+});
+
 test("direct Codex helper registration accepts a readable symlinked brief", t => {
   const { input, readHelper } = reviewFixture(t);
   const link = path.join(input.orchDir, "linked-brief.md");
@@ -757,4 +788,76 @@ test("changed launch inputs stop the registered helper before its review turn", 
     assert.ok(readHelper().abandonedAt);
     assert.equal(calls.some(([method]) => method === "turn/start"), false);
   }
+});
+
+test("documented reviewer, verifier and critic recipes reach the native receipt and visual-QA consumers", async t => {
+  const fleet = readFileSync(new URL("../../../skills/fleet-orchestrator/SKILL.md", import.meta.url), "utf8");
+  const handoff = readFileSync(new URL("../../../skills/handoff/references/handoff-pr.md", import.meta.url), "utf8");
+  const runArgs = /`node [^`]*codex-reviewer\.mjs run ([^`]+)`/.exec(handoff)?.[1];
+  const acceptArgs = /`accept ([^`]+)`/.exec(handoff)?.[1];
+  function argumentsFrom(recipe, substitutions, required) {
+    assert.ok(recipe);
+    const args = recipe.split(" ").map(token => substitutions[token] ?? token);
+    const options = Object.fromEntries(required.map(key => [key, { type: "string" }]));
+    const { values } = parseArgs({ args, options });
+    for (const key of required) assert.ok(values[key], "documented recipe needs --" + key);
+    const { "orch-dir": orchDir, ...rest } = values;
+    return { ...rest, orchDir };
+  }
+  for (const role of ["vibe-adversarial-reviewer", "vibe-verify-worker"]) {
+    const { input, client, runtimeRead } = reviewFixture(t, { role });
+    const substitutions = { "<dir>": input.orchDir, "<fresh-name>": input.helper, "<name>": input.helper, "<wt>": input.worktree,
+      "<agent>": role, "<model>": input.model, "<parent-discovered-capabilities.json>": input.capabilities, "<file>": input.brief };
+    const run = argumentsFrom(runArgs, substitutions, ["orch-dir", "helper", "worktree", "role", "model", "capabilities", "brief"]);
+    const { report } = await runManagedReviewer(run, async () => client);
+    const accept = argumentsFrom(acceptArgs, { ...substitutions, "<returned-report>": report }, ["orch-dir", "helper", "report"]);
+    const { receipt } = await acceptManagedReviewer(accept, runtimeRead);
+    const saved = JSON.parse(readFileSync(receipt, "utf8"));
+    // Check against the reviewed checkout's live source, never the receipt's own record of it.
+    assert.deepEqual(reviewReceiptProblems([saved], sourceIdentity(input.worktree)).problems.filter(line => line.startsWith(role)), []);
+    writeFileSync(path.join(input.worktree, "changed-after-review.txt"), "edit\n");
+    assert.ok(reviewReceiptProblems([saved], sourceIdentity(input.worktree)).problems.includes(`${role}: review source differs from current source`),
+      "a receipt for an older source is refused");
+    rmSync(path.join(input.worktree, "changed-after-review.txt"));
+  }
+  const { input, readHelper } = reviewFixture(t);
+  const cli = fileURLToPath(new URL("../../fleet-orchestrator/scripts/helpers.mjs", import.meta.url));
+  const run = (...args) => execFileSync(process.execPath, [cli, input.orchDir, ...args], { encoding: "utf8" });
+  const session = "native-critic", turn = "critic-turn";
+  const definition = path.join(input.orchDir, "critic.md");
+  writeFileSync(definition, "---\nname: visual-qa-critic\n---\nInspect the captures.");
+  assert.match(fleet, /--kind reviewer\|verifier\|critic/);
+  run("start", input.helper, "--runtime", "codex", "--kind", "critic", "--role", "visual-qa-critic", "--worktree", input.worktree,
+    "--worker-id", session, "--agent-definition", definition, "--capabilities", input.capabilities, "--brief", input.brief);
+  const page = path.join(input.orchDir, "thread.json"), output = path.join(input.orchDir, "final.txt");
+  const report = path.join(input.orchDir, "report.json"), findings = path.join(input.orchDir, "findings.json");
+  const head = execFileSync("git", ["-C", input.worktree, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  writeFileSync(findings, JSON.stringify({ head, findings: [] }));
+  writeFileSync(output, findings + "\n" + finalMarker(readHelper(), { sessionId: session, turnId: turn }));
+  writeFileSync(page, JSON.stringify({ thread: { id: session, cwd: input.worktree, turns: [{ id: turn, status: "completed" }] } }));
+  const substitutions = { "<name>": input.helper, "<file>": output, "<id>": session, "<turn>": turn, "<page>": page, "<report>": report };
+  for (const action of ["final", "accepted"]) {
+    const template = [...fleet.matchAll(/`helpers\.mjs <orchDir> ([^`]+)`/g)].map(match => match[1])
+      .find(command => command.startsWith(action + " ") && (action === "accepted" || command.includes("--completion-event")));
+    assert.ok(template, "documented critic " + action + " command");
+    const args = template.split(" ").map(word => substitutions[word] ?? word);
+    if (action === "final") {
+      const eventIndex = args.indexOf("--completion-event");
+      assert.throws(() => run(...args.filter((_, i) => i !== eventIndex && i !== eventIndex + 1)), /runtime completion evidence/);
+      const completed = readFileSync(page, "utf8");
+      const moved = JSON.parse(completed);
+      moved.thread.cwd = input.orchDir;
+      writeFileSync(page, JSON.stringify(moved));
+      assert.throws(() => run(...args), /checkout differs/);
+      writeFileSync(page, completed);
+    }
+    run(...args);
+  }
+  assert.ok(readHelper().acceptedAt);
+  assert.deepEqual(visualQaFindingsProblems(findings, head, null, null, null, input.worktree), []);
+  const accepted = JSON.parse(readFileSync(report, "utf8"));
+  assert.equal(accepted.findings.path, realpathSync(findings));
+  writeFileSync(findings, JSON.stringify({head, findings: []}, null, 2));
+  assert.match(visualQaFindingsProblems(findings, head, null, null, null, input.worktree).join(" "), /fingerprint|changed|match/i);
+
 });

@@ -1,8 +1,9 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { boundDefinition, capWorkerResult, checkPreviewResult, createTurnCap, DEFAULT_WORKER_TIMEOUT_MS, dispatchFreshnessProblem, MAX_WORKER_TIMEOUT_MS, protectedWriteLaunchArgs, protectedWriteSettings, safeFailure, stderrTail, testAuthoringGranted, workerResultJsonSchemaFor, workerSessionName } from "./claude-worker.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { capWorkerResult } from "./worker-result-cap.js";
+import { boundDefinition, checkPreviewResult, createTurnCap, DEFAULT_WORKER_TIMEOUT_MS, dispatchFreshnessProblem, MAX_WORKER_TIMEOUT_MS, protectedWriteLaunchArgs, protectedWriteSettings, safeFailure, stderrTail, testAuthoringGranted, workerResultJsonSchemaFor, workerSessionName } from "./claude-worker.js";
 import { providerAware } from "./cli.js";
 import { ProviderBroken } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
 import { checkProtectedWriteSupportAsync } from "./claude-preflight.js";
@@ -35,27 +36,6 @@ it("Claude dispatch binds the exact installed definition root and script referen
   mkdirSync(join(value.worktree, "handoff", "scripts"), { recursive: true });
   writeFileSync(join(value.worktree, "handoff", "scripts", "repo-tool.mjs"), "export {};\n");
   expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "run handoff/scripts/repo-tool.mjs")).toBeNull();
-});
-
-it("Claude dispatch treats the session checkout's own plugin source as a script root, never another checkout's", () => {
-  const value = setup();
-  const pluginSource = (checkout: string) => {
-    const root = join(checkout, "plugins", "vibe");
-    mkdirSync(join(root, ".claude-plugin"), { recursive: true });
-    writeFileSync(join(root, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "0.0.1" }));
-    mkdirSync(join(root, "skills", "vibe", "scripts"), { recursive: true });
-    return root;
-  };
-  const own = pluginSource(value.worktree);
-  const other = join(value.base, "other-checkout");
-  mkdirSync(other);
-  execFileSync("git", ["init", "-q"], { cwd: other });
-  const elsewhere = pluginSource(other);
-  const check = (text: string) => dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, text);
-  expect(check("Add plugins/vibe/skills/vibe/scripts/branch-new.mjs and its test.")).toBeNull();
-  expect(check(`Add ${join(own, "skills", "vibe", "scripts", "branch-new.mjs")}.`)).toBeNull();
-  expect(check(`Run ${join(elsewhere, "skills", "vibe", "scripts", "branch-new.mjs")}.`))
-    .toMatch(/skills\/vibe\/scripts\/branch-new\.mjs: plugin script does not exist in installed vibe/);
 });
 
 it("protected path support requires a regular installed hook, not a missing or symlinked script", async () => {

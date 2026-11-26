@@ -86,7 +86,7 @@ function vibeCore(relative) {
 
 // vibe-core:lib/handoff/scripts/codex-review-runtime.mjs
 var module = await vibeCore("lib/handoff/scripts/codex-review-runtime.mjs");
-var { acceptManagedReviewer, codexGraphSetupProblem, managedReviewClient, observedCodexTurn, readCodexReviewTurn, readCodexTurnItems, reviewReadClient, runManagedReviewer } = module;
+var { acceptManagedReviewer, codexGraphSetupProblem, launchQaGuide, managedReviewClient, observedCodexTurn, readCodexReviewTurn, readCodexTurnItems, reviewReadClient, runManagedReviewer } = module;
 
 // ../../plugins/vibe/skills/vibe/scripts/agent-models.mjs
 var CodexWorkerRole = Object.freeze({
@@ -132,7 +132,7 @@ import { fileURLToPath as fileURLToPath2, pathToFileURL as pathToFileURL3 } from
 
 // vibe-core:lib/vibe/scripts/provider.mjs
 var module2 = await vibeCore("lib/vibe/scripts/provider.mjs");
-var { BUNDLED_PROVIDER_DIR, CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, boundWith, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, knownProviderContracts, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerData, providerDataOr, providerGuardRule, providerPath, providerStubs, readContract, recordedBinding, requireProvider, scriptExitCode, sessionBinding, ticketReference, unprobedBinding, useLeadBinding, useSessionWorktree } = module2;
+var { BUNDLED_PROVIDER_DIR, CONTRACT_FILE, Capability, PROVIDER_PROTOCOL, ProviderBroken, ProviderState, ProviderUnavailable, UNPROBED_REFUSAL, assembleProviderText, bindForRepository, boundWith, connectionLabel, exitOnProviderBroken, failScript, installedProviders, isProviderBroken, knownProviderContracts, optInProblem, parseLeadBinding, probeProvider, providerBlock, providerCandidate, providerConnectionArguments, providerData, providerDataOr, providerGuardRule, providerPath, providerProbeProblem, providerStubs, readContract, recordedBinding, requireProvider, scriptExitCode, sessionBinding, ticketReference, unprobedBinding, useLeadBinding, useSessionWorktree } = module2;
 
 // ../shared/cli.ts
 import { pathToFileURL as pathToFileURL2 } from "node:url";
@@ -172,6 +172,7 @@ function providerAware(main2) {
 var usage = [
   "codex-reviewer.mjs run --orch-dir DIR --helper NAME --worktree DIR --role ROLE --model MODEL --capabilities FILE --brief FILE [--agent-definition FILE (visual-qa-critic)]",
   "codex-reviewer.mjs accept --orch-dir DIR --helper NAME --report FILE",
+  "codex-reviewer.mjs qa-guide --orch-dir DIR --helper NAME --worktree DIR --writer-thread ID --model MODEL --brief FILE",
   "Accept only after independently checking the final report."
 ].join("\n");
 var stringOption = { type: "string" };
@@ -181,8 +182,8 @@ async function main(argv) {
     console.log(usage);
     return 0;
   }
-  if (action !== "run" && action !== "accept") throw new Error(usage);
-  const keys = action === "accept" ? ["report"] : ["worktree", "role", "model", "capabilities", "brief", "agent-definition"];
+  if (action !== "run" && action !== "accept" && action !== "qa-guide") throw new Error(usage);
+  const keys = action === "accept" ? ["report"] : action === "qa-guide" ? ["worktree", "writer-thread", "model", "brief"] : ["worktree", "role", "model", "capabilities", "brief", "agent-definition"];
   const options = Object.fromEntries(["orch-dir", "helper", ...keys].map((key) => [key, stringOption]));
   const { values } = parseArgs({ args, options });
   const required = (key) => {
@@ -198,6 +199,17 @@ async function main(argv) {
   } else {
     const model = required("model");
     if (!isModelName(model)) throw new Error("Invalid reviewer model");
+    if (action === "qa-guide") {
+      console.log(JSON.stringify(await launchQaGuide({
+        orchDir,
+        helper,
+        model,
+        worktree: required("worktree"),
+        writerThread: required("writer-thread"),
+        brief: required("brief")
+      })));
+      return 0;
+    }
     console.log(JSON.stringify(await runManagedReviewer({
       orchDir,
       helper,

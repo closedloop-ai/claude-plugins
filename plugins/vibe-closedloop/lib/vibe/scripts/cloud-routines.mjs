@@ -29,6 +29,7 @@ import { acquire, release } from "./e2e-lock.mjs";
 import { legacyRoutineName, RECEIPT_NAME, TERMINAL } from "./cloud-receipts.mjs";
 import { regularJson, writeAtomic } from "./owned-state.mjs";
 import { CloudSetupError } from "./cloud-environment.mjs";
+import { checkEnvironmentPin, currentClaudeAccount } from "./cloud-account-pin.mjs";
 
 export const ROUTINE_NAME = "vibe cloud worker";
 const LEDGER_SCHEMA = "vibe.cloud-routines/1";
@@ -71,7 +72,7 @@ export function pendingLine(count) {
 export function ledgerPath(home = os.homedir()) { return path.join(home, ".codex", "vibe", "cloud", "routines.json"); }
 export function routineLockDir(home = os.homedir()) { return path.join(home, ".codex", "vibe", "locks", "cloud-routine"); }
 
-function emptyLedger() { return { schema: LEDGER_SCHEMA, standing: null, intents: [], removal: [], removed: [], runs: [], connectorRefreshes: [], githubTokenMissingAt: null }; }
+function emptyLedger() { return { schema: LEDGER_SCHEMA, standing: null, intents: [], removal: [], removed: [], runs: [], connectorRefreshes: [], githubTokenMissingAt: null, environmentPin: null, environmentAccounts: {} }; }
 
 /** The ledger, or an empty one when none exists; an unreadable or unknown one is refused, never overwritten. */
 export function readLedger(home = os.homedir()) {
@@ -85,6 +86,35 @@ export function readLedger(home = os.homedir()) {
 
 function writeLedger(home, ledger) {
   writeAtomic(ledgerPath(home), { ...ledger, runs: ledger.runs.slice(-KEEP_RUNS) });
+}
+
+/** Record an explicitly selected environment's authenticated account under the routine lock. */
+export async function recordEnvironmentPin({ home = os.homedir(), environmentId, accountUuid, waitMs = 15_000 }) {
+  const invalid = checkEnvironmentPin({ id: environmentId }, null, accountUuid);
+  if (invalid) throw invalid;
+  return withRoutineLock(home, waitMs, () => {
+    let ledger = readLedger(home);
+    const previous = ledger.environmentPin?.accountUuid;
+    if (previous && previous !== accountUuid) {
+      // A different account cannot use or retire the previous account's routine.
+      // Keep its exact state so re-pinning the former account can safely resume it.
+      const { environmentAccounts, ...previousAccount } = ledger;
+      const archived = { ...environmentAccounts, [previous]: previousAccount };
+      ledger = { ...emptyLedger(), ...archived[accountUuid], environmentAccounts: archived };
+      delete archived[accountUuid];
+    }
+    ledger.environmentPin = { environmentId, accountUuid, pinnedAt: new Date().toISOString() };
+    writeLedger(home, ledger);
+    return { ok: true, environmentId, accountBound: true };
+  });
+}
+
+/** Fence account-owned routine operations under the same lock as a pin change. */
+function requireLedgerPin(ledger, environment, home, account) {
+  const pin = ledger.environmentPin;
+  if (!pin) return;
+  const problem = checkEnvironmentPin(environment ?? { id: pin.environmentId }, pin, account({ home }));
+  if (problem) throw problem;
 }
 
 /** True only when `token` is an intent this ledger recorded before its create was sent. */
@@ -179,11 +209,13 @@ function confirmConnectors(updated, allowlist) {
 
 /**
  * Run one brief on this machine's standing routine: create it once (intent first), update its job_config,
- * run it, and record the run's session id in the ledger before the lock is released.
+ * run it, and record the run's session id in the ledger before the lock is released. `afterRun` receives the
+ * launch with the acknowledged run and session ids before the ledger is written.
  */
-export async function runOnStanding({ remote, home = os.homedir(), environment, ccr, brief, allowlist = [], label, waitMs, refusal }) {
-  return withRoutineLock(home, waitMs, () => {
+export async function runOnStanding({ remote, home = os.homedir(), environment, ccr, brief, allowlist = [], label, waitMs, refusal, account = currentClaudeAccount, requestKey, beforeRun, afterRun }) {
+  return withRoutineLock(home, waitMs, async () => {
     const ledger = readLedger(home);
+    requireLedgerPin(ledger, environment, home, account);
     let standing = ledger.standing;
     const wanted = JSON.stringify([...allowlist].sort());
     const noDetails = standing && allowlist.length > 0 && !Array.isArray(standing.connectors);
@@ -207,6 +239,10 @@ export async function runOnStanding({ remote, home = os.homedir(), environment, 
       }
       return allowed;
     };
+    const binding = ledger.environmentPin ? {accountUuid:ledger.environmentPin.accountUuid,environmentId:environment.id} : {};
+    const launch = beforeRun ? {launchToken:randomUUID(), startedAt:new Date().toISOString(),...binding} : null;
+    if (launch) brief = brief.replace(/^[^\n]*/, opening =>
+      opening + "\nRecord this exact line at the start of the run log:\nVIBE_VALIDATION_LAUNCH " + launch.launchToken);
     let updated;
     try { updated = remote("update", { trigger_id: standing.id, body: updateBody(ccr, brief, connectorsFor(standing)) }); }
     catch (error) {
@@ -218,13 +254,37 @@ export async function runOnStanding({ remote, home = os.homedir(), environment, 
       updated = remote("update", { trigger_id: standing.id, body: updateBody(ccr, brief, connectorsFor(standing)) });
     }
     confirmConnectors(updated, allowlist);
-    const started = remote("run", { trigger_id: standing.id });
+    await beforeRun?.({...launch,routineId:standing.id});
+    let started;
+    try { started = remote("run", { trigger_id: standing.id }); }
+    catch (error) {
+      if (![400,401,403,404].includes(error.httpStatus)) error.launchUncertain = true;
+      throw error;
+    }
     const runId = started?.run_id ?? started?.run?.id ?? started?.session_id;
-    if (!runId) throw new Error("RemoteTrigger run returned no run or session id");
+    if (!runId) throw Object.assign(new Error("RemoteTrigger run returned no run or session id"),{code:"CLOUD_RUN_NOT_CREATED"});
     const sessionId = started?.session_id ?? null;
-    ledger.runs.push({ runId, sessionId, routineId: standing.id, label: label ?? null, startedAt: new Date().toISOString(), status: "started", maxWallMs: waitMs });
-    writeLedger(home, ledger);
+    // The acknowledged run goes on the caller's reservation first; a failure there still leaves the ledger row.
+    let unrecorded;
+    try { await afterRun?.({ ...launch, routineId: standing.id, runId, sessionId }); } catch (error) { unrecorded = error; }
+    ledger.runs.push({ runId, sessionId, routineId: standing.id,
+      ...binding, ...(launch ? {launchToken:launch.launchToken} : {}), label: label ?? null, startedAt: new Date().toISOString(), status: "started", maxWallMs: waitMs, ...(requestKey ? { requestKey } : {}) });
+    try { writeLedger(home, ledger); } catch (error) { error.launchUncertain = true; throw error; }
+    if (unrecorded) { unrecorded.launchUncertain = true; throw unrecorded; }
     return { routineId: standing.id, runId, sessionId };
+  });
+}
+
+/** Restore the nonce-proven launch to the same account ledger before a recovered report is imported. */
+export async function restoreValidationRun(home,entry,run,waitMs) {
+  const launch = entry.launch;
+  if (!launch?.launchToken || run.launchToken !== launch.launchToken || run.routineId !== launch.routineId) return;
+  await withRoutineLock(home,waitMs,() => {
+    const ledger = readLedger(home);
+    if (launch.accountUuid !== ledger.environmentPin?.accountUuid || launch.environmentId !== ledger.environmentPin?.environmentId) return;
+    if (ledger.runs.some(row => row.runId === run.runId && row.routineId === run.routineId)) return;
+    ledger.runs.push({...launch,runId:run.runId,sessionId:run.sessionId,requestKey:entry.key,status:"started",maxWallMs:waitMs});
+    writeLedger(home,ledger);
   });
 }
 
@@ -250,6 +310,11 @@ function gitDirs(worktree) {
   let names = [];
   try { names = readdirSync(linked); } catch { /* no linked worktrees */ }
   return [common, ...names.map((name) => path.join(linked, name))];
+}
+
+function archivedRoutineIds(ledger) {
+  return new Set(Object.values(ledger.environmentAccounts).flatMap(({ standing, removal, removed, runs }) =>
+    [standing?.id, ...removal.map(({ id }) => id), ...removed.map(({ id }) => id), ...runs.map(({ routineId }) => routineId)]));
 }
 
 /** Routine ids that ended runs of older vibe versions recorded in this repository's receipts. */
@@ -401,14 +466,16 @@ export const NO_EXECUTOR = null;
  * (except one still serving a run, or inside its backoff window), prove again, and record each failure for the
  * next run. Never throws: a removal problem never stops a cloud run.
  */
-export async function sweepRemovals({ home = os.homedir(), remote, worktree, executor = chromeRemoval(), waitMs = 60_000, now = Date.now, stderr = (line) => process.stderr.write(`${line}\n`) } = {}) {
+export async function sweepRemovals({ home = os.homedir(), remote, worktree, executor = chromeRemoval(), waitMs = 60_000, now = Date.now, stderr = (line) => process.stderr.write(`${line}\n`), account = currentClaudeAccount } = {}) {
   const outcome = { proved: [], pending: 0 };
   try {
     let queued = [];
     await withRoutineLock(home, waitMs, () => {
       const ledger = readLedger(home);
+      requireLedgerPin(ledger, null, home, account);
       resolveIntents(ledger, remote, now());
-      for (const entry of legacyRoutines(worktree)) queueRemoval(ledger, entry);
+      const archived = archivedRoutineIds(ledger);
+      for (const entry of legacyRoutines(worktree)) if (!archived.has(entry.id)) queueRemoval(ledger, entry);
       outcome.proved.push(...prove(ledger, remote, { at: new Date(now()) }));
       queued = ledger.removal.filter((entry) => !inFlight(ledger, entry.id, now()) && !inBackoff(entry, now()))
         .map(({ id, name }) => ({ id, name, url: `https://claude.ai/code/routines/${id}` }));
@@ -421,6 +488,7 @@ export async function sweepRemovals({ home = os.homedir(), remote, worktree, exe
       const handed = new Set(queued.map(({ id }) => id));
       await withRoutineLock(home, waitMs, () => {
         const ledger = readLedger(home);
+        requireLedgerPin(ledger, null, home, account);
         outcome.proved.push(...prove(ledger, remote, { counted: (entry) => handed.has(entry.id), at: new Date(now()) }));
         if (failure) for (const entry of ledger.removal) if (handed.has(entry.id)) entry.lastError = failure;
         writeLedger(home, ledger);

@@ -1,6 +1,7 @@
 // Covers Docker scratch stacks only; scratch files follow the same ownership rule. Each worker gets its own scratch
 // directory named with its worker id (`<scratch>/<worker-id>/`), creates its files there, and deletes only exact paths
 // it created; an orchestrator brief never asks a worker to delete by prefix or glob.
+import { capturedJson } from "../../vibe/scripts/captured-json.mjs";
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -229,7 +230,7 @@ export function runScratchStack({ orchDir, name, owner, ticket, worktree, ttlSec
   const ledger = JSON.parse(readFileSync(path.join(orchDir, 'helpers.json'), 'utf8'));
   const ownerToken = ledger[name]?.ownerToken;
   if (!ownerToken || ledger[name]?.project !== project) throw new Error('Scratch owner was not recorded before Docker launch.');
-  const config = JSON.parse(run(docker, ['compose', '--project-name', project, '-f', composeFile, 'config', '--format', 'json']));
+  const config = capturedJson(run(docker, ['compose', '--project-name', project, '-f', composeFile, 'config', '--format', 'json']));
   const overlay = scratchOverlay(config, ownerToken, project);
   const overlayDir = path.join(orchDir, 'scratch-overlays');
   mkdirSync(overlayDir, { recursive: true, mode: 0o700 });

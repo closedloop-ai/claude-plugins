@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { z } from "zod";
 import { providerDataOr, sessionBinding } from "../../../plugins/vibe/lib/vibe/scripts/provider.mjs";
 import { agentsTestCommand, LOCKFILE_INSTALLS } from "../../../plugins/vibe/lib/vibe/scripts/repository-commands.mjs";
@@ -58,6 +58,27 @@ const recipes = new Map<string, MainSyncRecipe>();
 /** Every report output main sync treats as retained evidence in the repository at `root`. */
 export function reportOutputsFor(root: string): ReadonlySet<string> {
   return new Set([...GENERIC_REPORT_OUTPUTS, ...mainSyncRecipe(root).reportOutputs]);
+}
+
+/**
+ * Where the inventory treats an undeclared git-ignored executable as a run leftover (AC-91): under the owner of a
+ * report the recipe itself declares, or in any directory named like that report's run directory. A generic report
+ * declares neither, so a repository without a recipe has no leftover scope. A path the recipe declares generated
+ * (`recipes.cleanup.generated`, the outputs owned cleanup also accepts) is never a leftover.
+ */
+export function runLeftoverScope(root: string): (file: string) => boolean {
+  const cleanup = z.object({ generated: z.array(z.string()).default([]) }).passthrough()
+    .parse(providerDataOr<unknown>(sessionBinding(root), "recipes", "cleanup", {}));
+  const generated = cleanup.generated.map((source) => new RegExp(source));
+  const owners = new Set<string>(), runs = new Set<string>();
+  for (const report of mainSyncRecipe(root).reportOutputs) {
+    const run = posix.dirname(report), owner = posix.dirname(run);
+    if (run === ".") continue;
+    runs.add(posix.basename(run));
+    if (owner !== ".") owners.add(`${owner}/`);
+  }
+  return (file) => !generated.some((pattern) => pattern.test(file))
+    && ([...owners].some((owner) => file.startsWith(owner)) || file.split("/").slice(0, -1).some((segment) => runs.has(segment)));
 }
 
 /** The recipe's bootstrap, else the install the repository's lockfile asks for, else none. */

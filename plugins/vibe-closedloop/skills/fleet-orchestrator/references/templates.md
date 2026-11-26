@@ -75,7 +75,7 @@ Git: commit messages per repo convention; regular push only, never force-push. T
 Scratch files: Each worker gets its own scratch directory named with its worker id (`<scratch>/<worker-id>/`), creates its files there, and deletes only exact paths it created; an orchestrator brief never asks a worker to delete by prefix or glob.
 Review threads: reply on the thread naming the fixing SHA and resolve it only after the fix is verified in code.
 Artifacts for people (tickets, PR bodies, comments, replies) never name a path on the operator's machine; embed evidence and attach plans.
-Fleet board: <orchDir>/board.md shows every writer's PR, head, status and dependencies. Message another writer directly when your work touches theirs: Codex writers through the app-server-orchestrator skill's send, Claude workers and QA guides through SendMessage.
+Fleet board: <orchDir>/board.md shows every writer's PR, head, status and dependencies. Message another writer directly when your work touches theirs: Codex writers and QA guides through the app-server-orchestrator skill's send, Claude workers through SendMessage.
 Program rulings: read <orchDir>/rulings.md before planning, editing or auditing; the ticket carries the applicable per-ticket rulings through handoff's rulings check. My own directions are operational and are recorded as `(orchestrator)`, never as a human ruling; only operator words I quote, with their source, are rulings.
 Declare each push-ready head with `board.mjs <orchDir> writer <you> --ready <sha>` (plus `--visual-qa <findings.json>` for a UI diff). Iterate uncommitted through grader fixes, selected checks, independent review and verification. Only after acceptance: commit once, declare, pass `push-check`, push once, open the PR. Cadence never authorizes a checkpoint commit.
 Report when done: pushed head SHA, files changed, tests run with HEAD plus diff/tree hashes each ran on and results, open items, anything that needs the operator.
@@ -129,7 +129,7 @@ Branch isolation: one writer per branch; helpers never edit or touch the ticket 
 
 ## Remaining work report
 
-Before sending, verify the reply says which selected integration, typecheck and other lanes start immediately on which allowed machines; what waits on a real prerequisite; what runs concurrently with queued or running e2e; and which lane moved for capacity. Give the readiness estimate from the chain of prerequisites that finishes last, with its named steps and assumptions; never add durations from lanes that can overlap. Name the remaining queue count (runs still queued or running, each with its estimate) and compute the ETA from it; restate the ETA the moment a step adds more than 30 minutes. Do not send a report missing any applicable fact.
+Before sending, verify the reply says which selected integration, typecheck and other lanes start immediately on which allowed machines; what waits on a real prerequisite; what runs concurrently with queued or running e2e; and which lane moved for capacity. Name the lanes running in Claude cloud or why none can run there. Give the readiness estimate from the chain of prerequisites that finishes last, with its named steps and assumptions; never add durations from lanes that can overlap. Name the remaining queue count (runs still queued or running, each with its estimate) and compute the ETA from it; restate the ETA the moment a step adds more than 30 minutes. Do not send a report missing any applicable fact.
 
 ## Lifecycle cleanup report
 
@@ -137,17 +137,20 @@ Before sending, verify the reply names the recorded helper reconciled now or the
 
 ## QA guide prompt
 
-Primes the headless Claude session the operator resumes for one PR's human QA. Allow it to read files, run `gh pr view`, use the skill, and write only the plan and the findings file.
+The managed launcher sends the [QA guide prompt](qa-guide-prompt.md) with both loaded skills and the private brief. Save the brief as JSON. Put applicable rulings in `plan`. The launcher verifies the typed `pullRequest` repository, number and full head against the checkout’s origin and live pull request. Put the QA stack and launch details in `stackFacts`. Give the checkout-relative control skill path and the running product origin. Before sending, the orchestrator checks every number in the plan and stack facts against that product. Set `criteriaSource` to the ticket criteria file alongside the brief when citing numbered criteria. For each product measurement save its exact text, an observed quote with those values, and the captured UI or product API response text and URL in a private JSON file alongside the brief. Check that the quote describes the same setting, unit and state as the claim.
 
+```json
+{
+  "pullRequest": {"repository":"<owner/repo>","number":42,"head":"<full head SHA>"},
+  "plan": "<QA plan>",
+  "stackFacts": "<QA stack facts>",
+  "controlSkill": "<repo control skill>/SKILL.md",
+  "productOrigin": "<QA product origin>",
+  "numberChecks": [{"claim":"<numbered line>","observation":"<exact product quote>","evidence":"observed.json"}]
+}
 ```
-You are the QA guide for <owner/repo>#<number>. You never edit code.
-Load the guided-manual-qa skill (closedloop-core:guided-manual-qa) and read the QA plan at <plan path>.
-Read the program rulings at <orchDir>/rulings.md and apply the entries that bind this pull request.
-Check the PR's current pushed head with `gh pr view <number> -R <owner/repo> --json headRefOid`. If it is not the plan's head <sha>, say so and stop.
-Otherwise reply only "ready and waiting" and stop.
-When the operator returns, present one checkpoint at a time: its criterion ID (or "regression"), what to do, what to look for, and the requirement it proves. Wait for pass or fail.
-Record each result in the plan. Append each failure (checkpoint, what the operator saw, head SHA) to <findings file>. Never file a ticket; the orchestrator files them.
-```
+
+Observation file: `{"url":"<observed product URL>","text":"<captured UI or API text>"}`. Omit observation rows when the brief has no numbers.
 
 ## Operator review page
 

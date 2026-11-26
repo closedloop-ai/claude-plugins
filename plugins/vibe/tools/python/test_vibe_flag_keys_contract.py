@@ -153,7 +153,7 @@ def test_the_record_commands_the_rule_names_exist_and_the_ticket_check_requires_
     script = skill_split.read(FLAG_KEYS_SCRIPT)
     for command in ('case "record":', 'case "question":', 'case "approve":', 'case "show":'):
         assert command in script
-    assert "flagKeys: listedFlagKeys(" in skill_split.read(SESSIONS_SCRIPT)
+    assert "flagKeys: listedFlagKeys(" in skill_split.read(SESSIONS_SCRIPT.with_name("vibe-session-worktrees.mjs"))
     check = skill_split.read(TICKET_CHECK)
     assert '"lists no keys to see the work"' in check
     assert "flagKeyProblems(record)" in check

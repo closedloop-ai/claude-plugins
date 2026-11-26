@@ -13,3 +13,8 @@ interface LaunchReview extends ReviewOwner {
 
 export function runManagedReviewer(input: LaunchReview): Promise<{ threadId: string; report: string; deliverable: string } | { threadId: string; visualQa: string }>;
 export function acceptManagedReviewer(input: ReviewOwner & { report: string }): Promise<{ threadId: string; receipt: string }>;
+
+/** Begin an independent QA guide and return its operator-resumable thread and durable state. */
+export function launchQaGuide(input: ReviewOwner & {
+  worktree: string; writerThread: string; model: string; brief: string;
+}): Promise<{ threadId: string; turnId: string; stateFile: string }>;

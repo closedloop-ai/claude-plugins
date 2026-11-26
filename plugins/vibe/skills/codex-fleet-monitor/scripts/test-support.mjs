@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { capturedJson } from '../../../lib/vibe/scripts/captured-json.mjs';
 
 const WATCH = fileURLToPath(new URL('./watch.sh', import.meta.url));
 const PROMPT_HOOK = fileURLToPath(new URL('../../../../vibe-core/hooks/user-prompt-submit.mjs', import.meta.url));
@@ -62,7 +63,7 @@ export function gapFixture(t, { flat = false, unsetFleetHome = flat, defaultFlee
       input: JSON.stringify({ session_id: chat, turn_id, prompt: promptText, cwd: home, transcript_path: transcript }) });
     assert.equal(run.status, 0, run.stderr || run.error?.message);
     assert.equal(run.stderr, stderr);
-    return run.stdout ? JSON.parse(run.stdout) : null;
+    return run.stdout ? capturedJson(run.stdout) : null;
   };
   return { home, fleetHome, program, watch, prompt, command };
 }

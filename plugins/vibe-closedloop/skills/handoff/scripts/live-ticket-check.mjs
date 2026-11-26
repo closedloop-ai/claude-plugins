@@ -30,6 +30,7 @@
 // Usage: live-ticket-check.mjs --file <ticket body .md> [--base-commit <sha>] [--worktree <path>]
 //          [--child-evidence <map .json>] [--now <iso>]
 
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -473,7 +474,7 @@ export function readFacts(worktree, base, { now = Date.now(), liveTicket, livePl
   });
   return {
     addedLines: parseAddedLines(run(["diff", "-U0", "--no-color", "--no-renames", base])),
-    trackedPaths: new Set(run(["ls-files", "-z"]).split("\0").filter(Boolean)),
+    trackedPaths: new Set(readGitInventory(worktree, ["ls-files", "-z"]).split("\0").filter(Boolean)),
     head: run(["rev-parse", "HEAD"]).trim(),
     isAncestor: (commit) => {
       try {

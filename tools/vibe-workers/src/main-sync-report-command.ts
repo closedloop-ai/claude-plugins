@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
-import { parse } from "yaml";
+import { workspacePackages } from "./workspace-packages.js";
 import picomatch from "picomatch";
 import type { ReportExecution } from "./main-sync-report-execution.js";
 import { rejectReportReplay } from "./main-sync-report-execution.js";
@@ -383,9 +383,9 @@ function scriptsAt(directory: string) {
 function workspaceDirectories(root: string, workspace: string) {
   const files = committedFiles(root).filter(file => file.endsWith("/package.json") || file === "package.json");
   if (files.length > 4096) throw unresolved("workspace manifest bound");
-  const config = z.object({ packages: z.array(z.string()).optional() }).passthrough().parse(parse(readFileSync(workspace, "utf8")));
-  const patterns = config.packages ?? [];
-  const finite = config.packages !== undefined && patterns.every(pattern => WORKSPACE_PATTERN.test(pattern));
+  const declared = workspacePackages(readFileSync(workspace, "utf8"));
+  const patterns = declared ?? [];
+  const finite = declared !== undefined && patterns.every(pattern => WORKSPACE_PATTERN.test(pattern));
   const matches = finite ? picomatch(patterns, { dot: true }) : undefined;
   return files.filter(file => file === "package.json" || !matches || matches(dirname(file))).map(file => join(root, dirname(file)));
 }

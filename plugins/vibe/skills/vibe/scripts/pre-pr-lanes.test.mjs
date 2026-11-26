@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { bindProvider, PROVIDER_BINDING } from "./test-fixtures.mjs";
 import { fleetLaneInvocation, graphSelectionFromItem, lanePreflightProblem, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, stagingIdentity, hasStagingE2eIdentity, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, missingLanes, notRunLanes, reportLanes, sharedMainFailures, targetedE2eCoverage, targetedRecord } from "./pre-pr-lanes.mjs";
 import { git, makeHome } from "./test-fixtures.mjs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
 import { workflowLaneDefinitions } from "../../handoff/scripts/ci-job-shape.mjs";
 
@@ -183,6 +183,18 @@ test("ISS-14172 a lane can run through a fleet heavy slot and remote fleet binds
   const local = fleetLaneInvocation({ worktree, command, "fleet-where": "local", "fleet-orch": orch, "fleet-owner": "ISS-14172" }, source);
   assert.deepEqual(local.args.slice(1, 8), [orch, "local", "slot", "heavy", "ISS-14172", worktree, "sh"]);
   assert.equal(local.args.at(-1), command);
+  const reuse = fleetLaneInvocation({ worktree, command: "bash e2e/run-containerized.sh --no-build", "fleet-where": "remote",
+    "fleet-orch": orch, "fleet-owner": "writer" }, source);
+  assert.ok(reuse.args.includes("--compose-e2e"));
+  for (const lane of ["bash e2e/run-containerized.sh --no-build", "dagger call e-2-e"]) {
+    for (const tree of [worktree, path.join(root, "captured-main")]) {
+      const direct = fleetLaneInvocation({worktree, command:lane}, source, tree);
+      assert.ok(direct?.args.some(value => value.endsWith("/e2e-lock.mjs")));
+      assert.ok(direct.args.includes(source.head));
+    }
+  }
+  const dagger = fleetLaneInvocation({worktree, command:"dagger call e-2-e", "fleet-where":"remote", "fleet-orch":orch, "fleet-owner":"writer"}, source);
+  assert.ok(dagger.args.includes("--containerized-e2e-build"));
   assert.deepEqual(local.receipt, { where: "local", owner: "ISS-14172", head });
   const remote = fleetLaneInvocation({ worktree, command: "pnpm test", "fleet-where": "remote", "fleet-orch": orch, "fleet-owner": "ISS-14172" }, source);
   assert.equal(remote.args[2], "remote");
@@ -432,7 +444,7 @@ test("the Desktop e2e lane is left for CI on a machine without the displayless L
   assert.equal(hasDisplaylessElectronHarness("linux", () => true), true);
 });
 
-test("a lane that also fails on captured main is recorded main-preexisting and does not stop the PR (ISS-13321)", (t) => {
+test("two failed exit codes need matching assertions before a lane is main-preexisting (ISS-13321)", (t) => {
   const { root, home, cleanup } = makeHome("vibe-pre-pr-lanes-main-");
   t.after(cleanup);
   const worktree = path.join(root, "wt");
@@ -453,19 +465,14 @@ test("a lane that also fails on captured main is recorded main-preexisting and d
   const sessionReport = path.join(root, "session-lane.txt");
   writeFileSync(sessionReport, `OUTSIDE THE TURBO GRAPH: 1 lane(s).\n    ${sessionCommand}\n`);
   const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, HOME: home } });
-  assert.deepEqual(missingLanes([lane], [{ command: lane, head, laneKey: "scope1", result: "main-preexisting", mainSha }], { laneKey: "scope1" }), []);
+  assert.deepEqual(missingLanes([lane], [{ command: lane, head, laneKey: "scope1", result: "main-preexisting", mainSha }], { laneKey: "scope1" }), [lane], "a shared exit status proves no assertion");
   assert.deepEqual(missingLanes([lane], [{ command: lane, head, laneKey: "scope1", result: "main-preexisting" }], { laneKey: "scope1" }), [lane], "it names the main it failed on");
   const records = path.join(worktree, ".git", "vibe-lane-results.json");
   const recorded = run("run", "--worktree", worktree, "--head", head, "--command", lane, "--report", report, "--main-worktree", mainCheckout, "--main-sha", mainSha);
-  assert.equal(recorded.status, 0, recorded.stdout + recorded.stderr);
+  assert.equal(recorded.status, 1, recorded.stdout + recorded.stderr);
+  assert.match(recorded.stderr, /Both runs failed.*Record matching test ids and assertions/);
   const [entry] = JSON.parse(readFileSync(records, "utf8"));
-  assert.deepEqual([entry.result, entry.mainSha], ["main-preexisting", mainSha]);
-  assert.equal(entry.mainSource.head, mainSha);
-  assert.match(entry.mainSource.treeSha256, /^[a-f0-9]{64}$/);
-  const checked = run("check", "--worktree", worktree, "--report", report);
-  assert.equal(checked.status, 0, checked.stdout);
-  assert.match(checked.stdout, /^MAIN-PREEXISTING-LANE node -e /m);
-  assert.ok(checked.stdout.includes(mainSha));
+  assert.equal(entry.result, "fail");
   const sessionCaused = run("run", "--worktree", worktree, "--head", head, "--command", sessionCommand, "--report", sessionReport, "--main-worktree", mainCheckout, "--main-sha", mainSha);
   assert.equal(sessionCaused.status, 1, "a lane that passes on main is the session's failure");
   assert.match(sessionCaused.stdout, /^recorded fail for node -e /m);
@@ -608,7 +615,7 @@ test("ISS-14387 a lane run elsewhere is recorded main-preexisting only with a ma
   const run = (...args) => spawnSync(process.execPath, [SCRIPT, "record", "--worktree", worktree, "--head", head, "--command", lane, "--report", report, ...args], { encoding: "utf8", env: { ...process.env, HOME: home } });
   const refused = [
     [["--result", "main-preexisting", "--main-sha", mainSha], /needs --main-sha and --failures/],
-    [["--result", "main-preexisting", "--main-sha", head, "--failures", failures({ branch: [red], main: [red] })], /not a commit on this clone's fetched origin\/main/],
+    [["--result", "main-preexisting", "--main-sha", head, "--failures", failures({ branch: [red], main: [red] })], /not this clone's exact fetched origin\/main/],
     [["--result", "main-preexisting", "--main-sha", mainSha, "--failures", failures({ branch: [red], main: [{ ...red, assertion: "expected 3" }] })], /does not fail on main with the same assertion/],
     [["--result", "main-preexisting", "--main-sha", mainSha, "--failures", failures({ branch: [], main: [red] })], /nonempty branch and main lists/],
     [["--result", "pass", "--failures", failures({ branch: [red], main: [red] })], /--failures goes only with it/],
@@ -628,3 +635,173 @@ test("ISS-14387 a lane run elsewhere is recorded main-preexisting only with a ma
   assert.deepEqual(sharedMainFailures({ branch: [red], main: [red] }), [red]);
 });
 
+
+test("a busy machine slot queues the direct pnpm stack and captured main retains its original ticket", async t => {
+  const {root, home, cleanup} = makeHome("vibe-direct-stack-");
+  t.after(cleanup);
+  const branch = path.join(root, "branch"), main = path.join(root, "main"), lock = path.join(root, "lock");
+  git(root, ["init", "--quiet", "--initial-branch=issue-ISS-42", branch], home);
+  mkdirSync(path.join(branch, "e2e"));
+  writeFileSync(path.join(branch, "e2e/run-containerized.sh"), 'echo ran > "$1"\n');
+  writeFileSync(path.join(branch, "package.json"), JSON.stringify({scripts:{"e2e:containerized":"bash e2e/run-containerized.sh"}}));
+  git(branch, ["add", "."], home);
+  git(branch, ["commit", "--quiet", "-m", "fixture"], home);
+  const head = git(branch, ["rev-parse", "HEAD"], home);
+  git(branch, ["worktree", "add", "--detach", main, head], home);
+  const marker = path.join(root, "payload");
+  const bin = path.join(root, "bin");
+  mkdirSync(bin);
+  const machineSlot = lock + ".machine-slot";
+  const payload = `#!/usr/bin/env node
+const fs=require('node:fs');
+const holder=JSON.parse(fs.readFileSync(${JSON.stringify(path.join(machineSlot,"owner"))},'utf8'));
+fs.appendFileSync(${JSON.stringify(marker)}, JSON.stringify({cwd:process.cwd(),ticket:holder.ticket})+'\\n');
+process.exit(1);
+`;
+  writeFileSync(path.join(bin, "pnpm"), payload, {mode:0o755});
+  const lane = "pnpm -w run e2e:containerized -- --list";
+  const report = path.join(root, "lanes.txt");
+  writeFileSync(report, "    " + lane + "\n");
+  mkdirSync(lock + ".machine-slot");
+  writeFileSync(path.join(lock + ".machine-slot", "pid"), String(process.pid));
+  writeFileSync(path.join(lock + ".machine-slot", "owner"), "fixture-machine-holder");
+  const shim = path.join(root, "fixture-lock.cjs");
+  const portable = path.join(root, "fixture-slot.mjs");
+  const module = new URL("../../../lib/vibe/scripts/e2e-lock.mjs", import.meta.url).href;
+  writeFileSync(portable, `import { e2eLockCli } from ${JSON.stringify(module)}; await e2eLockCli(process.argv.slice(2), ${JSON.stringify(lock + ".machine-slot")});`);
+  const entry = fileURLToPath(new URL("./e2e-lock.mjs", import.meta.url));
+  // Only substitute the deployment-specific slot path. All admission and lane code still executes.
+  writeFileSync(shim, `const cp = require("node:child_process"), spawn = cp.spawnSync;
+cp.spawnSync = (cmd, args, opts) => {
+  if (cmd === process.execPath && args[0] === ${JSON.stringify(entry)}) {
+    args = [${JSON.stringify(portable)}, ...args.slice(1)];
+  }
+  return spawn(cmd, args, opts);
+};
+require("node:module").syncBuiltinESMExports();`);
+  const child = spawn(process.execPath, ["--require", shim, SCRIPT, "run", "--worktree", branch, "--head", head,
+    "--report", report, "--command", lane, "--main-worktree", main, "--main-sha", head], {
+    env:{...process.env, HOME:home, COMPOSE_PROJECT_NAME:"fixture-stack", VIBE_E2E_DOCKER:path.join(bin,"unused-docker"), PATH:bin + path.delimiter + process.env.PATH, [STAGING_IDENTITY_KEY]:"fixture"},
+  });
+  let output="";
+  child.stdout.on("data", chunk => output+=chunk);
+  child.stderr.on("data", chunk => output+=chunk);
+  const finished = new Promise(resolve => child.once("close",resolve));
+  const waiters = path.join(home,".codex/vibe/locks/e2e-stack.waiters");
+  try {
+    for (let i=0; i<100 && !(existsSync(waiters) && readdirSync(waiters).length); i++) {
+      if (child.exitCode !== null) break;
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    assert.ok(existsSync(waiters) && readdirSync(waiters).length,output);
+    assert.equal(existsSync(marker),false);
+  } finally {
+    rmSync(machineSlot,{recursive:true,force:true});
+    await finished;
+  }
+  assert.equal(child.exitCode,1,output);
+  assert.deepEqual(readFileSync(marker,"utf8").trim().split("\n").map(line=>JSON.parse(line)),
+    [{cwd:branch,ticket:"ISS-42"},{cwd:main,ticket:"ISS-42"}]);
+});
+
+test("a busy machine slot refuses the reported direct stack on both branch and captured main", t => {
+  const {root, home, cleanup} = makeHome("vibe-direct-stack-");
+  t.after(cleanup);
+  const branch = path.join(root, "branch"), main = path.join(root, "main"), lock = path.join(root, "lock");
+  git(root, ["init", "--quiet", "--initial-branch=issue-ISS-42", branch], home);
+  mkdirSync(path.join(branch, "e2e"));
+  writeFileSync(path.join(branch, "e2e/run-containerized.sh"), 'echo ran > "$1"\n');
+  git(branch, ["add", "."], home);
+  git(branch, ["commit", "--quiet", "-m", "fixture"], home);
+  const head = git(branch, ["rev-parse", "HEAD"], home);
+  git(branch, ["worktree", "add", "--detach", main, head], home);
+  const marker = path.join(root, "payload");
+  const bin = path.join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(path.join(bin, "pnpm"), '#!/bin/sh\n[ "$1" = exec ] || exit 64\nshift\nexec "$@"\n', {mode:0o755});
+  const lane = "pnpm exec bash e2e/run-containerized.sh " + marker + " --no-build";
+  const report = path.join(root, "lanes.txt");
+  writeFileSync(report, "    " + lane + "\n");
+  mkdirSync(lock + ".machine-slot");
+  writeFileSync(path.join(lock + ".machine-slot", "pid"), String(process.pid));
+  writeFileSync(path.join(lock + ".machine-slot", "owner"), "fixture-machine-holder");
+  const shim = path.join(root, "fixture-lock.cjs");
+  const portable = path.join(root, "fixture-slot.mjs");
+  const module = new URL("../../../lib/vibe/scripts/e2e-lock.mjs", import.meta.url).href;
+  writeFileSync(portable, `import { e2eLockCli } from ${JSON.stringify(module)}; await e2eLockCli(process.argv.slice(2), ${JSON.stringify(lock + ".machine-slot")});`);
+  const entry = fileURLToPath(new URL("./e2e-lock.mjs", import.meta.url));
+  // Only substitute the deployment-specific slot path. All admission and lane code still executes.
+  writeFileSync(shim, `const cp = require("node:child_process"), spawn = cp.spawnSync;
+cp.spawnSync = (cmd, args, opts) => {
+  if (cmd === process.execPath && args[0] === ${JSON.stringify(entry)}) {
+    args = [${JSON.stringify(portable)}, args[1], "--lock-dir", ${JSON.stringify(lock)}, "--wait-seconds", "0", ...args.slice(2)];
+  }
+  return spawn(cmd, args, opts);
+};
+require("node:module").syncBuiltinESMExports();`);
+  const result = spawnSync(process.execPath, ["--require", shim, SCRIPT, "run", "--worktree", branch, "--head", head,
+    "--report", report, "--command", lane, "--main-worktree", main, "--main-sha", head], {
+    encoding:"utf8", env:{...process.env, HOME:home, PATH:bin + path.delimiter + process.env.PATH, [STAGING_IDENTITY_KEY]:"fixture"},
+  });
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.equal(result.stdout.match(/fixture-machine-holder/g)?.length, 2, result.stdout + result.stderr);
+  assert.equal(existsSync(marker), false);
+});
+
+test("a bare executable and workspace-root pnpm lanes survive report selection and lock dispatch", () => {
+  const commands = ["pnpm lint", "e2e/run-containerized.sh", "pnpm --workspace-root e2e:containerized"];
+  assert.deepEqual(reportLanes(commands.map(command => "    " + command).join("\n")), commands);
+  for (const command of commands.slice(1)) {
+    const values = {command,worktree:"/fixture", "fleet-owner":"fixture","fleet-orch":"/fleet","fleet-where":"local"};
+    const call = fleetLaneInvocation(values, {head:"a".repeat(40)}, "/detached-main", "fixture-42");
+    assert.ok(call.args.includes("--containerized-e2e-build"));
+    assert.deepEqual(call.args.slice(call.args.indexOf("--stack-ticket"), call.args.indexOf("--stack-ticket") + 2), ["--stack-ticket","fixture-42"]);
+  }
+});
+
+test("pre-PR and fleet share direct Compose, Dagger and option-bearing shell stack admission", () => {
+  const cases = [
+    ["docker compose -p qa -f e2e/compose.yml build api","--containerized-e2e-build"],
+    ["docker compose -p qa -f e2e/compose.yml up --no-build","--compose-e2e"],
+    ["docker compose --file=e2e/compose.yml --project-name=qa up", "--compose-e2e"],
+    ["docker compose -f e2e/compose.yml run --rm runner", "--compose-e2e"],
+    ["docker compose -f e2e/compose.yml up", "--compose-e2e"],
+    ["docker compose --file=e2e/compose.yml up --build","--containerized-e2e-build"],
+    ["pnpm -w exec dagger call e-2-e","--containerized-e2e-build"],
+    ["pnpm --workspace-root exec dagger call e-2-e","--containerized-e2e-build"],
+    ["bash -e e2e/run-containerized.sh","--containerized-e2e-build"],
+    ["bash -- e2e/run-containerized.sh --no-build","--compose-e2e"],
+  ];
+  for (const [command,admission] of cases) {
+    assert.deepEqual(reportLanes("    "+command),[command],command);
+    const source={head:"a".repeat(40)}, values={command,worktree:"/fixture"};
+    const local=fleetLaneInvocation(values,source,"/main","fixture-42");
+    assert.ok(local.args.includes("fixture-42"),command);
+    const fleet=fleetLaneInvocation({...values,"fleet-where":"local","fleet-orch":"/orch","fleet-owner":"worker"},source,"/main","fixture-42");
+    assert.ok(fleet.args.includes(admission),command);
+    assert.ok(fleet.args.includes("fixture-42"),command);
+  }
+});
+
+test("provider stack harness and Compose run share admission in a mixed lane report",async ()=>{
+  const {reportLanes}=await import("../../../../vibe-closedloop/skills/vibe/scripts/pre-pr-lanes.mjs");
+  for(const command of ["docker compose -f e2e/compose.yml run --rm runner","e2e/run-desktop-sync-harness.sh","COMPOSE_PROJECT_NAME=sample docker compose -f e2e/compose.yml run --rm runner","E2E_CONTAINER_RUNNER=0 e2e/run-containerized.sh -- sample.spec.ts","docker compose -f e2e/compose.yml restart","docker compose -f e2e/compose.yml start"]){
+    assert.deepEqual(reportLanes("    pnpm test\n    "+command),["pnpm test",command]);
+  }
+});
+
+test("only the provider control CLI Compose mode takes the machine lease",async ()=>{
+  const {fleetLaneInvocation}=await import("../../../../vibe-closedloop/skills/vibe/scripts/pre-pr-lanes.mjs");
+  const invoke=command=>fleetLaneInvocation({command,worktree:"/fixture"},{head:"a".repeat(40)},"/fixture","QA-42");
+  for(const mode of ["compose","host"]) for(const prefix of ["pnpm control","pnpm run control","/opt/bin/pnpm run control"])
+    assert.equal(!!invoke(prefix+" up web --stack "+mode),mode==="compose");
+  assert.equal(!!invoke("docker compose -f e2e/compose.yml ps"),false);
+});
+
+test("effective package and Compose manifest directory participate in stack admission",async()=>{
+  const {fleetLaneInvocation}=await import("../../../../vibe-closedloop/skills/vibe/scripts/pre-pr-lanes.mjs");
+  const invoke=command=>!!fleetLaneInvocation({command,worktree:"/fixture"},{head:"a".repeat(40)},"/fixture","QA-42");
+  for(const prefix of ["pnpm -C . run","pnpm --dir=. run","pnpm --dir . run"])
+    for(const mode of ["compose","host"])assert.equal(invoke(prefix+" control up web --stack "+mode),mode==="compose");
+  for(const directory of ["e2e","unrelated"]) assert.equal(invoke("cd "+directory+" && docker compose -f compose.yml up -d"),directory==="e2e");
+});

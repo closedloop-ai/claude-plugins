@@ -1,3 +1,4 @@
+import { readGitInventory } from "../../../plugins/vibe/lib/vibe/scripts/git-inventory.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
@@ -5,18 +6,19 @@ import { join } from "node:path";
 import { z } from "zod";
 import { git } from "../../../plugins/vibe/lib/vibe/scripts/session-record.mjs";
 import { MAX_CHECK_MS, MainSyncError, mainSyncStateSchema, type MainComparison, type MainSyncReceipt, type OriginProof, type e2eLimitationSchema } from "./main-sync-contracts.js";
-import { committedIdentity, digest, syncContext, readPrivateJson, saveSyncReceipt, MAIN_SYNC_FILE } from "./main-sync-state.js";
+import { committedIdentity, digest, syncContext, readPrivateJson, writePrivateSyncReport, saveSyncReceipt, MAIN_SYNC_FILE } from "./main-sync-state.js";
 import { CapturedMainComparison, comparisonLogs, runBounded } from "./main-sync-main-comparison.js";
 import { comparisonBudgetMs } from "./main-sync-validation-recipe.js";
 import { discoverRequiredE2eLanes, type CheckCommand } from "./main-sync-lanes.js";
 import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES, verifyGeneratedBiomeInput } from "./main-sync-generated-input.js";
 import { committedLocalPlans } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
 import { artifactRootOf, isPlanFile, planPrefixesOf } from "./main-sync-plan-folder.js";
-import { verifyPrivateInput, verifyPrivateRoot, verifyEvidencePath } from "./main-sync-private-inputs.js";
-import { presentProducers, producerFor, producerFiles, producerPackage, producerOwnerInputs, verifyProducerInputs, verifyProducerInputsForOrigin } from "./main-sync-input-catalog.js";
-import { checkSteps, reportOutputsFor, type MainSyncStep } from "./main-sync-recipe.js";
+import { invalidReportParent, verifyPrivateInput, verifyPrivateRoot, verifyEvidencePath } from "./main-sync-private-inputs.js";
+import { inputProducers, presentProducers, producerInputProblems, producerFor, producerFiles, producerPackage, producerOwnerInputs, verifyProducerInputs, verifyProducerInputsForOrigin } from "./main-sync-input-catalog.js";
+import { isOwnedPrototypeSession } from "../../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs";
+import { checkSteps, reportOutputsFor, runLeftoverScope, type MainSyncStep } from "./main-sync-recipe.js";
 import { originIdentity, sameOriginFiles } from "./main-sync-input-files.js";
-import { readWriterSummary } from "./ledger.js";
+import { checkoutLocation, readWriterSummary } from "./ledger.js";
 import { bindCheckBudgets, commandSelection } from "./main-sync-budget.js";
 import { verifyReportRecipe, verifyReportExecution } from "./main-sync-report-inputs.js";
 import { ReportExecutionOwner } from "./main-sync-report-execution.js";
@@ -55,57 +57,131 @@ export function inspectInputInventory(root: string) {
   return inspectInventory(root, "standalone").inventory;
 }
 
+/**
+ * Item 144's run leftover check (AC-91), for the handoff inventory alone: each undeclared git-ignored executable a run
+ * left in the recipe's run scope, in byte order. Main sync's own inputs, preparation and recheck pass every ignored file
+ * (#446), since an ignored file is never a validation input.
+ */
+export function runLeftovers(root: string): string[] {
+  const inScope = runLeftoverScope(root);
+  const reportOutputs = reportOutputsFor(root);
+  const artifactRoot = artifactRootOf(root);
+  const headSha = git(root, ["rev-parse", "HEAD"]).trim();
+  return readGitInventory(root, ["ls-files", "--others", "--exclude-standard", "-z", "--ignored"]).split("\0")
+    .filter((file) => {
+      const classified = file && inScope(file) ? classifyUntrackedPath(root, file, true, headSha, reportOutputs, artifactRoot) : null;
+      return classified !== null && "unclaimed" in classified;
+    })
+    .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+}
+
+/**
+ * What one untracked or ignored path is: a blocking offender, a read deferred until no path blocks, an ignored
+ * executable no rule claims, or nothing to check.
+ */
+type Classified = { offender: Offender } | { read: () => boolean } | { unclaimed: true } | null;
+
+/** Classify one candidate while retaining the existing producer, private input and report checks; nothing is read here. */
+function classifyUntrackedPath(root: string, file: string, ignored: boolean, headSha: string, reportOutputs: ReadonlySet<string>,
+  artifactRoot: string | null): Classified {
+  if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) return null;
+  if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) return null;
+  if (isPlanFile(root, file)) {
+    if (!ignored) return { offender: { message: `Private planning evidence must remain ignored: ${file}` } };
+    return { read: () => { verifyPrivateInput(root, file, headSha); return false; } };
+  }
+  if (PRIVATE_ARTIFACT.test(file) && ((artifactRoot && file.startsWith(`${artifactRoot}decision-tables/`)) || file.startsWith(".control/"))) return null;
+  if (producerFor(root, file)) {
+    return ignored ? null : { offender: { message: `Canonical generated dependency must remain ignored: ${file}` } };
+  }
+  if (ignored && reportOutputs.has(file)) {
+    const stat = lstatSync(join(root, file));
+    return !stat.isFile() || stat.isSymbolicLink() ? { offender: { message: `Retained report must be a regular owned output: ${file}` } } : null;
+  }
+  if (ignored && file === GENERATED_BIOME_PATH) return { read: () => { verifyGeneratedBiomeInput(root, headSha); return true; } };
+  // A name in the generated-input family is checked against its producer contract wherever it sits.
+  if (file.split("/").at(-1)?.startsWith(GENERATED_BIOME_PATH)) return { offender: { input: `unsupported generated-input path ${file}` } };
+  // A git-ignored file is never a validation input: only an untracked one can differ from HEAD.
+  if (!ignored && EXECUTABLE_INPUT.test(file)) return { offender: { input: `uncommitted executable ${file}` } };
+  // Main sync passes it; the inventory's run leftover check reads it.
+  return ignored && EXECUTABLE_INPUT.test(file) ? { unclaimed: true } : null;
+}
+
+const BLOCKING_REPORT = "vibe-main-sync-blocking-inputs.json";
+const MAX_REFUSAL_BYTES = 2048;
+
+/**
+ * Store every blocking path privately, then refuse with all of them in one message. A message over its byte bound lists
+ * the paths that fit and names the private report that holds the rest.
+ */
+function refuseInputPaths(root: string, paths: { path: string; offender: Offender }[]): never {
+  paths.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
+  const reason = (offender: Offender) => "input" in offender ? `Committed validation inputs differ from HEAD: ${offender.input}` : offender.message;
+  writePrivateSyncReport(join(checkoutLocation(root).dir, BLOCKING_REPORT), JSON.stringify({ paths: paths.map(({ path, offender }) => ({ path, reason: reason(offender) })) }));
+  // A path's control characters never reach the message as line breaks or terminal codes.
+  const printable = (text: string) => text.replace(/[\x00-\x1f\x7f]/g, " ");
+  const labeled = paths.map(({ path, offender }): Offender => "input" in offender ? { input: printable(offender.input) }
+    : { message: printable(offender.message.includes(path) ? offender.message : `${path}: ${offender.message}`) });
+  const full = offendersMessage(labeled);
+  if (Buffer.byteLength(full) <= MAX_REFUSAL_BYTES) throw new MainSyncError(full, "NEEDS_CHANGE");
+  const bounded = (shown: number) => [offendersMessage(labeled.slice(0, shown)),
+    `${shown} of ${paths.length} blocking inputs shown. Full report in the private Git directory: ${BLOCKING_REPORT}`].filter(Boolean).join("; ");
+  let shown = 0;
+  while (shown < labeled.length && Buffer.byteLength(bounded(shown + 1)) <= MAX_REFUSAL_BYTES) shown += 1;
+  throw new MainSyncError(bounded(shown), "NEEDS_CHANGE");
+}
+
 function inspectInventory(root: string, completion: "standalone" | "origin") {
   const before = trackedInputs(root);
-  verifyPrivateRoot(root);
+  const invalidPrivateRoots = verifyPrivateRoot(root);
   const reportOutputs = reportOutputsFor(root);
+  const blocking = new Map<string, Offender>(Array.from(invalidPrivateRoots, ([path, message]) => [path, { message }]));
   for (const path of reportOutputs) {
-    if (lstatSync(join(root, path), { throwIfNoEntry: false })) verifyEvidencePath(root, path, "Retained report");
+    const invalid = invalidReportParent(root, path);
+    if (invalid) {
+      blocking.set(invalid, { message: "Retained report requires a canonical directory parent: " + invalid });
+      continue;
+    }
+    if (!lstatSync(join(root, path), { throwIfNoEntry: false })) continue;
+    try { verifyEvidencePath(root, path, "Retained report"); }
+    catch (error) {
+      if (!(error instanceof MainSyncError)) throw error;
+      blocking.set(path, { message: `${path}: ${error.message}` });
+    }
   }
   const generated = lstatSync(join(root, GENERATED_BIOME_PATH), { throwIfNoEntry: false });
   if (generated && !generated.isFile()) {
-    throw new MainSyncError(`Generated-input verification requires a bounded canonical regular file: ${GENERATED_BIOME_PATH}`, "NEEDS_CHANGE");
+    blocking.set(GENERATED_BIOME_PATH, { message: `Generated-input verification requires a bounded canonical regular file: ${GENERATED_BIOME_PATH}` });
   }
   let recognizedDerivative = false;
   const untracked: string[] = [];
   // Both listings are classified first, so one refusal reports every offender; files are read only after none.
-  const offenders: Offender[] = [];
-  const reads: (() => void)[] = [];
+  const reads: (() => boolean)[] = [];
   const artifactRoot = artifactRootOf(root);
   for (const ignored of [false, true]) {
     const args = ["ls-files", "--others", "--exclude-standard", "-z", ...(ignored ? ["--ignored"] : [])];
-    for (const file of git(root, args).split("\0").filter(Boolean)) {
+    for (const file of readGitInventory(root, args).split("\0").filter(Boolean)) {
+      if (blocking.has(file) || [...invalidPrivateRoots.keys()].some(parent => file.startsWith(parent + "/"))) continue;
       untracked.push(file);
-      if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) continue;
-      if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) continue;
-      if (isPlanFile(root, file)) {
-        if (!ignored) offenders.push({ message: `Private planning evidence must remain ignored: ${file}` });
-        else reads.push(() => verifyPrivateInput(root, file, before.headSha));
-        continue;
-      }
-      if (PRIVATE_ARTIFACT.test(file) && ((artifactRoot && file.startsWith(`${artifactRoot}decision-tables/`)) || file.startsWith(".control/"))) continue;
-      if (producerFor(root, file)) {
-        if (!ignored) offenders.push({ message: `Canonical generated dependency must remain ignored: ${file}` });
-        continue;
-      }
-      if (ignored && reportOutputs.has(file)) {
-        const stat = lstatSync(join(root, file));
-        if (!stat.isFile() || stat.isSymbolicLink()) offenders.push({ message: `Retained report must be a regular owned output: ${file}` });
-        continue;
-      }
-      if (ignored && file === GENERATED_BIOME_PATH) {
-        reads.push(() => { verifyGeneratedBiomeInput(root, before.headSha); recognizedDerivative = true; });
-        continue;
-      }
-      // A name in the generated-input family is checked against its producer contract wherever it sits.
-      if (file.split("/").at(-1)?.startsWith(GENERATED_BIOME_PATH)) offenders.push({ input: `unsupported generated-input path ${file}` });
-      // A git-ignored file is never a validation input: only an untracked one can differ from HEAD.
-      else if (!ignored && EXECUTABLE_INPUT.test(file)) offenders.push({ input: `uncommitted executable ${file}` });
+      const classified = classifyUntrackedPath(root, file, ignored, before.headSha, reportOutputs, artifactRoot);
+      if (classified && "offender" in classified) blocking.set(file, classified.offender);
+      else if (classified && "read" in classified) reads.push(classified.read);
     }
   }
-  if (offenders.length) throw new MainSyncError(offendersMessage(offenders), "NEEDS_CHANGE");
-  for (const read of reads) read();
-  const plans = planPrefixesOf(root).flatMap((prefix) => committedLocalPlans((args) => git(root, args), prefix));
+  const producers = inputProducers(root).filter(producer => {
+    const roots = producer.roots.filter(output => {
+      const parent = invalidReportParent(root, output);
+      if (parent) blocking.set(parent, { message: "Producer output requires a canonical directory: " + parent });
+      return !parent;
+    });
+    return presentProducers(root, [{ ...producer, roots }]).length > 0;
+  });
+  for (const { path, reason } of producerInputProblems(producers, untracked)) {
+    if (!blocking.has(path)) blocking.set(path, { message: reason });
+  }
+  if (blocking.size) refuseInputPaths(root, Array.from(blocking, ([path, offender]) => ({ path, offender })));
+  for (const read of reads) if (read()) recognizedDerivative = true;
+  const plans = planPrefixesOf(root).flatMap((prefix) => committedLocalPlans(root, prefix));
   if (plans.length) throw new MainSyncError("Local technical plans are committed; publication is blocked");
   if (recognizedDerivative) {
     const after = trackedInputs(root);
@@ -113,7 +189,6 @@ function inspectInventory(root: string, completion: "standalone" | "origin") {
       throw new MainSyncError("Committed validation inputs changed during the read-only derivative probe", "NEEDS_CHANGE");
     }
   }
-  const producers = presentProducers(root);
   let metadata: string | undefined;
   if (completion === "origin" && producers.length) metadata = verifyProducerInputsForOrigin(root, before.headSha, producers, untracked);
   else verifyProducerInputs(root, before.headSha, producers, untracked);
@@ -177,7 +252,7 @@ export function trackedInputs(root: string) {
   const identity = committedIdentity(root);
   if (git(root, ["write-tree"]) !== identity.treeSha) throw new MainSyncError("Committed validation inputs differ from HEAD: staged source", "NEEDS_CHANGE");
   const hash = createHash("sha256");
-  const entries = git(root, ["ls-tree", "-r", "-z", "HEAD"]);
+  const entries = readGitInventory(root, ["ls-tree", "-r", "-z", "HEAD"]);
   for (const entry of entries.split("\0").filter(Boolean)) {
     const tab = entry.indexOf("\t");
     const [mode, kind, object] = entry.slice(0, tab).split(" ");
@@ -201,7 +276,7 @@ export function trackedInputs(root: string) {
 export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: MainSyncReceipt) {
   const root = value.place.root;
   const files = git(root, ["diff", "--name-only", "--no-renames", receipt.mainSha, "HEAD"]).split("\n").filter(Boolean);
-  const prototype = value.place.branch.startsWith("prototype/");
+  const prototype = isOwnedPrototypeSession(value.place.session,value.place.branch);
   const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync(join(root, file)));
   const commands: CheckCommand[] = [];
   const e2eLimitations: z.infer<typeof e2eLimitationSchema>[] = [];

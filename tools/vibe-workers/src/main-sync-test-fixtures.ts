@@ -131,7 +131,7 @@ process.stdout.write(command === 'test:lanes' ? 'pnpm --filter app test\n' : 'ac
     const file = join(value.metadata, "vibe-main-sync.json");
     return existsSync(file) ? String(JSON.parse(readFileSync(file, "utf8")).transactionId) : undefined;
   };
-  const start = (action: "create" | "redeploy" | "flags" | "desktop" | "share", purpose?: "build" | "handoff",
+  const start = (action: "create" | "redeploy" | "flags" | "desktop" | "share", purpose: "build" | "handoff" | null = "build",
     agentRoot = value.agentRoot, options?: { requestId?: string; continuations?: RequestContinuation[] }) => {
     const number = ++sequence;
     const mainSyncTransactionId = transaction();
@@ -141,13 +141,19 @@ process.stdout.write(command === 'test:lanes' ? 'pnpm --filter app test\n' : 'ac
       ...(purpose ? { publicationPurpose: purpose } : {}), ...(mainSyncTransactionId ? { mainSyncTransactionId } : {}),
       ...(options?.continuations ? { mainSyncRequestContinuations: options.continuations } : {}) };
     const acquired = acquireNativeRecord(grant);
-    return { context: { runtime: "codex", worktree: value.worktree, agentName: grant.agentName,
+    return { grant, context: { runtime: "codex", worktree: value.worktree, agentName: grant.agentName,
       mode: grant.mode, recordAction: action, workerId: grant.workerId, requestId: grant.requestId,
       lease: acquired.lease, ...(purpose ? { publicationPurpose: purpose } : {}), ...(mainSyncTransactionId ? { mainSyncTransactionId } : {}),
       ...(options?.continuations ? { mainSyncRequestContinuations: options.continuations } : {}) },
-      finish: () => releaseNativeRecord({ ...grant, lease: acquired.lease,
-        stoppedTurn: { runtime: "codex", workerId: grant.workerId, requestId: grant.requestId,
-          lease: acquired.lease, state: "completed" } }) };
+      finish: (result?: { status: string; data?: Record<string, unknown> }) => {
+        const file = join(value.metadata, "vibe-main-sync.json");
+        const captured = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined;
+        const returned = result ?? (captured?.preparationTurn?.lease === acquired.lease
+          ? { status: "DONE", data: { mainSyncResult: { mainSync: captured } } } : undefined);
+        return releaseNativeRecord({ ...grant, lease: acquired.lease,
+          stoppedTurn: { runtime: "codex", workerId: grant.workerId, requestId: grant.requestId,
+            lease: acquired.lease, state: "completed", result: returned } });
+      } };
   };
   let registered = false;
   const sourceTurn = (purpose?: "build" | "handoff", agentRoot = value.agentRoot,

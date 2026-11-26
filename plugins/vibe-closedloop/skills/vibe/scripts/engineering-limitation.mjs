@@ -3,6 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
 
 /** Verify a required credential from an unconditional shell preflight before any lane command. */
 export function credentialLimitation(worktree, head, command, env = process.env) {
@@ -17,7 +18,7 @@ export function credentialLimitation(worktree, head, command, env = process.env)
   const shell = /^(?:bash |sh |\.\/)((?:[\w.-]+\/)*[\w.-]+\.sh)$/.exec(command);
   let script;
   try {
-    if (npm) script = JSON.parse(read("package.json")).scripts?.[npm[1]];
+    if (npm) script = capturedJson(read("package.json")).scripts?.[npm[1]];
     else if (shell && !shell[1].split("/").some(part => part === "." || part === "..")) script = read(shell[1]);
   } catch { return null; }
   if (typeof script !== "string") return null;

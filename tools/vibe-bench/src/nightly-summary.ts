@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { readClaudeFailureEvidence } from "./eval-nightly-diagnostics.ts";
+import type { ClaudeFailureEvidence } from "./eval-nightly-diagnostics.ts";
 
 /** Scheduled-task outcome derived from one wrapper execution. */
 export type NightlyTaskResult = "SKIPPED" | "RAN" | "FAILED";
@@ -13,6 +15,8 @@ export interface NightlyTaskSummary {
   posted: "yes" | "no";
   path: string;
   failure: string | null;
+  slackFailure?: string;
+  claudeFailureEvidence?: ClaudeFailureEvidence[];
 }
 
 function artifactCounts(path: string): { passed: number; failed: number; unavailable: number } {
@@ -49,11 +53,12 @@ function artifactPath(lines: string[]): string | null {
 /** Convert one wrapper log and exit status into the task's final summary line. */
 export function nightlyTaskSummary(exitCode: number, output: string, logPath: string): NightlyTaskSummary {
   const lines = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const failures = lines.filter((line) => /^VIBE_NIGHTLY_(?:INFRA|SLACK)_FAILURE\b/.test(line));
+  const infrastructureFailure = lines.findLast((line) => line.startsWith("VIBE_NIGHTLY_INFRA_FAILURE "));
+  const slackFailure = lines.findLast((line) => line.startsWith("VIBE_NIGHTLY_SLACK_FAILURE "));
   const artifact = artifactPath(lines);
   const skipped = lines.some((line) => line.startsWith("SKIPPED "));
   const posted = lines.includes("VIBE_NIGHTLY_SLACK_POSTED") ? "yes" : "no";
-  let failure = failures.at(-1) ?? (exitCode === 0 ? null
+  let failure = infrastructureFailure ?? slackFailure ?? (exitCode === 0 ? null
     : `VIBE_NIGHTLY_INFRA_FAILURE nightly process exited with status ${exitCode}`);
   let result: NightlyTaskResult = exitCode === 0 && !failure ? (skipped ? "SKIPPED" : "RAN") : "FAILED";
   let counts = { passed: 0, failed: 0, unavailable: 0 };
@@ -64,7 +69,10 @@ export function nightlyTaskSummary(exitCode: number, output: string, logPath: st
     failure = "VIBE_NIGHTLY_INFRA_FAILURE nightly summary artifact is missing";
   }
   if (failure) result = "FAILED";
-  return { result, ...counts, posted, path: artifact ?? logPath, failure };
+  const evidence = result === "FAILED" ? lines.map(readClaudeFailureEvidence).filter((row) => row !== null) : [];
+  return { result, ...counts, posted, path: artifact ?? logPath, failure,
+    ...(infrastructureFailure && slackFailure ? { slackFailure } : {}),
+    ...(evidence.length ? { claudeFailureEvidence: evidence } : {}) };
 }
 
 /** Render exactly one line for robust extraction from a scheduled-task transcript. */

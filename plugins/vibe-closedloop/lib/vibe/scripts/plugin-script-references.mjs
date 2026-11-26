@@ -5,6 +5,7 @@
 // repository's own `.claude/skills/control/scripts/app.mjs` was refused as a
 // missing vibe script).
 
+import { readGitInventory } from "./git-inventory.mjs";
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
@@ -84,7 +85,7 @@ function existsInWorktree(candidate, scope) {
 function uniqueRepositoryShorthand(scope, suffix) {
   if (!scope?.git || suffix.split("/").some((segment) => !segment || segment === "." || segment === "..")) return false;
   try {
-    const matches = gitScope(scope.root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", `:(glob)**/${suffix}`]);
+    const matches = readGitInventory(scope.root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", `:(glob)**/${suffix}`], { timeout: 2500 });
     const existing = new Set(matches.split("\0").filter((file) => file && containedFile(path.resolve(scope.root, file), scope.root)));
     return existing.size === 1;
   } catch { return false; }
@@ -99,6 +100,23 @@ function ownSourceRoot(base, scope) {
   } catch { return false; }
 }
 
+/** A repository-qualified path names the reviewed source even when the installed plugin has the same skill. */
+function sourceScriptPaths(text, scope, mustExist) {
+  if (!scope?.git) return [];
+  return [...new Set([...String(text ?? "").matchAll(TOKEN)].flatMap(([token]) => {
+    const candidate = trimToken(token);
+    const match = SCRIPT_PATH.exec(candidate);
+    if (!match || !match[2]) return [];
+    const [, , , , rest] = match;
+    const source = /^(?:\.\/)?plugins\/([^/]+)\/skills\//.exec(candidate);
+    if (!source || !isVibePluginRoot(path.join(scope.root, "plugins", source[1]))) return [];
+    const unsafe = rest.split("/").includes("..");
+    const present = lstatSync(path.resolve(scope.root, candidate), { throwIfNoEntry: false });
+    return unsafe || ((mustExist || present) && !existsInWorktree(candidate, scope))
+      ? [`${candidate}: plugin script is not a contained regular file in the review worktree`] : [];
+  }))];
+}
+
 /**
  * Vibe plugin script references in `text`, normalized to `skills/<skill>/scripts/<file>`.
  * A path counts only when <skill> is a skill of the installed plugin and either it has no
@@ -107,8 +125,11 @@ function ownSourceRoot(base, scope) {
  * `.claude/skills/control/scripts/app.mjs` is never a plugin reference.
  */
 export function pluginScriptReferences(text, pluginRoot, worktree = null) {
+  return installedReferences(text, pluginRoot, worktree);
+}
+
+function installedReferences(text, pluginRoot, worktree, scope) {
   const refs = [];
-  let scope;
   for (const [token] of String(text ?? "").matchAll(TOKEN)) {
     const match = SCRIPT_PATH.exec(trimToken(token));
     if (!match) continue;
@@ -131,11 +152,16 @@ export function pluginScriptReferences(text, pluginRoot, worktree = null) {
   return refs;
 }
 
-/** Missing, unsafe or non-file vibe plugin script references in `text`. */
-export function pluginScriptProblems(text, pluginRoot, worktree = null) {
+/**
+ * Missing, unsafe or non-file vibe plugin script references in `text`. Only a reviewer brief (`reviewSource`) requires a
+ * repository-qualified script to exist in the worktree already; a writer's brief may name a script its change adds
+ * (operator item 31(b), #433).
+ */
+export function pluginScriptProblems(text, pluginRoot, worktree = null, { reviewSource = false } = {}) {
   const root = realpathSync(pluginRoot);
-  const problems = [];
-  for (const relative of pluginScriptReferences(text, root, worktree)) {
+  const scope = repositoryScope(worktree);
+  const problems = sourceScriptPaths(text, scope, reviewSource);
+  for (const relative of installedReferences(text, root, worktree, scope)) {
     if (relative.split("/").includes("..")) {
       problems.push(`${relative}: plugin script path escapes its installed root`);
       continue;

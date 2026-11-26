@@ -7,6 +7,7 @@ behavior, tool and CLI behavior, runtime or platform capabilities, and version
 support. Verify each premise against its primary source now. Use a code
 `file:line` you read, a bounded read-only command with its actual result, or
 the current official documentation URL with a short fact from that page.
+For a ruling or ticket premise, cite the ticket slug and quoted words in the read-only query result. Keep private file paths out of the finding.
 Training data and an earlier review are not evidence. Label a premise you
 cannot verify `UNVERIFIED`; it cannot support a blocking finding.
 A claim about what a browser shows (what mounts, renders, stays visible, takes

@@ -34,6 +34,7 @@ import { visibleMarkdownLines } from "./criteria-list.mjs";
 import { escapeRegExp } from "./source-imports.mjs";
 import { isUnversionedStory, storyExportNames, storyGroupOrderPath, storybookSchemeOf, storyMetaTitle } from "./storybook-taxonomy.mjs";
 import { git, sessionLiveTicket } from "../../../lib/vibe/scripts/session-record.mjs";
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 
 const MOVE_WORD = /\b(?:mov(?:e|ed|es|ing)|retir(?:e|ed|es|ing)|renam(?:e|ed|es|ing))\b/i;
 const STORY_WORD = /\bstor(?:y|ies)\b/i;
@@ -242,7 +243,7 @@ export function frozenStoryMoves(repo, base, record) {
  * is added as an intent-to-add entry to a copy of the index, and the worktree's own index is never written.
  */
 export function storyRenames(repo, base, { pathspecs = [], untracked = false } = {}) {
-  const added = untracked ? git(repo, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter((file) => STORY_FILE.test(file)) : [];
+  const added = untracked ? readGitInventory(repo, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter((file) => STORY_FILE.test(file)) : [];
   const list = (env) => new Map(git(repo, ["diff", "--name-status", "-M", "--diff-filter=R", base, ...(pathspecs.length ? ["--", ...pathspecs] : [])], { env })
     .split("\n").filter(Boolean).map((line) => line.split("\t")).map(([, from, to]) => [from, to]));
   if (added.length === 0) return list(undefined);

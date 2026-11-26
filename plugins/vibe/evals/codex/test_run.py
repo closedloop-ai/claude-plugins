@@ -202,7 +202,7 @@ def copied_identity_helper(output: Path) -> Path:
     """Place real runtime helper bytes in the fixture's installed payload (vibe's lib holds them)."""
     target = output / "market/plugins/vibe/lib/vibe/scripts"
     target.mkdir(parents=True, exist_ok=True)
-    for name in ("tested-head.mjs", "session-record.mjs", "test-state-isolation.mjs"):
+    for name in ("tested-head.mjs", "session-record.mjs", "test-state-isolation.mjs", "git-inventory.mjs"):
         (target / name).write_bytes((runner.IDENTITY_SCRIPTS / name).read_bytes())
     return target / "tested-head.mjs"
 
@@ -215,7 +215,7 @@ def test_receipts_use_copied_helper_after_live_helper_mutates(tmp_path: Path, mo
     live = tmp_path / "live"
     live_scripts = live / "vibe/lib/vibe/scripts"
     live_scripts.mkdir(parents=True)
-    for name in ("tested-head.mjs", "session-record.mjs", "test-state-isolation.mjs"):
+    for name in ("tested-head.mjs", "session-record.mjs", "test-state-isolation.mjs", "git-inventory.mjs"):
         (live_scripts / name).write_bytes((copied.parent / name).read_bytes())
     monkeypatch.setattr(runner, "IDENTITY_SCRIPTS", live_scripts)
     monkeypatch.setattr(runner, "IDENTITY", live_scripts / "tested-head.mjs")

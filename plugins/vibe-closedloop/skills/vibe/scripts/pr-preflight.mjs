@@ -16,6 +16,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { currentPrTreeFacts, prTreeClaimProblems } from "../../handoff/scripts/pr-body-claims.mjs";
 import { isVisualBaseline, visualBaselineLedgerProblems } from "../../handoff/scripts/visual-baseline-ledger.mjs";
 import { isDesktopE2eLane, isWebE2eLane, readRecords } from "./pre-pr-lanes.mjs";
 import { vibeCore } from "../../../shared/vibe-core.mjs";
@@ -70,6 +71,7 @@ function main(argv) {
     ...followUpTicketProblems(body),
     ...(values.base ? visualBaselineLedgerProblems(body, changedVisualBaselines(values.worktree, values.base)) : []),
     ...(values.worktree ? [...testedCommitProblems(body, values.worktree, values.base), ...claimedCheckProblems(body, values.worktree),
+      ...prTreeClaimProblems(body, currentPrTreeFacts(values.worktree, values.base)),
       ...e2eClaimProblems(body, laneReceipts(values.worktree))] : []),
   ];
   process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, problems })}\n`);

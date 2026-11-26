@@ -1,3 +1,4 @@
+import { capturedJson } from "../../../plugins/vibe/lib/vibe/scripts/captured-json.mjs";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { git } from "../../../plugins/vibe/lib/vibe/scripts/session-record.mjs";
-import { requirePrototypePublication } from "../../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs";
+import { isOwnedPrototypeSession, requirePrototypePublication } from "../../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs";
 import { readInput } from "./contracts.js";
 import { verifyExternalCi } from "./main-sync-ci.js";
 import { desktopE2ePostMergeCoverage, isDesktopE2eLimitation } from "./main-sync-lanes.js";
@@ -14,9 +15,10 @@ import { isPublisherContext } from "./record-context.js";
 import { committedInputs, executeChecks, checkRecipe, inspectInputInventory } from "./main-sync-checks.js";
 import { prepareInputOrigins, reusableInputOrigin } from "./main-sync-input-origin.js";
 import { storedRecipe, verifyRecipeWitness, recipeIdentity } from "./main-sync-validation-recipe.js";
+import { importedFileFacts } from "./main-sync-preparation.js";
 import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, mainSyncRemoteInputSchema, mainSyncStateSchema, type MainSyncReceipt, type MainSyncSession } from "./main-sync-contracts.js";
 import { comparisonLogs } from "./main-sync-main-comparison.js";
-import { digest, requireSyncReceipt, saveSyncReceipt, syncContext, syncLocation, readPrivateJson, MAIN_SYNC_FILE } from "./main-sync-state.js";
+import { digest, requireSyncReceipt, saveSyncReceipt, syncContext, syncLocation, ownedSyncCheckout, readPrivateJson, MAIN_SYNC_FILE } from "./main-sync-state.js";
 
 const GIT_NETWORK_MS = 15 * 60 * 1000;
 /** One remote HEAD lookup plus two minutes for local source and receipt verification. */
@@ -27,6 +29,7 @@ export { MainSyncError };
 export { workflowLaneDefinitions } from "./main-sync-ci.js";
 export { pathFilteredPullRequestWorkflows } from "./pull-request-workflows.js";
 export { mainSyncFailure } from "./main-sync-failure.js";
+export { runLeftovers } from "./main-sync-checks.js";
 
 /** Reuses bounded stdin input rather than source authority or success claims supplied in argv/task text. */
 export async function readMainSyncInput(worktree: string, stream: NodeJS.ReadableStream = process.stdin) {
@@ -110,7 +113,7 @@ export function prepareMainSync(raw: unknown) {
     encoding: "utf8", timeout: 30000, maxBuffer: 1024 * 1024,
   });
   if (desktop.error || desktop.status !== 0) throw new MainSyncError("Could not verify the owned Desktop before changing its source");
-  if (desktopSchema.parse(JSON.parse(desktop.stdout)).running) throw new MainSyncError("Stop only this session's owned Desktop before main-sync", "NEEDS_DESKTOP_STOP");
+  if (desktopSchema.parse(capturedJson(desktop.stdout)).running) throw new MainSyncError("Stop only this session's owned Desktop before main-sync", "NEEDS_DESKTOP_STOP");
   try { git(root, ["fetch", "origin", "main"], { timeout: GIT_NETWORK_MS }); }
   catch { throw new MainSyncError("Fresh main fetch failed; nothing was published"); }
   const fetchedMain = git(root, ["rev-parse", "FETCH_HEAD^{commit}"]);
@@ -126,7 +129,7 @@ export function prepareMainSync(raw: unknown) {
   git(root, ["cat-file", "-e", `${validationSince}^{commit}`]);
   const receipt: MainSyncReceipt = { version: 1, transactionId: randomUUID(), worktree: root,
     branch: value.place.branch, operator: { id: value.place.session.operator.id, email: value.place.session.operator.email },
-    purpose: value.purpose, mainSha, startingHead, originalBase: value.place.session.baseCommit,
+    purpose: value.purpose, preparationTurn: publicationTurn(value), mainSha, startingHead, originalBase: value.place.session.baseCommit,
     validationSince, fetchedAt: new Date().toISOString(), importedFiles,
     importedCommits: [...new Set([...(previous?.importedCommits ?? []),
       ...git(root, ["rev-list", `${common}..${mainSha}`]).split("\n").filter(Boolean)])],
@@ -143,7 +146,7 @@ export function prepareMainSync(raw: unknown) {
   }
   const requiresCommit = existsSync(join(value.place.dir, "MERGE_HEAD"));
   return { status: requiresCommit ? "NEEDS_COMMIT" : "DONE", transactionId: receipt.transactionId,
-    mainSha, headSha: git(root, ["rev-parse", "HEAD"]), requiresCommit, importedFiles,
+    mainSha, originalBase: receipt.originalBase, headSha: git(root, ["rev-parse", "HEAD"]), requiresCommit, ...importedFileFacts(importedFiles),
     mainMerge: decision.merge ? "merged" : "deferred", mainMergeReason: decision.reason };
 }
 
@@ -285,7 +288,7 @@ export function admitMainSyncRequest(raw: unknown) {
 /** Canonical prototype sharing consumes the same proof without inventing an app environment or alias. */
 export function admitMainSyncShare(raw: unknown) {
   const { value, receipt, identity } = admitted(raw, "share");
-  if (!value.place.branch.startsWith("prototype/")) throw new MainSyncError("Canonical share requires an owned prototype branch");
+  if (!isOwnedPrototypeSession(value.place.session,value.place.branch)) throw new MainSyncError("Canonical share requires an owned prototype branch");
   consumePublication(value, receipt);
   return { transactionId: receipt.transactionId, headSha: identity.headSha, mainSha: receipt.mainSha,
     alreadyPublished: alreadyPublished(value.place.session, identity.headSha) && remoteHead(value.place.root, value.place.branch) === identity.headSha };
@@ -293,7 +296,7 @@ export function admitMainSyncShare(raw: unknown) {
 
 /** Read-only inventory uses the captured main, never a later tracking-ref value masquerading as its sync base. */
 export function readMainSyncProvenance(worktree: string) {
-  const place = syncLocation(worktree);
+  const place = ownedSyncCheckout(worktree);
   const file = join(place.dir, MAIN_SYNC_FILE);
   if (!existsSync(file)) return undefined;
   const state = mainSyncStateSchema.parse(readPrivateJson(file));
@@ -408,7 +411,7 @@ function remoteHead(root: string, branch: string) {
   catch { throw new MainSyncError("Could not verify the exact remote branch result"); }
 }
 function alreadyPublished(session: ReturnType<typeof syncLocation>["session"], head: string) {
-  if (session.branch.startsWith("prototype/")) {
+  if (isOwnedPrototypeSession(session)) {
     try { return requirePrototypePublication(session, head).deployedCommit === head; }
     catch { return false; }
   }

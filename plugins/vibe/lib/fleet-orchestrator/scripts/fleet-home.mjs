@@ -74,13 +74,14 @@
 // Claude Code with the compaction window context-guard.json sets, so nobody
 // has to know CLAUDE_CODE_AUTO_COMPACT_WINDOW.
 
+import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { PER_PROGRAM_KEYS, parseConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { bindChat, canonicalHome, canonicalProgram, chatBinding, chatHome, commandChat, currentProgram, programChats, programFor, refuseHeld, unbindChat, unboundLine } from "./chat-binding.mjs";
-import { completeHandoff, HANDOVER_FILE, handoffProblems, recordCronDeleted, recordTold, startHandoff, stopWatcher } from "./fleet-handoff.mjs";
+import { completeHandoff, HANDOVER_FILE, handoffProblems, recordCronDeleted, recordTold, startHandoff, stopRecordedWatcher, stopWatcher } from "./fleet-handoff.mjs";
 import { migrate } from "./fleet-migrate.mjs";
 import { skillFreshnessProblem } from "./skill-freshness.mjs";
 import { vibeScriptPath } from "../../../shared/vibe-install.mjs";
@@ -345,6 +346,33 @@ export function closeProgram(home, { env = process.env, chat = commandChat(env) 
   return own && current && !clear ? `closed ${own} for this chat; ${current} stays current in ${home}` : `no active program in ${home}`;
 }
 
+/** Close a bounded program after its handoff or terminal PR has been independently reconciled. */
+function closeSettledProgram(home, chat, env) {
+  const { dir } = chatProgramDir(home, chat, env);
+  if (![Shape.OneWriter, Shape.NoWriter].includes(programShape(dir))) throw new Error("Settled closure needs a one-writer or no-writer program");
+  const handoff = completeHandoff(dir, new Date(), chat);
+  const boardFile = path.join(dir, "board.json");
+  const writers = existsSync(boardFile) ? Object.values(JSON.parse(readFileSync(boardFile, "utf8")).writers ?? {}) : [];
+  if (!handoff && writers.some(row => !row.retiredAt && !(row.repo && row.pr))) throw new Error("A current writer has no PR or completed handoff");
+  const prs = writers.filter((row) => !row.retiredAt && row.repo && row.pr).map((row) => [row.repo, String(row.pr)]);
+  const files = ["prs.txt", "terminal-prs.txt"].map(name => path.join(dir, name)).filter(file => existsSync(file));
+  for (const line of files.flatMap(file => readFileSync(file, "utf8").split(/\r?\n/))) {
+    const [repo, number] = line.trim().split(/\s+/);
+    if (/^[\w.-]+\/[\w.-]+$/.test(repo) && /^\d+$/.test(number) && !prs.some(([r, n]) => r === repo && n === number)) prs.push([repo, number]);
+  }
+  const states = [];
+  for (const [repo, number] of prs) {
+    const state = execFileSync("gh", ["pr", "view", number, "-R", repo, "--json", "state", "--jq", ".state"], { encoding: "utf8", timeout: 15_000 }).trim();
+    if (!["MERGED", "CLOSED", ...(handoff ? ["OPEN"] : [])].includes(state)) throw new Error(`PR ${repo}#${number} is not reconciled for closure`);
+    states.push(`${repo}#${number} ${state.toLowerCase()}`);
+  }
+  if (!handoff && !states.length) throw new Error("No completed handoff or terminal PR is recorded");
+  // A completed handoff has already reconciled its outgoing watcher; any new watcher belongs to the successor.
+  if (!handoff) stopRecordedWatcher(dir, new Date().toISOString());
+  closeProgram(home, { env, chat });
+  return `${states.join(", ") || "Handoff complete, no PR"}; this session can be closed`;
+}
+
 /** Binds `chat` to `slug` in `home` for `resume <slug>`; returns the TAKEOVER and BOUND lines. Another chat's program needs `takeover`. */
 function resumeProgram(home, slug, chat, env, takeover) {
   if (!existsSync(path.join(home, "programs", slug))) throw new Error(`no program ${slug} in ${home}: start it with fleet-home.mjs start ${slug} --shape no-writer|one-writer|fleet`);
@@ -464,7 +492,7 @@ export function launcherLines(home, { install = false, bin, env = process.env } 
 function main(argv, env = process.env) {
   const [command, ...rest] = argv;
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: {
-    home: { type: "string" }, from: { type: "string" }, program: { type: "string" }, shape: { type: "string" }, "dry-run": { type: "boolean" },
+    home: { type: "string" }, from: { type: "string" }, program: { type: "string" }, shape: { type: "string" }, "dry-run": { type: "boolean" }, settled: { type: "boolean" },
     install: { type: "boolean" }, bin: { type: "string" }, takeover: { type: "boolean" },
     successor: { type: "string" }, mesh: { type: "string" }, peer: { type: "string", multiple: true }, cron: { type: "string", multiple: true },
     notes: { type: "string" }, told: { type: "string" }, via: { type: "string" }, "cron-deleted": { type: "string" },
@@ -487,7 +515,7 @@ function main(argv, env = process.env) {
     return 0;
   }
   if (command === "close") {
-    print([closeProgram(home, { env, chat })]);
+    print([values.settled ? closeSettledProgram(home, chat, env) : closeProgram(home, { env, chat })]);
     return 0;
   }
   if (command === "resume") {
@@ -521,7 +549,7 @@ function main(argv, env = process.env) {
     print(lines);
     return refused ? 1 : 0;
   }
-  if (command === "handoff") return handoffCommand(chatProgramDir(home, chat, env).dir, values, print);
+  if (command === "handoff") return handoffCommand(chatProgramDir(home, chat, env).dir, values, print, chat);
   if (command === "launcher") {
     print(launcherLines(home, { install: values.install, bin: values.bin, env }));
     return 0;
@@ -530,9 +558,9 @@ function main(argv, env = process.env) {
 }
 
 /** `handoff`: start it (--successor), record one send, cron or watcher stop, or --check; prints what is still missing. */
-function handoffCommand(dir, values, print) {
+function handoffCommand(dir, values, print, outgoingChat) {
   if (values.successor || values.mesh) {
-    startHandoff(dir, { successor: values.successor, mesh: values.mesh, peers: values.peer ?? [], crons: values.cron ?? [],
+    startHandoff(dir, { outgoingChat, successor: values.successor, mesh: values.mesh, peers: values.peer ?? [], crons: values.cron ?? [],
       notes: values.notes ? readFileSync(values.notes, "utf8") : "" });
     print([`WROTE ${path.join(dir, HANDOVER_FILE)}`]);
   }

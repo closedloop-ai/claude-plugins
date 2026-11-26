@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveAgentRoot } from "./plugin-root.js";
@@ -180,6 +180,28 @@ describe("launcher sign-in and connection prechecks (operator ruling, 2026-10-15
     expect(proof).toHaveLength(1);
     expect(proof[0]?.args).toContain("--resume");
   });
+  it("keeps retrying a pending graph past three attempts while the shared startup deadline allows, under one identity", () => {
+    const value = setup();
+    const result = launch(value, { agentRoot: value.agentRoot, input: "Build it",
+      timeoutMs: 20000 }, { FAKE_CLAUDE_PENDING_TIMES: "3" });
+    expect(result.status, JSON.stringify(result.json)).toBe(0);
+    const starts = readFileSync(join(value.metadata, "fake-mcp-starts.jsonl"), "utf8").trim()
+      .split("\n").map((line) => JSON.parse(line) as { id: string; pending: boolean });
+    expect(starts.map((item) => item.pending)).toEqual([true, true, true, false]);
+    expect(new Set(starts.map((item) => item.id)).size).toBe(1);
+  });
+  it("AC-13 refuses a launch on a shared fleet host whose worktree settings turn vibe's guards off, before Claude starts", () => {
+    const value = setup();
+    const slots = join(value.metadata, "fleet-slot-locks");
+    mkdirSync(slots, { recursive: true });
+    mkdirSync(join(value.worktree, ".claude"), { recursive: true });
+    writeFileSync(join(value.worktree, ".claude", "settings.local.json"), JSON.stringify({ disableAllHooks: true }));
+    const refused = launch(value, { agentRoot: value.agentRoot, input: "Build it" }, { SLOT_LOCK_DIR: slots });
+    expect(refused.status).toBe(1);
+    expect(refused.json.code).toBe("GUARDS_DISABLED");
+    expect(String(refused.json.summary)).toContain("settings.local.json sets disableAllHooks");
+    expect(proofCount(value)).toBe(0);
+  });
   it("ISS-13563 refuses a graph that stays pending within the startup bound", () => {
     const value = setup();
     const result = launch(value, { agentRoot: value.agentRoot, input: "Build it",
@@ -222,6 +244,8 @@ describe("launcher sign-in and connection prechecks (operator ruling, 2026-10-15
       { FAKE_CLAUDE_FAILED_SERVER: "1" });
     expect(result.status).toBe(1);
     expect(result.json.code).toBe("MCP_TOOLS_MISSING");
+    // AC-26: a permanent failure names the actual connection, not only the code.
+    expect(String(result.json.summary)).toContain("started without its granted connections: custom_graph");
     expect(readFileSync(join(value.metadata, "fake-mcp-starts.jsonl"), "utf8").trim().split("\n"))
       .toHaveLength(1);
     expect(proofCount(value)).toBe(0);

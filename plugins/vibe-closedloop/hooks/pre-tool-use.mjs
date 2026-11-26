@@ -18,6 +18,7 @@ import { createsPullRequest, prCreateGuard } from "./pr-create-guard.mjs";
 import { QUESTION_TOOLS, questionGuard } from "./question-guard.mjs";
 import { runsE2eScript, shellSafetyGuard } from "./shell-safety-guard.mjs";
 import { unitStatusGuard } from "./unit-status-guard.mjs";
+import { ticketProjectGuard } from "./ticket-project-guard.mjs";
 import { issuePlacementGuard, writesIssue } from "./delivery-placement-guard.mjs";
 import { conversationSkill } from "./hook-session-scope.mjs";
 import { commandSegments } from "./command-segments.mjs";
@@ -58,6 +59,7 @@ export const PRE_TOOL_USE_ROUTES = Object.freeze({
  * `mcp__` tool, and each rule names its own); with no provider bound they do nothing.
  */
 export const MCP_ROUTE = Object.freeze([
+  { name: "ticket-project-guard", run: ticketProjectGuard },
   { name: "unit-status-guard", run: unitStatusGuard, activated: true, guards: writesStatus },
   { name: "issue-placement-guard", run: issuePlacementGuard, guards: writesIssue },
 ]);
