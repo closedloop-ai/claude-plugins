@@ -58,10 +58,17 @@ export function outcomeInstruction(request, lanes, key, managedHost, compact = n
       : "The managed runner runs the shipped reporter itself after its lanes, and its last output line is the bounded machine record. Do not run a reporter yourself; keep that line in the run log by reading the runner's output.",
   ].join("\n\n");
   const reporter=compact ?? portableReporter(outcomeSpec(request,lanes,key,managedHost));
-  return [
+  // A workflow brief's runner writes every lane record itself (cloud-workflow-brief.mjs), so the agent is told to write none.
+  const records = compact ? [
+    "The machine record replaces the archival VIBE_VALIDATION_RESULT carrier. Never place private lane evidence in an outcome artifact.",
+    "Keep the results directory d you created before the first lane. Do not show its contents.",
+  ] : [
     'The machine record replaces the archival VIBE_VALIDATION_RESULT carrier. Keep the private lane JSON fields "tail" and "diagnosis" with bounded redacted output for failures. Never place these in an outcome artifact.',
     "Save both full streams outside the checkout. Use the directory printed by the managed host, or create the direct lane directory with mktemp -d /tmp/vibe-lane-results-XXXXXX. Set d to its absolute path. Do not show its contents.",
     "For each direct lane, redirect stdout and stderr into $d/<zero-based-index>.stdout and .stderr. Record the actual foreground exit in $d/<index>.json as JSON with the exact lane name and numeric exitCode (or null and notRun when it never executed). The managed host already writes these. A preflight that ran no lane can have empty channel files only alongside its recorded nonzero preflight or notRun outcome.",
+  ];
+  return [
+    ...records,
     ...(reporter.install ? ["Install the shipped machine reporter:", reporter.install] : []),
     "After all foreground commands settle, invoke the reporter exactly once as its own Bash tool call. It checks the actual Git provenance and streams the private files. It emits one bounded machine record or writes the expressly authorized outcomes JSON.",
     reporter.reporter,

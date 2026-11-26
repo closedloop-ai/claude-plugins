@@ -10,6 +10,14 @@ import { WORKFLOW_NOT_RUN } from "./cloud-workflow-runner.mjs";
 const modules = ["cloud-workflow-plan.mjs", "workflow-lane-definitions.mjs", "cloud-receipts.mjs", "cloud-validation-host.mjs", "cloud-workflow-runner.mjs", ...reporterFiles];
 const quote = text => "'"+text.replaceAll("'","'\"'\"'")+"'";
 
+/** The one lane command: the runner writes the lane's record into the results directory it is given. */
+export const WORKFLOW_RUNNER_COMMAND = 'node "$p/cloud-workflow-runner.mjs" <index> "$d"';
+/**
+ * The s6 lint smoke's cloud agent was told to write the lane record itself, and the reporter refused a lane that had
+ * passed. The runner writes every record now, and the agent writes none.
+ */
+export const NO_EVIDENCE_WRITES = "The runner itself writes each lane's record, $d/<index>.json, a lane it could not run included. Never create, write or edit any file in $d yourself, and never replace a missing or wrong record by hand: the reporter refuses it, and that refusal is the result to report.";
+
 /** This fixed bootstrap verifies every committed helper byte before importing anything from the application. */
 async function bootstrap() {
   const fs=require("node:fs"), path=require("node:path"), crypto=require("node:crypto");
@@ -59,7 +67,7 @@ export function compactWorkflowBrief(request,lanes,key,readCommitted,legacyArtif
   const start=[
     "Prepare the exact ordered CI recipes from the checked-out commit. Save the printed private directory as p for later calls.",
     command.replace(/\n\s*/g," "),
-    "The exact ordered lane names are in $p/lanes.json. Run each lane by its zero-based index, 0 through "+(lanes.length-1)+", from the repository root with exactly `node \"$p/cloud-workflow-runner.mjs\" <index>`, with stdout and stderr redirected into $d/<index>.stdout and .stderr; its exit code is the lane's exit code. The runner executes the lane's complete committed workflow job in a private copy of the commit, in declared order as in CI: every step as a non-root user with passwordless sudo, as on GitHub's runner. Never run a recipe step yourself, and do not embed private recipe or output files in a response. When the stderr file ends with a "+WORKFLOW_NOT_RUN+" line, record exitCode null and notRun with that line's reason. Keep the last stdout line, CLOUD_WORKFLOW_LANE, in your lane status.",
+    "Before the first lane, create the private results directory once with `d=$(mktemp -d /tmp/vibe-lane-results-XXXXXX)`. The exact ordered lane names are in $p/lanes.json. Run each lane by its zero-based index, 0 through "+(lanes.length-1)+", from the repository root with exactly `"+WORKFLOW_RUNNER_COMMAND+"`, with stdout and stderr redirected into $d/<index>.stdout and .stderr; its exit code is the lane's exit code. The runner executes the lane's complete committed workflow job in a private copy of the commit, in declared order as in CI: every step as a non-root user with passwordless sudo, as on GitHub's runner. "+NO_EVIDENCE_WRITES+" Never run a recipe step yourself, and do not embed private recipe or output files in a response. A lane whose stderr ends with a "+WORKFLOW_NOT_RUN+" line did not run; report that line's reason. Keep the last stdout line, CLOUD_WORKFLOW_LANE, in your lane status.",
   ].join("\n\n");
   return {start, reporter:'node "$p/cloud-outcome-writer.mjs" "$(cat "$p/reporter-spec")" "$d"'};
 }

@@ -318,10 +318,11 @@ test("AC-68 a fetch-depth 0 checkout refuses the lane when the cloud checkout is
 });
 
 // The runner command over a plan directory holding these lane definitions, as the agent runs it:
-// `node "$p/cloud-workflow-runner.mjs" <index> >$d/<index>.stdout 2>$d/<index>.stderr`, so both streams are files opened
-// write-only. With `umask`, the shell that starts it sets that umask first. `env` adds to the runner's own environment,
-// as the cloud agent's shell would. As root, it runs with a private /etc/sudoers.d (privateSudoers), whose entries
-// after the lane land in `leftover`.
+// `node "$p/cloud-workflow-runner.mjs" <index> "$d" >$d/<index>.stdout 2>$d/<index>.stderr`, so both streams are files
+// opened write-only and the runner writes its lane record into the private `results` directory. `run` takes the
+// arguments as given. With `umask`, the shell that starts it sets that umask first. `env` adds to the runner's own
+// environment, as the cloud agent's shell would. As root, it runs with a private /etc/sudoers.d (privateSudoers), whose
+// entries after the lane land in `leftover`.
 function runnerCommand(f, definitions, umask = null, env = {}) {
   const plan = path.join(f.checkout, ".git", "vibe-workflow-fixture");
   mkdirSync(plan);
@@ -332,8 +333,11 @@ function runnerCommand(f, definitions, umask = null, env = {}) {
   const temporary = mkdtempSync(path.join(f.root, "tmp-"));
   chmodSync(temporary, 0o755);
   const leftover = path.join(f.root, "sudoers-leftover");
-  const runner = (...args) => {
-    const [out, err] = ["stdout", "stderr"].map((name) => path.join(f.root, `${args.join("-") || "none"}.${name}`));
+  const results = mkdtempSync(path.join(f.root, "results-"));
+  let calls = 0;
+  const run = (args) => {
+    const [out, err] = ["stdout", "stderr"].map((name) => path.join(f.root, `run-${calls}.${name}`));
+    calls += 1;
     const fds = [openSync(out, "w"), openSync(err, "w")];
     const command = [process.execPath, path.join(plan, "cloud-workflow-runner.mjs"), ...args];
     const options = { cwd: f.checkout, env: { ...env, PATH: process.env.PATH, TMPDIR: temporary }, stdio: ["ignore", ...fds] };
@@ -342,7 +346,8 @@ function runnerCommand(f, definitions, umask = null, env = {}) {
       return { status: child.status, stdout: readFileSync(out, "utf8"), stderr: readFileSync(err, "utf8") };
     } finally { for (const fd of fds) closeSync(fd); }
   };
-  return { runner, temporary, leftover };
+  const record = (index) => { const target = path.join(results, `${index}.json`); return existsSync(target) ? JSON.parse(readFileSync(target, "utf8")) : null; };
+  return { runner: (index) => run([index, results]), run, record, results, temporary, leftover };
 }
 
 test("AC-68 the runner command: every segment of a chained step runs as the actor, and as root the actor's sudo works for the lane and is gone after it", (t) => {
@@ -364,19 +369,38 @@ test("AC-68 the runner command: every segment of a chained step runs as the acto
 
 test("AC-68 the runner command runs one planned lane, removes its private copy, and refuses a lane it cannot run with a NOT_RUN line", (t) => {
   const f = lane(t);
-  const definitions = [job([{ uses: "actions/checkout@v4" }, { run: "echo lane output\necho lane warning >&2" }]), job([{ uses: "actions/cache@v4" }])];
-  const { runner, temporary } = runnerCommand(f, definitions);
+  const definitions = [job([{ uses: "actions/checkout@v4" }, { run: "echo lane output\necho lane warning >&2" }]), job([{ uses: "actions/cache@v4" }]),
+    job([{ uses: "actions/checkout@v4" }, { run: "exit 3" }])];
+  const { runner, run, record, results, temporary } = runnerCommand(f, definitions);
   const ran = runner("0");
   assert.equal(ran.status, 0, ran.stderr);
   assert.match(ran.stdout, /^lane output$/m);
   assert.match(ran.stderr, /^lane warning$/m, "a lane writing to a write-only stderr file still runs to its exit");
   assert.match(ran.stdout.trim().split("\n").at(-1), /^CLOUD_WORKFLOW_LANE \{"exitCode":0,/);
   assert.deepEqual(readdirSync(temporary), [], "the lane's private copy is removed after it ends");
-  for (const [args, reason] of [[["1"], /uses actions\/cache, which the cloud runner does not provide/], [["2"], /outside the plan's 2 lanes/], [[], /run it as cloud-workflow-runner\.mjs <lane index>/]]) {
-    const refused = runner(...args);
+  for (const [args, reason] of [[["1", results], /uses actions\/cache, which the cloud runner does not provide/], [["3", results], /outside the plan's 3 lanes/],
+    [["0"], /run it as cloud-workflow-runner\.mjs <lane index> <results directory>/], [["0", path.join(f.root, "missing")], /the results directory must be an existing private directory the runner owns/]]) {
+    const refused = run(args);
     assert.equal(refused.status, 78);
     assert.match(refused.stderr.trim().split("\n").at(-1), new RegExp("^CLOUD_WORKFLOW_NOT_RUN .*" + reason.source));
   }
+  const failed = runner("2");
+  assert.equal(failed.status, 3, failed.stderr);
+  assert.deepEqual(readdirSync(results).sort(), ["0.json", "1.json", "2.json"], "the runner writes only the planned lanes' records; a lane outside the plan or a refused command line has none");
+  assert.deepEqual(record(0), { name: "lane 0", exitCode: 0, diagnosis: "", stdoutTail: ran.stdout.trim().split("\n").at(-1), stderrTail: "" }, "a passed lane's record");
+  const notRun = record(1);
+  assert.match(notRun?.notRun ?? "", /uses actions\/cache, which the cloud runner does not provide/);
+  assert.deepEqual(notRun, { name: "lane 1", exitCode: null, notRun: notRun.notRun, diagnosis: "lane was not run", stderrTail: `CLOUD_WORKFLOW_NOT_RUN ${notRun.notRun}`, stdoutTail: "" },
+    "a lane the runner could not run is recorded with no exit code and its reason");
+  assert.deepEqual(record(2), { name: "lane 2", exitCode: 3, diagnosis: "process failed; see private stream evidence", stdoutTail: failed.stdout.trim().split("\n").at(-1), stderrTail: "" },
+    "a failed lane's record carries its own exit code");
+  for (const name of readdirSync(results)) assert.equal(statSync(path.join(results, name)).mode & 0o777, 0o600, `${name} is private`);
+  const again = runner("0");
+  assert.equal(again.status, 78, "a lane record is never replaced");
+  assert.match(again.stderr.trim().split("\n").at(-1), /^CLOUD_WORKFLOW_NOT_RUN the runner could not write its lane record: EEXIST$/);
+  assert.equal(record(0).exitCode, 0);
+  chmodSync(results, 0o750);
+  assert.match(runner("0").stderr, /results directory must be an existing private directory/, "a results directory others can open is refused");
   assert.equal(pullRequestBase(f.checkout), "main", "the base branch is the one the checkout's origin names");
   git(f.checkout, ["remote", "set-head", "origin", "--delete"], f.home);
   assert.equal(pullRequestBase(f.checkout), null);

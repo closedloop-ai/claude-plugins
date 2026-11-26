@@ -6,11 +6,11 @@
 // the private directory prepareWorkflowPlan wrote (lanes.json, lane-<index>.json and reporter-spec).
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cloudHostEnvironment, HOST_NETWORK, hostNetworkEnvironment, ownTree, PACKAGE_REPAIR_FILE, runLaneGroup, runsAsScript, validationHostActor } from "./cloud-validation-host.mjs";
+import { cloudHostEnvironment, HOST_NETWORK, hostNetworkEnvironment, ownTree, PACKAGE_REPAIR_FILE, redactUserinfo, runLaneGroup, runsAsScript, validationHostActor } from "./cloud-validation-host.mjs";
 
 export const WORKFLOW_NOT_RUN = "CLOUD_WORKFLOW_NOT_RUN";
 // The managed host's per-lane limit, for a job that sets none.
@@ -351,14 +351,52 @@ function runLane({ checkout, commit, definition, work, base = null, uid, gid, en
   return { exitCode, steps };
 }
 
+/**
+ * The lane record the shipped reporter reads: the lane's name, its exit code (or null and why it never ran), the
+ * reporter's diagnosis, and redacted tails. Step output stays in the stream files the agent redirects.
+ */
+export function laneRecord(name, { exitCode, notRun = null, laneLine = "" }) {
+  if (notRun !== null) {
+    const reason = redactUserinfo(notRun);
+    return { name, exitCode: null, notRun: reason, diagnosis: "lane was not run", stdoutTail: "", stderrTail: `${WORKFLOW_NOT_RUN} ${reason}` };
+  }
+  return { name, exitCode, diagnosis: exitCode === 0 ? "" : "process failed; see private stream evidence", stdoutTail: laneLine, stderrTail: "" };
+}
+
+/** The results directory the reporter reads: an existing private directory this process owns, as the reporter requires. */
+function resultsDirectory(directory) {
+  let info = null;
+  try { info = lstatSync(directory); } catch { /* refused below */ }
+  if (!path.isAbsolute(directory ?? "") || !info?.isDirectory() || info.uid !== process.getuid() || (info.mode & 0o077) !== 0) {
+    refuse("the results directory must be an existing private directory the runner owns");
+  }
+  return directory;
+}
+
+/**
+ * Write `<results>/<index>.json` (s6 lint smoke: nothing wrote it, the reporter refused, and the cloud agent must never
+ * write evidence itself). It is created 0600 under a pending name and linked into place, so the reporter never reads a
+ * partial record and an existing record is never replaced.
+ */
+export function writeLaneRecord(results, index, record) {
+  const target = path.join(results, `${index}.json`), pending = `${target}.${process.pid}.new`;
+  try {
+    writeFileSync(pending, JSON.stringify(record), { flag: "wx", mode: 0o600 });
+    linkSync(pending, target);
+  } finally { rmSync(pending, { force: true }); }
+}
+
 if (runsAsScript(import.meta.url)) {
   const plan = path.dirname(fileURLToPath(import.meta.url));
-  let work = null;
+  let work = null, lane = null, outcome, laneLine = "";
+  const log = (line) => { if (line.startsWith("CLOUD_WORKFLOW_LANE ")) laneLine = line; process.stdout.write(line + "\n"); };
   try {
-    const index = process.argv[2];
-    if (process.argv.length !== 3 || !/^(?:0|[1-9]\d*)$/.test(index ?? "")) refuse("run it as cloud-workflow-runner.mjs <lane index>");
+    const [index, results] = process.argv.slice(2);
+    if (process.argv.length !== 4 || !/^(?:0|[1-9]\d*)$/.test(index ?? "")) refuse("run it as cloud-workflow-runner.mjs <lane index> <results directory>");
+    resultsDirectory(results);
     const names = JSON.parse(readFileSync(path.join(plan, "lanes.json"), "utf8"));
     if (Number(index) >= names.length) refuse(`lane index ${index} is outside the plan's ${names.length} lanes`);
+    lane = { results, index, name: names[Number(index)] };
     const definition = JSON.parse(readFileSync(path.join(plan, `lane-${index}.json`), "utf8"));
     const { commit } = JSON.parse(Buffer.from(readFileSync(path.join(plan, "reporter-spec"), "utf8"), "base64url").toString("utf8"));
     const repairFile = path.join(plan, PACKAGE_REPAIR_FILE);
@@ -368,11 +406,19 @@ if (runsAsScript(import.meta.url)) {
     if (git(checkout, ["rev-parse", "HEAD"]).trim() !== commit) refuse("the checkout is not the validation commit");
     work = mkdtempSync(path.join(os.tmpdir(), "vibe-workflow-lane-"));
     chmodSync(work, 0o711);
-    process.exitCode = runWorkflowLane({ checkout, commit, definition, work, base: pullRequestBase(checkout), repaired: repair?.partlyInstalled ?? [] }).exitCode;
+    outcome = { exitCode: runWorkflowLane({ checkout, commit, definition, work, base: pullRequestBase(checkout), repaired: repair?.partlyInstalled ?? [], log }).exitCode };
   } catch (error) {
-    process.stderr.write(`${WORKFLOW_NOT_RUN} ${String(error.message).replace(/\s+/g, " ").slice(0, 300)}\n`);
-    process.exitCode = 78;
+    const reason = redactUserinfo(String(error.message).replace(/\s+/g, " ").slice(0, 300));
+    process.stderr.write(`${WORKFLOW_NOT_RUN} ${reason}\n`);
+    outcome = { exitCode: 78, notRun: reason };
   } finally {
     if (work) rmSync(work, { recursive: true, force: true });
+  }
+  process.exitCode = outcome.exitCode;
+  if (lane) {
+    try { writeLaneRecord(lane.results, lane.index, laneRecord(lane.name, { ...outcome, laneLine })); } catch (error) {
+      process.stderr.write(`${WORKFLOW_NOT_RUN} the runner could not write its lane record: ${error.code ?? error.message}\n`);
+      process.exitCode = 78;
+    }
   }
 }

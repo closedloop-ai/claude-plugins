@@ -149,11 +149,16 @@ export function rootSetupEnvironment(env, current, checkout) {
   return rootSetupGitEnvironment({ ...env, ...hostNetworkEnvironment(current) }, checkout);
 }
 
+/** `text` with each URL's userinfo (a credential) replaced by `<redacted>`. */
+export function redactUserinfo(text) {
+  return String(text).replace(/([a-z][\w+.-]*:\/\/)[^\s/@]+@/gi, "$1<redacted>@");
+}
+
 /** A short, credential-free account of a failed setup command for the lanes it stops. */
 function setupFailureDetail(result) {
   const text = [`exit ${result.exitCode ?? "none"}`, result.diagnosis, String(result.stdoutTail ?? "").trim().split("\n").at(-1),
     String(result.stderrTail ?? "").trim().slice(-300)].filter(Boolean).join("; ");
-  return text.replace(/([a-z][\w+.-]*:\/\/)[^\s/@]+@/gi, "$1<redacted>@").replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 600);
+  return redactUserinfo(text).replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 600);
 }
 
 /** The pnpm version the checkout's package.json pins in `packageManager`, or null. */
