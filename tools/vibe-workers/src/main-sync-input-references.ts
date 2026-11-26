@@ -1,9 +1,9 @@
+import { readGitInventory } from "../../../plugins/vibe/lib/vibe/scripts/git-inventory.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import picomatch from "picomatch";
-import { git } from "../../../plugins/vibe/lib/vibe/scripts/session-record.mjs";
 import { isPlanFile, planPrefixOf } from "./main-sync-plan-folder.js";
 import { isCommittedFile } from "./main-sync-committed-tree.js";
 import { MainSyncError } from "./main-sync-contracts.js";
@@ -64,7 +64,7 @@ export type ReferenceScanOptions = {
 export function committedInputReferences(root: string, matches: (file: string, reference: InputReference) => boolean,
   { unparsed, maxParsedBytes = MAX_PARSED_MODULE_BYTES, budgetMs = REFERENCE_SCAN_BUDGET_MS, progressMs = REFERENCE_SCAN_PROGRESS_MS,
     now = Date.now, report = (line) => process.stderr.write(`${line}\n`) }: ReferenceScanOptions) {
-  const modules = git(root, ["ls-tree", "-r", "-z", "-l", "HEAD"]).split("\0").filter(Boolean).flatMap((entry) => {
+  const modules = readGitInventory(root, ["ls-tree", "-r", "-z", "-l", "HEAD"]).split("\0").filter(Boolean).flatMap((entry) => {
     const tab = entry.indexOf("\t");
     const file = entry.slice(tab + 1);
     return isInputModulePath(file, root) ? [{ file, bytes: Number(entry.slice(0, tab).trim().split(/\s+/).at(-1)) }] : [];

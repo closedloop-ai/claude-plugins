@@ -27,6 +27,7 @@ VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
 DIFF_RULES = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "diff-rules.mjs"
 DIFF_RULES_REPO = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "diff-rules-repo.mjs"
+STORAGE_WRITE_RULES = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "storage-write-rules.mjs"
 CL_EXECUTE_PR = PLUGIN_ROOT / "skills" / "cl-execute" / "references" / "implementation-review-pr.md"
 
 
@@ -334,7 +335,7 @@ def test_new_text_uses_no_emdashes_or_double_hyphen_dashes() -> None:
 
 def test_diff_rules_run_inside_the_inventory_and_block() -> None:
     inventory = skill_split.read(INVENTORY)
-    rules = skill_split.read(DIFF_RULES)
+    rules = skill_split.read(DIFF_RULES) + skill_split.read(STORAGE_WRITE_RULES)
     assert 'import { runDiffRules, sessionInternalIds } from "./diff-rules.mjs";' in inventory
     assert "diffRulesClear: diffRulesBlocking.length === 0" in inventory
     assert 'const HANDOFF_ONLY_RULES = new Set(["frozen-render"]);' in inventory

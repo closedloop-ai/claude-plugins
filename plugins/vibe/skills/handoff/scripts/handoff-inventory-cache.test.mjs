@@ -33,11 +33,12 @@ function setup(t, slug = "cache") {
 
 const inventory = (fixture, ...args) => runNode(INVENTORY, ["--worktree", fixture.worktree, ...args], fixture.home);
 
-/** Plant a marker finding in every cached entry, so a reused entry is visible in the result. */
+/** Mark aggregate inventories so their reuse is visible independently of per-file findings. */
 function plantMarker(gitDir) {
   const dir = path.join(gitDir, "vibe-inventory-cache");
   for (const name of readdirSync(dir).filter((entry) => entry.endsWith(".json"))) {
     const entry = JSON.parse(readFileSync(path.join(dir, name), "utf8"));
+    if (entry.key.kind === "file-local-rules") continue;
     entry.value.diffRules.blocking.push({ rule: "planted", file: "apps/app/page.tsx", line: 1, problem: "planted", fix: "planted" });
     writeFileSync(path.join(dir, name), JSON.stringify(entry));
   }
@@ -225,4 +226,38 @@ test("ISS-14116: the cache keeps its newest 16 entries, and among entries tied o
   } finally {
     rmSync(gitDir, { recursive: true, force: true });
   }
+});
+
+test("a ticketed override admits an inventory whose only failure is diff rules, and never covers another failed check", () => {
+  const passing = { prBody: true, prEvidence: true, forbiddenPaths: true, diffRulesClear: false };
+  const blocked = { ok: false, blocking: passing, diffRules: { blocking: [{ rule: "frozen-render", file: "a.stories.tsx" }] } };
+  assert.equal(inventoryGateProblem(blocked, true), null, "only diff rules failed and the override is ticketed");
+  assert.match(inventoryGateProblem(blocked, false), /did not pass/, "without the override the same result blocks");
+  assert.match(inventoryGateProblem({ ...blocked, blocking: { ...passing, forbiddenPaths: false } }, true), /did not pass/, "another failed check stays blocking");
+  assert.match(inventoryGateProblem({ ...blocked, diffRules: { blocking: [] } }, true), /did not pass/, "a diff-rules failure with no named finding is not overridable");
+  assert.match(inventoryGateProblem({ ...blocked, blocking: { ...passing, prBody: false } }, true), /did not pass/, "the body check is never overridden");
+});
+
+// GR11-B1: item 144's leftover check lives in the inventory alone; main sync's own inputs pass ignored files (#446).
+test("AC-91 the inventory refuses an undeclared ignored Desktop run output, and a cached inventory never hides it", (t) => {
+  const fixture = setup(t, "leftover");
+  const exclude = path.resolve(fixture.worktree, git(fixture.worktree, ["rev-parse", "--git-common-dir"], fixture.home), "info", "exclude");
+  mkdirSync(path.dirname(exclude), { recursive: true });
+  writeFileSync(exclude, "test-results-e2e/\n", { flag: "a" });
+  const clean = inventory(fixture);
+  assert.equal(clean.json.inventoryCache, "miss");
+  assert.equal(Object.hasOwn(clean.json.blocking, "runLeftoversCleared"), false, "no leftover, no gate");
+  assert.equal(Object.hasOwn(clean.json, "runLeftovers"), false);
+  const leftover = "apps/desktop/test-results-e2e/leftover.json";
+  mkdirSync(path.join(fixture.worktree, path.dirname(leftover)), { recursive: true });
+  writeFileSync(path.join(fixture.worktree, leftover), "{}\n");
+  // A declared report in the same run directory is never a leftover.
+  writeFileSync(path.join(fixture.worktree, "apps/desktop/test-results-e2e/.last-run.json"), "{}\n");
+  const refused = inventory(fixture);
+  assert.equal(refused.json.inventoryCache, "hit", "an ignored file leaves the cached inventory's key unchanged");
+  assert.equal(refused.status, 1);
+  assert.equal(refused.json.ok, false);
+  assert.equal(refused.json.blocking.runLeftoversCleared, false);
+  assert.deepEqual(refused.json.runLeftovers, { paths: [leftover],
+    fix: "Declare each as a recipe report output, or have its test or build command clean it" });
 });

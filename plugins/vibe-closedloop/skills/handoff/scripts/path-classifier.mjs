@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { isRootTest, isSnapshot, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
 import { portableSurfaceChecker } from "./prototype-allowlist.mjs";
 import { prototypeRecipe } from "../../vibe/scripts/area-paths.mjs";
@@ -19,20 +20,31 @@ export const DEFAULT_PATH_POLICY = Object.freeze({ version: 1, allowedPrefixes: 
   forbiddenPrefixes: Object.freeze([]), forbiddenBasenames: Object.freeze([]), rootTests: true });
 export const DEFAULT_POLICY_SOURCE = "built-in-default";
 
+/** Identify the publisher authorized to edit its existing root instructions. */
+export function publisherRootInstructions(repository) {
+  return repository?.toLowerCase() === "closedloop-ai/claude-plugins";
+}
+
 /** Classify one changed or planned file through the canonical Vibe path policy. */
 export function classifyHandoffPath({
   file,
   phase,
   policy,
   repository = null,
+  declaration = null,
   prototype = null,
   portableSurfaceAllowed = false,
   pathCitations = [],
   retiredDeletion = false,
 }) {
-  if (isForbiddenHandoffPath(policy, file.path)) {
+  if (isForbiddenHandoffPath(policy, file)) {
+    if (publisherRootInstructions(repository) && file.path === PATH_POLICY_BASENAME && file.status === "M" &&
+      declaration && !policy.allowedFiles.includes("AGENTS.md") &&
+      isDeepStrictEqual(declaration, { ...policy, allowedFiles: [...policy.allowedFiles, "AGENTS.md"] })) {
+      return { disposition: PathDisposition.Allowed, reason: "publisher-root-instructions" };
+    }
     // Operator ruling, 2026-11-18: permit edits to the publisher repository's existing root AGENTS.md.
-    if (repository?.toLowerCase() === "closedloop-ai/claude-plugins" && file.path === "AGENTS.md" && file.status === "M") {
+    if (publisherRootInstructions(repository) && file.path === "AGENTS.md" && file.status === "M") {
       return { disposition: PathDisposition.Allowed, reason: "root-instruction-edit" };
     }
     return { disposition: PathDisposition.Forbidden, reason: "forbidden" };
@@ -66,11 +78,11 @@ export function classifyHandoffPath({
   return { disposition: PathDisposition.Outside, reason: "outside-allowed" };
 }
 
-/** Whether the repository declaration forbids this literal path. */
-function isForbiddenHandoffPath(policy, filePath) {
+/** A declaration can admit edits to an exact protected basename. Deletions, protected directories and the declaration stay protected. */
+function isForbiddenHandoffPath(policy, { path: filePath, status }) {
   return path.posix.basename(filePath) === PATH_POLICY_BASENAME ||
     Boolean(policy?.forbiddenPrefixes.some((prefix) => filePath.startsWith(prefix))) ||
-    Boolean(policy?.forbiddenBasenames.includes(path.posix.basename(filePath)));
+    Boolean(policy?.forbiddenBasenames.includes(path.posix.basename(filePath)) && (status !== "M" || !policy.allowedFiles.includes(filePath)));
 }
 
 function isAllowedSourcePath({ filePath, policy, prototype, portableSurfaceAllowed }) {

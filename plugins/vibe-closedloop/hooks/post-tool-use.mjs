@@ -5,12 +5,16 @@
 //
 // Usage (hook): reads the PostToolUse JSON on stdin; prints a notice or nothing.
 
+import { observeTicketProject } from "./ticket-project-guard.mjs";
 import { contextGuard } from "./context-guard.mjs";
 import { mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
 import { isEntryPoint } from "../shared/plugin-roots.mjs";
 
 /** The guards every tool call runs after it finishes, in order. */
-export const POST_TOOL_USE_GUARDS = Object.freeze([{ name: "context-guard", run: contextGuard, activated: true }]);
+export const POST_TOOL_USE_GUARDS = Object.freeze([
+  { name: "ticket-project-observation", run: observeTicketProject },
+  { name: "context-guard", run: contextGuard, activated: true },
+]);
 
 /** The PostToolUse output for `event`, or null; `report(line)` receives each failing guard's error. */
 export function postToolUse(event, report) {

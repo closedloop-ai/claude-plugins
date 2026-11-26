@@ -1,11 +1,13 @@
+import { tmpdir } from "node:os";
+import { bindChat } from "../../../lib/fleet-orchestrator/scripts/chat-binding.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { runDiffRules, storyId } from "./diff-rules.mjs";
-import { frozenInputs, frozenRenders, frozenStoryFiles, selectFrozenStoryFiles } from "./frozen-render.mjs";
+import { frozenHeavySlots, frozenInputs, frozenRenders, frozenStoryFiles, selectFrozenStoryFiles } from "./frozen-render.mjs";
 import { frozenGate, GateExit } from "./frozen-render-gate.mjs";
 import { BASE, BLUE, fakeBrowser, GREY, HEAD, passes, sandbox, shot } from "./frozen-render-test-fixture.mjs";
 import { isFrozenStory, run } from "./diff-rules-test-fixture.mjs";
@@ -147,7 +149,7 @@ test("the gate CLI prints exactly one line: PASS for a diff no frozen story rend
   const unbound = spawnSync(process.execPath, [GATE, "--repo", checkout, "--base", base], { encoding: "utf8", env: unboundEnv });
   assert.equal(unbound.status, 2, unbound.stdout + unbound.stderr);
   assert.equal(unbound.stdout, "FROZEN ERROR no vibe provider layout is bound; selection cannot be computed\n");
-  const usage = spawnSync(process.execPath, [GATE, "--repo", checkout], { encoding: "utf8", env });
+  const usage = spawnSync(process.execPath, [GATE, "--base", base], { encoding: "utf8", env });
   assert.equal(usage.status, 2);
   assert.equal(usage.stdout.split("\n").length, 2);
   assert.match(usage.stdout, /^FROZEN ERROR Usage: frozen-render-gate\.mjs/);
@@ -199,6 +201,17 @@ test("with no provider layout bound the gate refuses with exit 2 instead of pass
   assert.deepEqual(result, { exitCode: GateExit.Error, line: "FROZEN ERROR no vibe provider layout is bound; selection cannot be computed" });
   const unbound = await frozenGate({ repo: "/repo", base: "abc", out: "/out", changeLog: "/log" }, { layout: () => undefined, select: () => [] });
   assert.equal(unbound.exitCode, GateExit.Error);
+});
+
+test("standalone frozen rendering reads the slots of the current chat's bound program", t => {
+  const root = mkdtempSync(path.join(tmpdir(), "frozen-binding-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, "fleet"), program = path.join(home, "programs", "p");
+  mkdirSync(program, { recursive: true });
+  const env = { HOME: root, CODEX_THREAD_ID: "frozen-chat" };
+  bindChat("frozen-chat", home, "p", env);
+  writeFileSync(path.join(home, "config.env"), "HEAVY_SLOTS=2\n");
+  assert.equal(frozenHeavySlots(env), "2");
 });
 
 test("ISS-14682 AC1: the gate records an authorized frozen story move with its ticket and criterion and does not select it", async (t) => {

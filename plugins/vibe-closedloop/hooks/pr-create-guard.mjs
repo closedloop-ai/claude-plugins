@@ -16,7 +16,6 @@ import { commandCalls, ghPrAt, UNKNOWN_VALUE } from "./command-calls.mjs";
 import { deny, eventCwd } from "./hook-dispatch.mjs";
 import { inVibeSession } from "./foreground-guard.mjs";
 import { gatePath, handoffGateProblem, resolvePrBase } from "../lib/handoff/scripts/handoff-gate-check.mjs";
-import { evidenceFingerprint } from "../lib/handoff/scripts/handoff-evidence.mjs";
 import { cloudPrProblem } from "../lib/vibe/scripts/cloud-worker.mjs";
 import { githubRepository } from "../lib/vibe/scripts/github-remote.mjs";
 import { upstreamBranchName } from "../lib/vibe/scripts/upstream-branch.mjs";
@@ -27,11 +26,9 @@ import { changedPaths, declaresUiPaths, visualQaFindingsProblems, visualQaRequir
 import { deliveryPlacementProblem, deliveryRepository } from "../lib/fleet-orchestrator/scripts/delivery-placement.mjs";
 import { validChat } from "../lib/fleet-orchestrator/scripts/chat-binding.mjs";
 import os from "node:os";
-import { BodyFileError, gateOverrideEntries, readPrBodyFile } from "../lib/handoff/scripts/gate-override.mjs";
+import { BodyFileError, OVERRIDE_CHECKS, overriddenChecks, readPrBodyFile } from "../lib/handoff/scripts/gate-override.mjs";
 
 const VIBE_BRANCH = "vibe/";
-/** The checks an override line can name; anything a line does not name stays enforced. */
-const OVERRIDE_CHECKS = Object.freeze({ HeadOwnership: "head ownership", SessionRecord: "session record", HandoffGate: "handoff gate", VisualQa: "visual QA" });
 const overrideHint = (check) => `if every real check and review passed and known Vibe gate bugs are the only blocker (operator ruling 2026-11-08), add \`Vibe gate override: <ticket>[, <ticket>...]: ${check}: <reason>\` naming each bug ticket and the check it overrides to the PR body file`;
 const LOCAL_RETRY = "run gh pr create on this machine from a checkout of the target repository so the guard can find the session that owns the head";
 const LITERAL_CWD_RETRY = "cd to a literal checkout path, then run gh pr create";
@@ -251,29 +248,12 @@ function pushedUpstreamBranch(cwd, head) {
 }
 
 /**
- * The checks the PR body's override lines cover. A bounded, explicit declaration names the blocking Vibe issue, as
- * a reference the session's tracker recognizes (with a tracker bound only its issue, `data.tickets.issuePattern`;
- * with none a GitHub issue `#<number>` or an issue URL, `ticketReference`), then the OVERRIDE_CHECKS it overrides,
- * then a nonempty reason. A line naming no check, or any name that is not a check, covers nothing.
- */
-function overriddenChecks(bodyFile, binding) {
-  const covered = new Set();
-  if (!bodyFile) return covered;
-  const known = new Map(Object.values(OVERRIDE_CHECKS).map((check) => [check.toLowerCase(), check]));
-  for (const { reason } of gateOverrideEntries(readPrBodyFile(bodyFile), binding)) {
-    const named = /^(?<checks>[^:]+):\s*\S/.exec(reason)?.groups.checks.split(",").map((check) => check.trim().toLowerCase()) ?? [];
-    if (named.length > 0 && named.every((check) => known.has(check))) for (const check of named) covered.add(known.get(check));
-  }
-  return covered;
-}
-
-/**
  * Why the PR from `cwd` (head `head`, or the worktree's HEAD) to `base` lacks visual QA, or null: a diff under the
  * repository's UI paths needs the findings file the handoff gate in `witnessWorktree` bound, unchanged since, for
  * this head's tree; with no witness (an override path), the `inlineFindings` file the command names. A diff the
  * guard cannot read is treated as needing it.
  */
-function prVisualQaProblem({ cwd, head = null, base, binding, witnessWorktree = null, inlineFindings = null }) {
+function prVisualQaProblem({ cwd, head = null, base, binding, witnessWorktree = null, inlineFindings = null, bodyFile }) {
   if (!declaresUiPaths(binding)) return null;
   const run = (...args) => git(cwd, args);
   let headCommit;
@@ -286,11 +266,12 @@ function prVisualQaProblem({ cwd, head = null, base, binding, witnessWorktree = 
   }
   if (!verdict.required) return null;
   let findings = null;
+  let expected;
   try {
     const witness = witnessWorktree ? gatePath(witnessWorktree) : null;
     const saved = witness && existsSync(witness) ? JSON.parse(readFileSync(witness, "utf8")).visualQa?.findings : null;
     if (saved?.path) {
-      if (JSON.stringify(evidenceFingerprint(saved.path)) !== JSON.stringify(saved)) return `visual QA is required (${verdict.reason}): handoff visual QA findings changed since the gate`;
+      expected = saved;
       findings = saved.path;
     }
   } catch {
@@ -302,7 +283,8 @@ function prVisualQaProblem({ cwd, head = null, base, binding, witnessWorktree = 
       ? `visual QA is required (${verdict.reason}): the handoff gate bound no visual QA findings; ${VISUAL_QA_STEP}, then rerun the handoff gate with --visual-qa`
       : `visual QA is required (${verdict.reason}): no visual QA findings were named; ${VISUAL_QA_STEP}, then rerun as VISUAL_QA_FINDINGS=<findings.json> gh pr create ... with findings for the PR head`;
   }
-  const problems = headCommit ? visualQaFindingsProblems(findings, headCommit, run, binding) : ["the PR head cannot be read"];
+  const problems = headCommit ? visualQaFindingsProblems(findings, headCommit, run, binding,
+    { paths: verdict.paths, body: bodyFile ? readPrBodyFile(bodyFile) : "" }, witnessWorktree, expected) : ["the PR head cannot be read"];
   return problems.length ? `visual QA is required (${verdict.reason}): ${problems.join("; ")}` : null;
 }
 
@@ -363,7 +345,7 @@ export function prCreateGuard(event, home = os.homedir()) {
     }
     if (target?.nonVibe) continue;
     let covered;
-    try { covered = overriddenChecks(call.bodyFile, recordedBinding({ worktree: call.cwd, conversation: event?.session_id ?? null, home })); }
+    try { covered = overriddenChecks(call.bodyFile ? readPrBodyFile(call.bodyFile) : "", recordedBinding({ worktree: call.cwd, conversation: event?.session_id ?? null, home })); }
     catch (error) {
       if (isProviderBroken(error)) throw error;
       if (error instanceof BodyFileError) return refuse(error.message, "pass one literal readable path to --body-file or -F, then rerun gh pr create");
@@ -372,7 +354,7 @@ export function prCreateGuard(event, home = os.homedir()) {
     const override = (check) => covered.has(check);
     const missingVisualQa = (worktree, head, witnessWorktree = null) => {
       if (override(OVERRIDE_CHECKS.VisualQa)) return null;
-      const problem = prVisualQaProblem({ cwd: worktree, head, base: call.base, witnessWorktree, inlineFindings: call.findings,
+      const problem = prVisualQaProblem({ cwd: worktree, head, base: call.base, witnessWorktree, inlineFindings: call.findings, bodyFile: call.bodyFile,
         binding: recordedBinding({ worktree, conversation: event?.session_id ?? null, home }) });
       return problem ? refuse(problem, overrideHint(OVERRIDE_CHECKS.VisualQa)) : null;
     };

@@ -1,6 +1,8 @@
+import { capturedJson } from "./captured-json.mjs";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync,
   rmdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { cleanupDir, dockerResult, dockerRun, regularJson, writeAtomic } from './owned-state.mjs';
 
 const BUILDER_NAME = 'vibe-build';
@@ -17,7 +19,7 @@ function inspectBuilderPart(kind, name, run) {
     if (result.status === 1 && message === absent) return null;
     throw new Error('Builder ' + kind + ' inspect failed: ' + message);
   }
-  const value = JSON.parse(String(result.stdout ?? ''))[0];
+  const value = capturedJson(String(result.stdout ?? ''))[0];
   const id = kind === 'container' ? value?.Id : value?.Name;
   const created = kind === 'container' ? value?.Created : value?.CreatedAt;
   if ((kind === 'container' && (!/^[a-f0-9]{64}$/i.test(id ?? '') || value?.Name !== '/' + name))
@@ -158,6 +160,7 @@ export function installOwnedBuildShim(record, dockerBinary) {
   const overlayFile = path.join(record.runState.path, 'owned-images.json');
   writeFileSync(overlayFile, JSON.stringify({ services: {} }), { mode: 0o600, flag: 'wx' });
   const source = '#!' + process.execPath + '\n' + `
+const {capturedJson}=require(${JSON.stringify(fileURLToPath(new URL('./captured-json.mjs', import.meta.url)))});
 const {spawnSync}=require('node:child_process');
 const fs=require('node:fs');
 const docker=${JSON.stringify(dockerBinary)};
@@ -174,7 +177,7 @@ if(index>=0&&args[index]==='build'){
  const prefix=args.slice(0,index);
  const config=spawnSync(docker,[...prefix,'--profile','*','config','--format','json'],{encoding:'utf8',env:process.env});
  if(config.error||config.status!==0)process.exit(127);
- const services=JSON.parse(config.stdout).services;
+ const services=capturedJson(config.stdout).services;
  selected=args.slice(index+1).filter(name=>Object.hasOwn(services,name));
  if(!selected.length)process.exit(127);
  const overlay=JSON.parse(fs.readFileSync(overlayFile,'utf8'));
@@ -201,7 +204,7 @@ if(selected.length){
    if(result.status===0){fs.appendFileSync(observations,JSON.stringify({phase:'missing',service:name,tag})+'\\n');process.exit(127)}
    continue;
   }
-  const image=JSON.parse(inspected.stdout)[0];
+  const image=capturedJson(inspected.stdout)[0];
   if(!/^sha256:[a-f0-9]{64}$/i.test(image?.Id||'')||!Number.isFinite(Date.parse(image?.Created||'')))process.exit(127);
   fs.appendFileSync(observations,JSON.stringify({phase:'observed',service:name,tag,id:image.Id,created:image.Created,success:result.status===0})+'\\n');
  }

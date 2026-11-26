@@ -106,6 +106,31 @@ export function git(cwd, args, home) {
 }
 
 /**
+ * The argv that runs `command args`. As root, it runs them with a private, empty /etc/sudoers.d, so the workflow lane
+ * runner's real sudo grant works for the actor without touching the host's directory, and it writes the directory's
+ * entries to `leftover` after the command ends. Otherwise it runs them unchanged. A root run needs sudo and a private
+ * mount namespace (a container started with --cap-add SYS_ADMIN).
+ */
+export function privateSudoers(command, args, leftover = "/dev/null") {
+  if (process.getuid?.() !== 0) return [command, args];
+  const script = 'out=$1; shift; mount -t tmpfs -o mode=0755 vibe-test-sudoers /etc/sudoers.d || exit 70; "$@"; status=$?; ls -A /etc/sudoers.d > "$out"; exit $status';
+  return ["unshare", ["--mount", "--propagation", "private", "sh", "-c", script, "private-sudoers", leftover, command, ...args]];
+}
+
+/**
+ * Stand-ins for dpkg and dpkg-query in `directory`: each records its arguments in `calls` and exits 0, so a test that
+ * runs the host's package repair as root never configures a real package. Put `bin` first on the PATH.
+ */
+export function fakeDpkg(directory) {
+  const bin = path.join(directory, "fake-dpkg-bin"), calls = path.join(directory, "fake-dpkg-calls");
+  mkdirSync(bin, { recursive: true });
+  for (const name of ["dpkg", "dpkg-query"]) {
+    writeFileSync(path.join(bin, name), `#!/bin/sh\necho "${name} $*" >> ${JSON.stringify(calls)}\n`, { mode: 0o755 });
+  }
+  return { bin, calls };
+}
+
+/**
  * Creates a bare origin with one commit on main (the given files) and clones
  * it to `checkout`. The clone's origin URL is then pointed at `remoteUrl` for
  * fetch display while pushes and fetches still use the local bare repo.
@@ -168,6 +193,7 @@ export function runNode(script, args, home, extraEnv = {}, input, { cwd = home }
   if (result.error) {
     throw result.error;
   }
+  if (!result.stdout.trim()) throw new Error(`${path.basename(script)} exited ${result.status} without JSON: ${result.stderr}`);
   return { status: result.status, json: JSON.parse(result.stdout), stderr: result.stderr };
 }
 
@@ -203,7 +229,8 @@ if (args[0] === 'exec' && args[1] === 'node') {
     const grant = { worktree, agentRoot: pluginRoot, agentName: primaryOwner ? "vibe-change-worker" : "vibe-environment-worker",
       workerId: primaryOwner?.workerId ?? `node-dispatch-helper-${++sequence}`,
       requestId: primaryOwner?.requestId ?? requestId ?? `node-dispatch-${sequence}`, mode: "record", recordAction: action,
-      exclusiveRecordTurn: true, ...(primaryOwner ? { primaryOwner: { workerId: primaryOwner.workerId, lease: primaryOwner.lease } } : {}),
+      exclusiveRecordTurn: true, ...(action === "create" ? { publicationPurpose: "build", publicationStep: "prepare" } : {}),
+      ...(primaryOwner ? { primaryOwner: { workerId: primaryOwner.workerId, lease: primaryOwner.lease } } : {}),
       ...(primaryOwner?.transactionId ? { mainSyncTransactionId: primaryOwner.transactionId } : {}),
       ...(continuations ? { mainSyncRequestContinuations: continuations } : {}) };
     if (!grant.mainSyncTransactionId && action !== "create") {
@@ -212,16 +239,18 @@ if (args[0] === 'exec' && args[1] === 'node') {
     const acquired = invoke(state, ["acquire-record"], grant);
     const context = { runtime: "codex", worktree, agentName: grant.agentName, workerId: grant.workerId,
       requestId: grant.requestId, mode: "record", recordAction: action, lease: acquired.lease,
+      ...(grant.publicationPurpose ? { publicationPurpose: grant.publicationPurpose } : {}),
       ...(grant.mainSyncTransactionId ? { mainSyncTransactionId: grant.mainSyncTransactionId } : {}),
       ...(continuations ? { mainSyncRequestContinuations: continuations } : {}) };
-    return { context, finish: () => invoke(state, ["release-record"], { ...grant, lease: acquired.lease,
-      stoppedTurn: { runtime: "codex", workerId: grant.workerId, requestId: grant.requestId, lease: acquired.lease, state: "completed" } }) };
+    return { context, finish: (result) => invoke(state, ["release-record"], { ...grant, lease: acquired.lease,
+      stoppedTurn: { runtime: "codex", workerId: grant.workerId, requestId: grant.requestId, lease: acquired.lease, state: "completed", result } }) };
   };
   const prepare = turn("create");
-  let transactionId;
-  try { transactionId = invoke(path.join(scripts, "commit-worktree.mjs"), ["--prepare-main-sync", "--worktree", worktree],
-    { context: prepare.context }).mainSync.transactionId; }
-  finally { prepare.finish(); }
+  let prepared;
+  try { prepared = invoke(path.join(scripts, "commit-worktree.mjs"), ["--prepare-main-sync", "--worktree", worktree],
+    { context: prepare.context }); }
+  finally { prepare.finish(prepared ? { status: "DONE", data: { mainSyncResult: prepared } } : { status: "BLOCKED" }); }
+  const { transactionId } = prepared.mainSync;
   const primary = { worktree, workerId: "node-dispatch-primary", requestId: "node-dispatch-validation" };
   invoke(state, ["register"], { worktree, workerId: primary.workerId, runtime: "codex", agentRoot: pluginRoot,
     agentName: "vibe-change-worker", capabilities: [] });
@@ -327,4 +356,11 @@ export function bindProviderInProcess(after) {
     fixture.cleanup();
   });
   return fixture;
+}
+
+/** Write a relative fixture path, creating its parent directories. */
+export function writeCheckoutFile(worktree, file, content) {
+  const absolute = path.join(worktree, file);
+  mkdirSync(path.dirname(absolute), { recursive: true });
+  writeFileSync(absolute, content);
 }

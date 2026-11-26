@@ -65,10 +65,34 @@ export function previewUrlFor(environmentUrl, slug) {
   }
 }
 
+/** Check the intended viewer's HTTPS access without authenticating or following redirect URLs. */
+export async function prototypeViewerAccess(url, probe = fetch) {
+  try {
+    const response = await probe(url, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(8_000) });
+    if (response.ok) return "public";
+    const location = response.headers.get("location");
+    if (location) {
+      const redirect = new URL(location, url);
+      if (redirect.hostname === "vercel.com" && redirect.pathname.startsWith("/sso-api")) return "vercel-team";
+    }
+    return "unverified";
+  } catch {
+    return "unverified";
+  }
+}
+
+/** The access instruction to share with the intended viewer. */
+function accessNote(access) {
+  if (access === "vercel-team") return "To open this preview, sign in to Vercel with the team's account. Ask the team for access if you don't have it.";
+  return access === "unverified" ? "I could not verify whether a teammate can open this preview. Check that they have access before sharing it." : undefined;
+}
+
 export function createPrototypeShare({
   run = execCommand,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now = () => Date.now(),
+  checkAccess,
+  progress = () => {},
   repo = null,
   write = (file, text) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, text); },
 } = {}) {
@@ -99,7 +123,12 @@ export function createPrototypeShare({
   /** Waits for the exact SHA's prototypes deployment to be ready: `{ ready, environmentUrl, deploymentId }` or `{ blocked, ... }`. */
   async function waitReady({ sha, pollSeconds, deadlineMs }) {
     let evidence = { reason: "no prototypes deployment for the SHA appeared" };
+    let nextUpdate = now();
     for (;;) {
+      if (now() >= nextUpdate) {
+        progress("I'm waiting for the preview to be ready.");
+        nextUpdate = now() + 60_000;
+      }
       const listed = deploymentsFor(sha);
       if (listed.error) return { blocked: "reading deployments failed", evidence: { detail: listed.error } };
       const deployment = prototypesDeployment(listed.deployments);
@@ -123,7 +152,14 @@ export function createPrototypeShare({
     if (plans.ok !== true) return { status: Status.Blocked, problems: plans.committedLocalPlans ?? [plans.error ?? "committed local plans"] };
     const admitted = sessions(["main-sync-share", "--worktree", worktree], { input: stdin });
     if (admitted.ok !== true) return { status: admitted.status ?? Status.Blocked, error: admitted.error ?? "main-sync-share refused" };
-    if (admitted.mainSync?.alreadyPublished === true) return { status: Status.Done, alreadyPublished: true, pushed: false, requested: false };
+    if (admitted.mainSync?.alreadyPublished === true) {
+      const saved = sessions(["show", "--worktree", worktree]);
+      const publication = (saved.session ?? saved).prototype;
+      if (!publication?.previewUrl) return { status: Status.Done, alreadyPublished: true, pushed: false, requested: false };
+      const access = checkAccess ? await checkAccess(publication.previewUrl) : publication.access;
+      return { status: Status.Done, alreadyPublished: true, pushed: false, requested: false, ...publication,
+        ...(access ? { access, accessNote: accessNote(access) } : {}) };
+    }
     const pushed = sessions(["main-sync-push", "--worktree", worktree], { input: stdin });
     if (pushed.ok !== true) return { status: pushed.status ?? Status.Blocked, error: pushed.error ?? "main-sync-push refused" };
     const pushedAt = now();
@@ -137,10 +173,12 @@ export function createPrototypeShare({
     if (!previewUrl) return { status: Status.Blocked, error: "the ready deployment has no usable environment_url", deployedCommit: sha, deploymentId: waited.deploymentId };
     const gitDir = stdoutOf(run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]), "git rev-parse --absolute-git-dir").trim();
     const file = path.join(gitDir, "vibe-prototype-result.json");
-    write(file, `${JSON.stringify({ slug, previewUrl, deployedCommit: sha, verifiedAt: new Date(now()).toISOString() }, null, 2)}\n`);
+    const access = checkAccess ? await checkAccess(previewUrl) : undefined;
+    write(file, `${JSON.stringify({ slug, previewUrl, deployedCommit: sha, verifiedAt: new Date(now()).toISOString(), ...(access ? { access } : {}) }, null, 2)}\n`);
     const recorded = sessions(["prototype-result", "--worktree", worktree, "--file", file]);
     if (recorded.ok !== true) return { status: Status.Blocked, error: recorded.error ?? "prototype-result refused the result", deployedCommit: sha, previewUrl };
-    return { status: Status.Done, previewUrl, deployedCommit: sha, slug, deploymentId: waited.deploymentId };
+    return { status: Status.Done, previewUrl, deployedCommit: sha, slug, deploymentId: waited.deploymentId,
+      ...(access ? { access, accessNote: accessNote(access) } : {}) };
   }
 
   return { share, waitReady };
@@ -150,7 +188,10 @@ async function main(argv) {
   const { values } = parseArgs({ args: argv, options: { worktree: { type: "string" }, "poll-seconds": { type: "string" }, "deadline-minutes": { type: "string" } } });
   if (!values.worktree) throw new Error("--worktree is required.");
   const stdin = process.stdin.isTTY ? undefined : readFileSync(0, "utf8");
-  return createPrototypeShare().share({
+  return createPrototypeShare({
+    checkAccess: prototypeViewerAccess,
+    progress: (message) => process.stderr.write(`${message}\n`),
+  }).share({
     worktree: path.resolve(values.worktree), stdin,
     ...(values["poll-seconds"] ? { pollSeconds: Number(values["poll-seconds"]) } : {}),
     ...(values["deadline-minutes"] ? { deadlineMinutes: Number(values["deadline-minutes"]) } : {}),

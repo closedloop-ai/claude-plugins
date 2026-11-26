@@ -388,6 +388,13 @@ test("pooled lanes: the records come back in lane-report order whatever finished
   assert.match(locked[0], /--command pnpm test:e2e/);
 });
 
+test("serial compose verification takes the same machine lock as pooled verification", () => {
+  const calls = [];
+  const fixture = harness({ files: POOL_FILES, calls, extra: [["run-bounded.mjs 300 pnpm test:lanes", ok(POOL_REPORT)], ["pre-pr-lanes.mjs check", ok(POOL_CHECK)]] });
+  fixture.controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
+  assert.ok(calls.some(({line}) => line.includes("e2e-lock.mjs run --head") && line.includes("pnpm test:e2e")));
+});
+
 test("pooled and serial give the same checks and the same ok when the same lanes fail, and a failed lane makes ok false", async () => {
   const failing = { "pnpm test:ci": fail("1 failed", 1) };
   const pooled = await pooledHarness({ results: failing }).controller.verifyPooled({ worktree: "/wt", head: HEAD, useCache: false });

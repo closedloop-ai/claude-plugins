@@ -21,8 +21,10 @@
 // Evidence that cites a targeted-tests ruling from the program's rulings file
 // (targeted-tests-ruling.mjs) needs that file as `--rulings`; it is bound too.
 
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
+import { readGitInventory } from "../../../lib/vibe/scripts/git-inventory.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -31,13 +33,14 @@ import { isEntryPoint } from "../../../shared/plugin-roots.mjs";
 import { reusableReviewRoles } from "./review-impact.mjs";
 
 const { sameSource, sourceIdentity } = await vibeCore("lib/vibe/scripts/tested-head.mjs");
-const { evidenceFingerprint } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
+const { evidenceFingerprint, readEvidence } = await vibeCore("lib/handoff/scripts/handoff-evidence.mjs");
 const { reviewReceiptProblems } = await vibeCore("lib/handoff/scripts/review-receipts.mjs");
-const { EVIDENCE_KEYS, checkedMergeProblem, gatePath, memberNameProblems, mergeTargets, pathCitationProblem, readReviewReceipts, reviewFindingProblems, sessionMembers } = await vibeCore("lib/handoff/scripts/handoff-gate-check.mjs");
+const { EVIDENCE_KEYS, checkedMergeProblem, gatePath, memberNameProblems, mergeTargets, pathCitationProblem, readReviewEvidence, reviewFindingProblems, sessionMembers } = await vibeCore("lib/handoff/scripts/handoff-gate-check.mjs");
 const { exitOnProviderBroken, sessionBinding } = await vibeCore("lib/vibe/scripts/provider.mjs");
-const { changedPaths, visualQaFindingsProblems, visualQaRequired } = await vibeCore("lib/vibe/scripts/required-visual-qa.mjs");
+const { changedPaths, readVisualQaFindings, visualQaRequired } = await vibeCore("lib/vibe/scripts/required-visual-qa.mjs");
 const { placementLineProblem } = await vibeCore("lib/fleet-orchestrator/scripts/delivery-placement.mjs");
 const { readSessionRecord } = await vibeCore("lib/vibe/scripts/session-record.mjs");
+const { OVERRIDE_CHECKS, overriddenChecks, readPrBodyEvidence } = await vibeCore("lib/handoff/scripts/gate-override.mjs");
 
 /** Refresh the actual main branch before a publication witness can be recorded. */
 function fetchCurrentMain(worktree) {
@@ -54,8 +57,7 @@ export function unitReviewArgs({ review, prds = [], plans = [] }) {
 }
 
 /** Parse verifier evidence without allowing duplicate importer envelopes to disappear in JSON.parse. */
-export function parseRunsEvidence(file) {
-  const bytes = readFileSync(file, "utf8");
+export function parseRunsEvidence(file, bytes = readEvidence(file).text) {
   let index = 0;
   const whitespace = () => { while (/\s/.test(bytes[index] ?? "")) index += 1; };
   const string = () => {
@@ -122,12 +124,20 @@ export function parseRunsEvidence(file) {
 }
 
 /** Why a pull-request inventory result cannot be recorded as passing, or null; a body-only result is never inventory evidence. */
-export function inventoryGateProblem(inventory) {
+export function inventoryGateProblem(inventory, allowDiffRuleOverride = false) {
   if (inventory.inventory === null) return `pull-request inventory is missing: ${inventory.inventoryProblem}`;
-  if (!inventory.ok || !inventory.blocking?.prBody || !inventory.blocking?.prEvidence) {
+  if (!inventory.blocking?.prBody || !inventory.blocking?.prEvidence
+    || (!inventory.ok && !(allowDiffRuleOverride && onlyDiffRulesBlocked(inventory)))) {
     return "pull-request inventory did not pass body and verifier evidence checks";
   }
   return null;
+}
+
+/** A ticketed inventory override does not cover any other failed check or missing result. */
+function onlyDiffRulesBlocked(inventory) {
+  return inventory.blocking?.diffRulesClear === false
+    && Array.isArray(inventory.diffRules?.blocking) && inventory.diffRules.blocking.length > 0
+    && Object.entries(inventory.blocking).every(([name, passed]) => name === "diffRulesClear" || passed === true);
 }
 
 /**
@@ -135,15 +145,16 @@ export function inventoryGateProblem(inventory) {
  * under the repository's UI paths needs `findings` for this source's tree (lib/vibe/scripts/required-visual-qa.mjs). Uncommitted
  * UI files cannot be covered, because visual QA runs on a commit.
  */
-export function visualQaGate(worktree, baseOid, head, findings, binding = sessionBinding(worktree)) {
+export function visualQaGate(worktree, baseOid, head, findings, binding = sessionBinding(worktree), body) {
   const git = (...args) => execFileSync("git", ["-C", worktree, ...args], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).trim();
   const listed = (...args) => git(...args, "-z").split("\0").filter(Boolean);
-  const uncommitted = [...listed("diff", "--name-only", "--no-renames", "HEAD"), ...listed("ls-files", "--others", "--exclude-standard")];
+  const uncommitted = [...listed("diff", "--name-only", "--no-renames", "HEAD"), ...readGitInventory(worktree, ["ls-files", "--others", "--exclude-standard", "-z"]).trim().split("\0").filter(Boolean)];
   const verdict = visualQaRequired(binding, [...changedPaths(git, baseOid, head), ...uncommitted]);
   if (!verdict.required) return { ...verdict, problems: [] };
   const open = visualQaRequired(binding, uncommitted).paths;
   const problems = open.length ? [`uncommitted UI changes (${open.join(", ")}) have no visual QA: commit them, then run visual QA on that head`] : [];
-  return { ...verdict, problems: [...problems, ...visualQaFindingsProblems(findings, head, git, binding)] };
+  const checked = readVisualQaFindings(findings, head, git, binding, { paths: verdict.paths, body }, worktree);
+  return { ...verdict, fingerprint: checked.fingerprint, problems: [...problems, ...checked.problems] };
 }
 
 /** Run the canonical inventory with PR body and verifier evidence before recording readiness. */
@@ -154,45 +165,71 @@ export function recordHandoffGate({ worktree, body, runs, ticket, rulings, base,
   const targets = mergeTargets(worktree, base);
   const mergeProblem = checkedMergeProblem(worktree, targets);
   if (mergeProblem) throw new Error(mergeProblem);
+  const session = readSessionRecord(worktree);
+  if (session?.prBodyStale) throw new Error(`PR body is stale after a scope change (${session.prBodyStale.reason}); refresh it with env-ctl pr-update before recording readiness`);
   const source = sourceIdentity(worktree);
-  const parsedReceipts = readReviewReceipts(receipts);
-  const runsEvidence = parseRunsEvidence(runs);
+  const bodyEvidence = readPrBodyEvidence(body);
+  const bodyText = bodyEvidence.text;
+  const binding = sessionBinding(worktree);
+  const allowDiffRuleOverride = overriddenChecks(bodyText, binding).has(OVERRIDE_CHECKS.HandoffGate);
+  const receiptEvidence = readReviewEvidence(receipts);
+  const parsedReceipts = receiptEvidence.map((entry) => entry.receipt);
+  const checkedRuns = readEvidence(runs);
+  const runsEvidence = parseRunsEvidence(runs, checkedRuns.text);
   const reusableRoles = reusableReviewRoles(worktree, parsedReceipts, runsEvidence.qaImpactRequest);
-  const verified = reviewReceiptProblems(parsedReceipts, source, { reusableRoles });
+  const verified = reviewReceiptProblems(parsedReceipts, source, { reusableRoles, worktree });
   const reviewProblems = [...verified.problems, ...reviewFindingProblems({ source, findings: verified.findings }, source)];
   if (reviewProblems.length) throw new Error(reviewProblems.join("; "));
-  const visual = visualQaGate(worktree, targets.base.oid, source.head, visualQa);
+  const visual = visualQaGate(worktree, targets.base.oid, source.head, visualQa, binding, bodyText);
   if (visual.problems.length) throw new Error(`visual QA is required (${visual.reason}): ${visual.problems.join("; ")}`);
   if (ticket && (!audit || !matrix)) throw new Error("criteria audit and matrix are required with a ticket");
   const memberTickets = sessionMembers(worktree);
-  const naming = memberNameProblems(memberTickets, title, readFileSync(body, "utf8"));
+  const naming = memberNameProblems(memberTickets, title, bodyText);
   if (naming.length) throw new Error(naming.join("; "));
   // The PR-create hook refuses an active session's PR without one placement line; checking it here keeps the gated body final.
-  const placement = readSessionRecord(worktree)?.status === "active" ? placementLineProblem(readFileSync(body, "utf8")) : null;
+  const placement = session?.status === "active" ? placementLineProblem(bodyText) : null;
   if (placement) throw new Error(placement);
+  const evidenceInputs = { body, runs, ticket, rulings, audit, matrix, review };
+  const evidence = { body: bodyEvidence.fingerprint, runs: checkedRuns.fingerprint };
+  const manifest = new Map();
+  for (const key of EVIDENCE_KEYS) {
+    const file = evidenceInputs[key];
+    if (!file) continue;
+    evidence[key] ??= evidenceFingerprint(file);
+    manifest.set(path.resolve(file), evidence[key]);
+  }
+  for (const [key, entries] of [["members", members], ["prds", prds], ["plans", plans]]) {
+    if (!entries.length) continue;
+    evidence[key] = entries.map(entry => {
+      const file = entry.slice(entry.indexOf("=") + 1);
+      const saved = evidenceFingerprint(file);
+      manifest.set(path.resolve(file), saved);
+      return saved;
+    });
+  }
+  const childOptions = { encoding: "utf8", input: JSON.stringify([...manifest]) };
   if (ticket) {
     const criteria = runScript(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), "criteria-audit.mjs"),
-      "--worktree", worktree, "--ticket", ticket, "--audit", audit, "--matrix", matrix, "--at", "head",
-      ...members.flatMap((member) => ["--member", member]), ...unitReviewArgs({ review, prds, plans })], { encoding: "utf8" });
+      "--bound-inputs", "--worktree", worktree, "--ticket", ticket, "--audit", audit, "--matrix", matrix, "--at", "head",
+      ...members.flatMap((member) => ["--member", member]), ...unitReviewArgs({ review, prds, plans })], childOptions);
     if (criteria.status !== 0) throw new Error(`acceptance criteria audit failed: ${criteria.stdout || criteria.stderr}`);
   }
   const args = [path.join(path.dirname(fileURLToPath(import.meta.url)), "handoff-inventory.mjs"),
-    "--worktree", worktree, "--phase", "pull-request", "--body", body, "--runs", runs,
+    "--bound-inputs", "--worktree", worktree, "--phase", "pull-request", "--body", body, "--runs", checkedRuns.fingerprint.path, "--runs-sha256", checkedRuns.fingerprint.sha256,
     "--commit", execFileSync("git", ["-C", worktree, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
     ...(ticket ? ["--ticket", ticket] : []), ...(rulings ? ["--rulings", rulings] : []), ...members.flatMap((member) => ["--ticket", member.slice(member.indexOf("=") + 1)])];
-  const result = runScript(process.execPath, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-  if (result.status !== 0) throw new Error(`pull-request inventory failed: ${result.stderr || result.stdout}`);
-  const inventory = JSON.parse(result.stdout);
-  const problem = inventoryGateProblem(inventory);
+  const result = runScript(process.execPath, args, { ...childOptions, maxBuffer: 64 * 1024 * 1024 });
+  let inventory;
+  try { inventory = capturedJson(result.stdout); }
+  catch { throw new Error(`pull-request inventory failed: ${result.stderr || result.stdout}`); }
+  const overridden = result.status === 1 && allowDiffRuleOverride && onlyDiffRulesBlocked(inventory);
+  if (result.status !== 0 && !overridden) throw new Error(`pull-request inventory failed: ${result.stderr || result.stdout}`);
+  const problem = inventoryGateProblem(inventory, overridden);
   if (problem) throw new Error(problem);
   const branch = execFileSync("git", ["-C", worktree, "branch", "--show-current"], { encoding: "utf8" }).trim();
   if (!sameSource(source, sourceIdentity(worktree))) throw new Error("source changed while the handoff gate ran");
-  const evidenceInputs = { body, runs, ticket, rulings, audit, matrix, review };
-  const evidence = Object.fromEntries(EVIDENCE_KEYS.filter(key => evidenceInputs[key]).map(key => [key, evidenceFingerprint(evidenceInputs[key])]));
-  for (const [key, entries] of [["members", members], ["prds", prds], ["plans", plans]]) {
-    if (entries.length) evidence[key] = entries.map((entry) => evidenceFingerprint(entry.slice(entry.indexOf("=") + 1)));
-  }
-  const boundReceipts = receipts.map(evidenceFingerprint);
+  if (evidenceFingerprint(body).sha256 !== bodyEvidence.fingerprint.sha256) throw new Error("PR body changed while the handoff gate ran");
+  const boundReceipts = receiptEvidence.map((entry) => entry.fingerprint);
   const finalMergeProblem = checkedMergeProblem(worktree, targets);
   if (finalMergeProblem) throw new Error(finalMergeProblem);
   const current = mergeTargets(worktree, base);
@@ -203,8 +240,8 @@ export function recordHandoffGate({ worktree, body, runs, ticket, rulings, base,
   writeFileSync(witness, `${JSON.stringify({ branch, source, base: targets.base, main: targets.main, evidence, receipts: boundReceipts,
     ...(inventory.pathCitations?.length ? { pathCitations: inventory.pathCitations, pathCitationEvidence: inventory.pathCitationEvidence } : {}),
     reviewCarry: [...reusableRoles].sort(), memberTickets, unitReviewPassed: Boolean(review),
-    visualQa: { required: visual.required, reason: visual.reason, findings: visual.required ? evidenceFingerprint(visualQa) : null }, inventoryPassed: true,
-    prBodyPassed: true, prEvidencePassed: true, reviewPassed: true })}\n`, { mode: 0o600 });
+    visualQa: { required: visual.required, reason: visual.reason, findings: visual.required ? visual.fingerprint : null }, inventoryPassed: true,
+    prBodyPassed: true, prEvidencePassed: true, reviewPassed: true, ...(overridden ? { inventoryOverride: "diffRulesClear" } : {}) })}\n`, { mode: 0o600 });
   return { branch, source };
 }
 

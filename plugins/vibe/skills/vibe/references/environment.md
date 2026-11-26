@@ -136,7 +136,8 @@ not silently included or discarded. A clean result needs no extra local commit.
 
 1. Stop only the session's owned Desktop through its existing operational
    owner before changing its source. The publishing helper's exact existing
-   create/redeploy or prototype-share record turn runs
+   create/redeploy or prototype-share record turn receives Root’s `publicationStep: "prepare"` and
+   explicit `publicationPurpose`. It returns the command response as `data.mainSyncResult` after running
    `node <plugin-root>/skills/vibe/scripts/commit-worktree.mjs --prepare-main-sync --worktree "<wt>"`
    with `{ "context": <granted operationContext> }` on stdin. It fetches
    `origin main`, captures the private FETCH_HEAD SHA once, and stages an

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import test, { after } from "node:test";
-import { isPageComposer, parseUnifiedDiff, runDiffRules, transactionBodies } from "./diff-rules.mjs";
+import { isPageComposer, parseUnifiedDiff, runDiffRules } from "./diff-rules.mjs";
 import { isComparatorLine } from "./review-gap-rules.mjs";
 import { linguistGenerated } from "./generated-files.mjs";
 import { frozenInputs } from "./frozen-render.mjs";
@@ -13,14 +13,13 @@ import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
 // Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
-test("the diff parser keeps line numbers, drops private plans, and finds transaction bodies", () => {
+test("the diff parser keeps line numbers and drops private plans", () => {
   const files = parseUnifiedDiff([
     "diff --git a/a.ts b/a.ts", "--- a/a.ts", "+++ b/a.ts", "@@ -3,1 +3,2 @@", "-old", "+new", "+more",
     "diff --git a/.closedloop-ai/vibe-plans/p.md b/.closedloop-ai/vibe-plans/p.md", "new file mode 100644",
     "--- /dev/null", "+++ b/.closedloop-ai/vibe-plans/p.md", "@@ -0,0 +1 @@", "+plan",
   ].join("\n"), localPlanPrefix(PROVIDER_BINDING));
   assert.deepEqual(files.map((file) => [file.path, file.removed, file.added]), [["a.ts", [{ line: 3, text: "old" }], [{ line: 3, text: "new" }, { line: 4, text: "more" }]]]);
-  assert.deepEqual(transactionBodies("x\nwithDb.tx(async (tx) => {\n  a();\n});\n"), [[2, 4]]);
 });
 
 test("migrations: an existing table needs its recorded precedent, a full-table backfill blocks, and the repo gates run", (t) => {

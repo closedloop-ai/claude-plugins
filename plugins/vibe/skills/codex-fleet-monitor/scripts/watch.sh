@@ -71,10 +71,22 @@ sample_final_gap() {
   sample_tick "$start" "$end" || return 2
   read_gap 1
 }
-# Read times and sources belong in usage reports, but they are not material watcher changes. Compare a fingerprint
-# with those fields removed, then retain the newest full snapshot so a later real event reports current read times.
+# Read times and sources belong in the full snapshot, outside the comparison key.
 snapshot_key() {
-  print -r -- "$1" | sed -E '/^(codex|claude)-usage /s/ read=[^ ]+ source=[^ ]+//'
+  print -r -- "$1" | sed -E '/^codex-usage /s/ read=[^ ]+ source=[^ ]+//'
+}
+without_claude_usage() {
+  print -r -- "$1" | sed -E '/^(claude-usage|usage claude)( |$)/d'
+}
+watch_usage() {
+  local before=$1 current=$2
+  shift 2
+  printf '%s\0%s' "$before" "$current" | node "$K/watch-usage-state.mjs" "$W" "$@"
+}
+watch_visible() {
+  if [ -f "$W/board.json" ]; then
+    print -r -- "$1" | node "$K/../../fleet-orchestrator/scripts/writer-retirement.mjs" "$W/board.json"
+  else print -r -- "$1"; fi
 }
 # One watcher per work dir. A second copy (one started with `&` in a foreground shell, then started again)
 # double-reports every event and outlives the turn that started it, so it is refused, not run.
@@ -88,15 +100,26 @@ if ! mkdir $lock 2>/dev/null; then
   rm -rf $lock; mkdir $lock || exit 3
 fi
 print $$ > $lock/pid
-trap 'rm -rf $lock' EXIT
+trap 'if [[ $(cat "$lock/pid" 2>/dev/null) == $$ ]]; then rm -f "$lock/pid" "$lock/last-snapshot.tmp" && rmdir "$lock"; fi' EXIT
 trap 'exit 143' TERM HUP INT
 # watcher.json records this watcher's pid and last tick, and its exit, so watcher.mjs can tell a lapsed watcher.
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+identity=$(node --input-type=module -e 'const {readProcessIdentity} = await import(process.argv[1]); const id = readProcessIdentity(Number(process.argv[2])); if (!id) process.exit(1); console.log(JSON.stringify(id));' "$K/../../../shared/process-identity.mjs" $$) || exit 2
 beat() {
   local stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ) extra=''
   if [[ $1 == exited ]]; then extra=",\"exitedAt\":\"$stamp\""; fi
-  print -r -- "{\"pid\":$$,\"startedAt\":\"$started\",\"lastTickAt\":\"$stamp\",\"intervalSeconds\":$I$extra}" > $W/watcher.json.tmp && mv $W/watcher.json.tmp $W/watcher.json
+  print -r -- "{\"pid\":$$,\"identity\":$identity,\"startedAt\":\"$started\",\"lastTickAt\":\"$stamp\",\"intervalSeconds\":$I$extra}" > $W/watcher.json.tmp && mv $W/watcher.json.tmp $W/watcher.json
 }
+# Only this generation's own lock and watcher row are retired; a successor's are left alone.
+finish_watch() {
+  [[ $(cat "$lock/pid" 2>/dev/null) == $$ ]] || return
+  local row=$(cat "$W/watcher.json" 2>/dev/null)
+  if [[ "$row" == "{\"pid\":$$,\"identity\":$identity,\"startedAt\":\"$started\","* ]]; then
+    beat exited
+  fi
+  rm -f "$lock/pid" "$lock/last-snapshot.tmp" && rmdir "$lock"
+}
+trap 'finish_watch' EXIT
 acknowledge() {
   local file=${2:-$W/last-snapshot.txt} staged=$lock/last-snapshot.tmp
   if [[ ! -d $file ]] && echo "$1" > "$staged" && mv "$staged" "$file" && cmp -s "$file" <(echo "$1"); then return 0; fi
@@ -124,6 +147,7 @@ if [ -s $W/last-snapshot.txt ]; then
   base_fleet=$(sed '/^watch-gap /d' "$W/last-snapshot.txt")
 else
   snapshot; base_fleet=$fleet
+  if [ ! -e $W/last-snapshot.txt ]; then watch_usage "$fleet" "" reset || exit 2; fi
   acknowledge "$now" || exit 1
 fi
 base_key=$(snapshot_key "$base_fleet")
@@ -132,9 +156,14 @@ for tick_number in $(seq 1 $T); do
   sleep $I
   # Each tick runs a recovery pass first (recover.mjs), so a transient failure is resumed without you.
   snapshot 1
-  now_key=$(snapshot_key "$fleet")
-  fleet_changed=0; gap_changed=0
-  [[ -n $fleet && $now_key != "$base_key" ]] && fleet_changed=1
+  before_visible=$(watch_visible "$base_fleet"); now_visible=$(watch_visible "$fleet")
+  usage_events=""
+  if [[ -n $fleet ]]; then usage_events=$(watch_usage "$before_visible" "$now_visible") || exit 2; fi
+  before_other=$(without_claude_usage "$before_visible"); now_other=$(without_claude_usage "$now_visible")
+  base_key=$(snapshot_key "$before_other"); now_key=$(snapshot_key "$now_other")
+  fleet_changed=0; gap_changed=0; key_changed=0
+  [[ -n $fleet && $now_key != "$base_key" ]] && key_changed=1
+  (( key_changed )) || [[ -n $usage_events ]] && fleet_changed=1
   [[ -n $gap && $gap != "$base_gap" ]] && gap_changed=1
   beat
   if (( fleet_changed || gap_changed || tick_number == T )); then
@@ -193,7 +222,8 @@ for tick_number in $(seq 1 $T); do
     # Once the gap event starts, finish its output and retirement before a catchable stop can end this arm.
     if (( gap_changed )); then trap '' TERM HUP INT; fi
     echo EVENT || exit 1
-    if (( fleet_changed )); then diff <(echo "$base_fleet") <(echo "$fleet") | grep '^[<>]'; fi
+    if (( key_changed )); then diff <(echo "$before_other") <(echo "$now_other") | grep '^[<>]'; fi
+    if (( fleet_changed )) && [[ -n $usage_events ]]; then print -r -- "$usage_events"; fi
     if (( gap_changed )); then
       # A successful gap write only needs a same-filesystem rename. A failed write leaves the preparation in place.
       print -r -- "> ${acknowledged_gap#watch-gap * }" || exit 1

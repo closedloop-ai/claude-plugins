@@ -219,6 +219,17 @@ export function rulingNamesScope(text, slugs) {
   return slugs.filter(Boolean).some((slug) => new RegExp(`(?:^|[^A-Za-z0-9-])${slug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![0-9])`, "i").test(text));
 }
 
+/** Verify an exact quoted operator decision whose scoped subject is this work item. */
+export function exactOperatorRuling(program, { quote, source, ticket }) {
+  if (typeof quote !== "string" || typeof source !== "string" || !quote.trim() || !source.trim() || !ticket) return false;
+  return [...String(program ?? "").matchAll(PROGRAM_RULING)].some(([, date, kind, reference, decision]) => {
+    const citation = `${date} (${kind}: ${reference})`;
+    const words = [...decision.matchAll(/"([^"\n]+)"|“([^”\n]+)”/g)].map((match) => match[1] ?? match[2]);
+    return kind !== "ticket" && citation === source && words.includes(quote)
+      && rulingNamesScope(reference, [ticket]);
+  });
+}
+
 /** Locate the program's exact quoted operator decision and its ticket scope. Operational notes cannot authorize a split. */
 export function separationRuling(program, reason, tickets) {
   for (const match of program.matchAll(PROGRAM_RULING)) {

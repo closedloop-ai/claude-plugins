@@ -1,3 +1,4 @@
+import { TEST_HOME, chatEnv, outsideChat, run, tempRoot } from './fleet-home-test-fixture.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
@@ -30,24 +31,6 @@ const PLUGIN_ROOT = vibeRoot();
 const VIBE_FLEET_SCRIPTS = path.join(PLUGIN_ROOT, 'skills', 'fleet-orchestrator', 'scripts');
 const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'codex', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved);
 const MONITOR = path.join(HERE, '..', '..', 'codex-fleet-monitor', 'scripts');
-// Cases run outside any chat (no harness ids) with a private HOME, so the chat bindings fleet-home.mjs writes
-// never reach the real ~/.vibe-hook-scope; a case that tests a chat passes its id in `env`.
-const TEST_HOME = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'fleet-home-user-')));
-process.on('exit', () => rmSync(TEST_HOME, { recursive: true, force: true }));
-const outsideChat = (env) => {
-  const base = { ...process.env, HOME: TEST_HOME };
-  Reflect.deleteProperty(base, 'CLAUDE_CODE_SESSION_ID');
-  Reflect.deleteProperty(base, 'CODEX_THREAD_ID');
-  Reflect.deleteProperty(base, 'FLEET_HOME');
-  return { ...base, ...env };
-};
-const run = (args, env = {}) => spawnSync(process.execPath, [path.join(HERE, 'fleet-home.mjs'), ...args], { encoding: 'utf8', env: outsideChat(env) });
-const tempRoot = (t) => {
-  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'fleet-home-')));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  return root;
-};
-
 test('a new program reads none of an earlier program; resume names the active one and its Claude writers to relaunch', (t) => {
   const home = path.join(tempRoot(t), 'fleet');
   assert.match(run(['resume', '--home', home]).stdout, /^NO-ACTIVE-PROGRAM/m);
@@ -303,7 +286,7 @@ test('a resume that cannot seed context-guard.json still prints the whole readin
 });
 
 // ISS-14028: two orchestrator chats on one machine each run their own program with no launch environment variable.
-const chatEnv = (chat) => ({ CLAUDE_CODE_SESSION_ID: chat });
+
 const ORCHESTRATOR_TRANSCRIPT = `${JSON.stringify({ type: 'user', isMeta: true, message: { content: [{ type: 'text', text: 'Base directory for this skill: /plugins/vibe/skills/fleet-orchestrator\n\n# fleet-orchestrator' }] } })}\n`;
 const hookEvent = (root, chat, extra = {}) => {
   const transcript = path.join(root, `${chat}.jsonl`);

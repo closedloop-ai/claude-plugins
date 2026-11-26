@@ -25,7 +25,7 @@ def _section(text: str, heading: str) -> str:
 def test_both_manifests_publish_the_same_new_skill_version() -> None:
     claude = json.loads(skill_split.read(PLUGIN / ".claude-plugin" / "plugin.json"))
     codex = json.loads(skill_split.read(PLUGIN / ".codex-plugin" / "plugin.json"))
-    assert claude["version"] == codex["version"] == "1.1.110"
+    assert claude["version"] == codex["version"] == "1.1.111"
     assert codex["skills"] == "./skills/"
     assert skill_split.read(SKILL).startswith("---\nname: pr-takeover\n")
 

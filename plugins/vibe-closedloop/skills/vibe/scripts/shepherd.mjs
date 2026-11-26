@@ -32,6 +32,7 @@
 // Threads whose latest comment is the writer's (`gh api user`) wait on the
 // reviewer and do not stop the shepherd.
 
+import { capturedJson } from "../../../lib/vibe/scripts/captured-json.mjs";
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import { readThreads } from "./pr-threads.mjs";
@@ -85,7 +86,7 @@ export function splitThreads(threads, writer, roundOneFixedAt) {
 }
 
 function readPr(pr, repo, roundOneFixedAt) {
-  const view = JSON.parse(execFileSync("gh", ["pr", "view", String(pr), "--repo", repo, "--json", FIELDS], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  const view = capturedJson(execFileSync("gh", ["pr", "view", String(pr), "--repo", repo, "--json", FIELDS], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
   writerLogin ??= execFileSync("gh", ["api", "user", "-q", ".login"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   const threads = readThreads(repo, pr);
   if (threads === null) {

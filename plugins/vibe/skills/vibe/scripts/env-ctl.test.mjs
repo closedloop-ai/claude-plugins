@@ -371,6 +371,10 @@ test("the pull request opens in the repository origin names, against its default
   const create = calls.find((call) => call.line.includes("pr create")).line;
   assert.match(create, /--repo acme\/widgets /);
   assert.match(create, /--base trunk /);
+  // AC-25: the repository and its default branch come from the owned worktree, never the caller's directory.
+  for (const read of ["config --get remote.origin.url", "rev-parse --abbrev-ref origin/HEAD"]) {
+    assert.ok(calls.some((call) => call.line === `git -C /wt ${read}`), read);
+  }
   const remoteless = createEnvCtl({ environmentFor: () => null, run: router([["config --get remote.origin.url", ok("/srv/git/widgets.git\n")]]) });
   assert.throws(() => remoteless.openPullRequest({ worktree: "/wt", branch: "vibe/a", commit: sha }), /not a GitHub repository/);
 });

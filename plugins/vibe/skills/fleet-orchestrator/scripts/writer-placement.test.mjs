@@ -1,36 +1,22 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { after, test } from 'node:test';
-import { fileURLToPath } from 'node:url';
-import { bindProviderInProcess, writeActiveTicketSnapshot } from "../../vibe/scripts/test-fixtures.mjs";
+import { bindProviderInProcess } from "../../vibe/scripts/test-fixtures.mjs";
+import { CODE_ONLY, fixture as placementFixture, NEEDS_APP } from "./writer-placement-test-fixture.mjs";
 
-// Tracker checks run only with a tracker bound, so these run bound to the provider this repository ships (spawned scripts inherit it).
 bindProviderInProcess(after);
 
-const BOARD = path.join(path.dirname(fileURLToPath(import.meta.url)), 'board.mjs');
-const CODE_ONLY = { codeOnly: true, needsRunningApp: false, localEvidence: [] };
-const NEEDS_APP = { codeOnly: true, needsRunningApp: true, localEvidence: [] };
-
-const fixture = (t) => {
-  const home = mkdtempSync(path.join(os.tmpdir(), 'fleet-placement-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
-  const dir = path.join(home, 'programs', 'p1');
-  mkdirSync(dir, { recursive: true });
-  writeActiveTicketSnapshot(dir, Array.from({ length: 9 }, (_, i) => 'ISS-' + (i + 1)));
-  writeFileSync(path.join(home, 'current'), 'p1\n');
-  const evidenceDir = mkdtempSync(path.join(os.tmpdir(), 'fleet-placement-evidence-'));
-  t.after(() => rmSync(evidenceDir, { recursive: true, force: true }));
-  const run = (...args) => spawnSync(process.execPath, [BOARD, dir, ...args], { encoding: 'utf8' });
-  const evidence = (name, body) => {
-    const file = path.join(evidenceDir, `${name}.json`);
-    writeFileSync(file, JSON.stringify(body));
-    return file;
-  };
-  return { dir, run, evidence, page: () => readFileSync(path.join(dir, 'board.md'), 'utf8') };
-};
+// These established success cases now carry the exact operator input required by the placement boundary.
+const operatorRulings = new Map([
+  ['a local writer start is refused for a cloud-placed ticket until the operator records a reason, which the board shows',
+    { ticket: 'ISS-7', quote: 'cloud runner cannot reach the staging database' }],
+  ['status lists each writer ticket with its placement and reason',
+    { ticket: 'ISS-2', quote: 'operator wants it beside ISS-1' }],
+  ['folding a ticket into a writer on the board is assigning it: the same placement check and keep-local rule apply',
+    { ticket: 'ISS-2', quote: 'cloud import task_01' }],
+]);
+const fixture = (t) => placementFixture(t, operatorRulings.get(t.name));
 
 test('a writer start is refused until each of its tickets has a placement decision from the check', (t) => {
   const { run, evidence } = fixture(t);

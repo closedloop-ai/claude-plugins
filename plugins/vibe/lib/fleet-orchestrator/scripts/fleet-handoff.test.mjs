@@ -69,7 +69,7 @@ test('ISS-14116 item 42: a writer added to the board after the handover was writ
 
 test('ISS-14116 item 42: the watcher is stopped only by the pid both watcher.json and watch.lock record, and a deleted cron is recorded', (t) => {
   const { dir } = program(t);
-  writeFileSync(path.join(dir, 'watcher.json'), JSON.stringify({ pid: 4242, startedAt: '2026-11-18T10:00:00Z' }));
+  writeFileSync(path.join(dir, 'watcher.json'), JSON.stringify({ pid: 4242, identity: 'fixture-birth', startedAt: '2026-11-18T10:00:00Z' }));
   mkdirSync(path.join(dir, 'watch.lock'), { recursive: true });
   writeFileSync(path.join(dir, 'watch.lock', 'pid'), '999\n');
   startHandoff(dir, { successor: 'flamingo-2', mesh: 'claude:abc', crons: ['cron-7'] });
@@ -81,7 +81,9 @@ test('ISS-14116 item 42: the watcher is stopped only by the pid both watcher.jso
   assert.deepEqual(killed, [], 'nothing is stopped by guess');
   writeFileSync(path.join(dir, 'watch.lock', 'pid'), '4242\n');
   assert.deepEqual(handoffProblems(dir).map((line) => line.split(' ')[0]), ['WATCHER-RUNNING', 'CRON-LIVE']);
-  assert.equal(stopWatcher(dir, { kill: (pid) => killed.push(pid) }).line, 'WATCHER-STOPPED 4242');
+  assert.throws(() => stopWatcher(dir, { identityOf: () => 'different-birth', kill: (pid) => killed.push(pid) }), /WATCHER-IDENTITY/);
+  assert.deepEqual(killed, []);
+  assert.equal(stopWatcher(dir, { identityOf: () => 'fixture-birth', kill: (pid) => killed.push(pid) }).line, 'WATCHER-STOPPED 4242');
   assert.deepEqual(killed, [4242]);
   assert.equal(run(['handoff', '--cron-deleted', 'cron-7', '--check'], { FLEET_HOME: path.dirname(path.dirname(dir)) }).status, 0);
   writeFileSync(path.join(dir, 'watcher.json'), JSON.stringify({ pid: 5151, startedAt: new Date(Date.now() + 60_000).toISOString() }));
@@ -125,11 +127,11 @@ test('ISS-14116 item 42 (round 13b F1): a new successor starts a fresh handoff, 
 
 test('ISS-14116 item 42 (round 14 F1, F3): a watcher that already exited needs no stop, and a completed handoff rerun for the same successor stays complete', (t) => {
   const { dir } = program(t);
-  writeFileSync(path.join(dir, 'watcher.json'), JSON.stringify({ pid: 4242, startedAt: '2026-11-18T10:00:00Z', exitedAt: '2026-11-18T11:00:00Z' }));
+  writeFileSync(path.join(dir, 'watcher.json'), JSON.stringify({ pid: 4242, identity: 'fixture-birth', startedAt: '2026-11-18T10:00:00Z', exitedAt: '2026-11-18T11:00:00Z' }));
   startHandoff(dir, { successor: 'chat-b', mesh: 'claude:b' });
   for (const name of ['prevent-claude', 'cx', 'ended', OPERATOR]) recordTold(dir, name, Via.SendMessage);
   assert.deepEqual(handoffProblems(dir), [], 'an exited watcher released its lock and is not WATCHER-RUNNING');
-  writeFileSync(path.join(dir, 'watcher.json'), JSON.stringify({ pid: 4242, startedAt: '2026-11-18T10:00:00Z' }));
+  writeFileSync(path.join(dir, 'watcher.json'), JSON.stringify({ pid: 4242, identity: 'fixture-birth', startedAt: '2026-11-18T10:00:00Z' }));
   assert.deepEqual(handoffProblems(dir), [], 'a recorded pid with no lock is not a running watcher');
   mkdirSync(path.join(dir, 'watch.lock'), { recursive: true });
   writeFileSync(path.join(dir, 'watch.lock', 'pid'), '4242\n');
@@ -155,4 +157,32 @@ test('ISS-14116 item 42 (round 15 F5): a same-successor rerun keeps the first wr
   const killed = [];
   assert.throws(() => stopWatcher(dir, { kill: (pid) => killed.push(pid) }), /WATCHER-SUCCESSOR/);
   assert.deepEqual(killed, [], "the successor's watcher is never signalled");
+});
+
+test("a legacy watcher requires its exact script, program and recorded birth", t => {
+  const {dir} = program(t), pid = 4242, startedAt = new Date(2026,10,18,10).toISOString();
+  writeFileSync(path.join(dir, "watcher.json"), JSON.stringify({pid,startedAt}));
+  mkdirSync(path.join(dir, "watch.lock"), {recursive:true});
+  writeFileSync(path.join(dir, "watch.lock","pid"), String(pid));
+  startHandoff(dir, {successor:"next",mesh:"codex:next",crons:[]});
+  const script = fileURLToPath(new URL("../../../skills/codex-fleet-monitor/scripts/watch.sh", import.meta.url));
+  const identity = `Wed Nov 18 10:00:00 2026 zsh ${script} ${dir} 120`;
+  const killed=[];
+  for (const wrong of [identity.replace("10:00","10:10"), identity.replace("watch.sh","other.sh"), identity+"-other", identity.replace(dir, dir+"-other")]) {
+    assert.throws(() => stopWatcher(dir, {kill:id=>killed.push(id), identityOf:()=>wrong}), /WATCHER-IDENTITY/);
+  }
+  assert.deepEqual(killed,[]);
+  assert.ok(stopWatcher(dir, {kill:id=>killed.push(id),identityOf:()=>identity}).stopped);
+  assert.deepEqual(killed,[pid]);
+});
+
+test("an initializing watcher lock blocks closure before its matching heartbeat", t => {
+  const {dir}=program(t);
+  startHandoff(dir,{successor:"next",mesh:"codex:next",crons:[]});
+  mkdirSync(path.join(dir,"watch.lock"));
+  writeFileSync(path.join(dir,"watch.lock","pid"),String(process.pid));
+  for (const previous of [null,{pid:4242,exitedAt:new Date().toISOString()}]) {
+    if (previous) writeFileSync(path.join(dir,"watcher.json"),JSON.stringify(previous));
+    assert.throws(()=>stopWatcher(dir,{kill:()=>assert.fail("initializing watcher signalled")}),/WATCHER-/);
+  }
 });

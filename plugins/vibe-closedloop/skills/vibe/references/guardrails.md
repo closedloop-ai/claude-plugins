@@ -99,7 +99,7 @@ lane-source metadata only when base, freshly fetched merge target and candidate
 share one regular workflow with identical bytes/modes and unchanged permission
 fields.
 
-For an owned `prototype/<slug>` mockup session, the repository's canonical
+For an owned prototype mockup session, the repository's canonical
 `<repo-root>/.claude/skills/prototype/SKILL.md` owns sandbox rules instead of
 the full-app rules in this section. Its allowed host paths are exactly
 `apps/prototypes/app/p/<slug>/`, the generated registry, and the exact portable
